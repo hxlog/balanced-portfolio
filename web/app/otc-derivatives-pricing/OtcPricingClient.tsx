@@ -274,7 +274,7 @@ export function OtcPricingClient() {
         already_ki: f.already_ki as boolean,
       };
     }
-    if product === "phoenix") {
+    if (product === "phoenix") {
       return {
         ...common,
         ko_barrier_pct: n(f.ko_barrier), ki_barrier_pct: n(f.ki_barrier), ki_strike_pct: n(f.ki_strike),
