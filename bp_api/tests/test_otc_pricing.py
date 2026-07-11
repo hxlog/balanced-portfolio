@@ -573,3 +573,133 @@ def test_reorder_otc_deals_upserts_visible_only():
     params = [c[0][1] for c in cur.execute.call_args_list[1:]]
     assert params[0] == (9, 2, 0)
     assert params[1] == (9, 1, 1)
+
+
+# ---------------------------------------------------------------------------
+# 终止态 / day-count DF / quad rebate 回归
+# ---------------------------------------------------------------------------
+def test_cf_discount_uses_day_count(weekday_cal):
+    import math
+
+    from bp_api.quant.otc.pricer import _df
+
+    d0, d1 = date(2021, 3, 15), date(2022, 3, 15)
+    r = 0.04
+    df365 = _df(r, DayCount.ACT365, d0, d1, weekday_cal)
+    df252 = _df(r, DayCount.BUS252, d0, d1, weekday_cal)
+    assert df365 == pytest.approx(math.exp(-r * year_fraction(DayCount.ACT365, d0, d1, weekday_cal)))
+    assert df252 == pytest.approx(math.exp(-r * year_fraction(DayCount.BUS252, d0, d1, weekday_cal)))
+    assert df365 != pytest.approx(df252, rel=1e-6)
+
+
+def test_phoenix_knockout_locks_period_coupons(weekday_cal):
+    """凤凰敲出后锁定已派期间票息, 不得因缺少 coupon_out 而归零。"""
+    import pandas as pd
+
+    idx = pd.date_range("2021-03-15", "2021-06-30", freq="B")
+    # 起始 100; 观察日 4/15、5/17 抬至 110 触发派息+敲出
+    closes = []
+    for d in idx:
+        ds = d.date()
+        if ds in (date(2021, 4, 15), date(2021, 5, 17)):
+            closes.append(110.0)
+        elif ds < date(2021, 4, 15):
+            closes.append(100.0)
+        else:
+            closes.append(100.0)
+    market = pd.Series(closes, index=idx)
+    period = 0.0076
+    notional = 10_000_000.0
+    spec = {
+        "product_type": "phoenix", "direction": "buy", "engine": "mc",
+        "start_date": "2021-03-15", "maturity_date": "2022-03-15",
+        "valuation_date": "2021-06-15",
+        "s0": 100.0, "spot": 100.0,
+        "ko_barrier_pct": 103.0, "ki_barrier_pct": 75.0, "ki_strike_pct": 80.0,
+        "coupon_barrier_pct": 75.0, "period_coupon": period,
+        "ko_observation_dates": [
+            "2021-04-15", "2021-05-17", "2021-06-15", "2021-07-15", "2021-08-16",
+            "2021-09-15", "2021-10-15", "2021-11-15", "2021-12-15", "2022-01-17",
+            "2022-02-15", "2022-03-15",
+        ],
+        "lock_term_months": 0, "already_ki": False,
+        "r": 0.04, "q": 0.01, "vol": 0.25, "notional": notional,
+        "day_count": "ACT365", "t_step_per_year": 252, "n_paths": 5_000, "seed": 3,
+        "greeks": False, "compute_pnl": True, "pnl_paths": 5_000,
+    }
+    res = price_deal(spec, weekday_cal, market=market)
+    assert res.status == "knocked_out"
+    assert res.current_pnl is not None and res.current_pnl > 0
+    # 敲出日 4/15 一期派息 (先派息再终止); 贴现后接近 period * notional
+    assert res.current_pnl > 0.5 * period * notional
+
+
+def test_phoenix_maturity_settlement_with_ki(weekday_cal):
+    """凤凰到期已敲入: 期间票息 + put 结算, put 腿非零。"""
+    import pandas as pd
+    from bp_api.quant.otc.pricer import _maturity_settlement_pv, _rebased_series
+
+    idx = pd.date_range("2021-03-15", "2022-03-15", freq="B")
+    closes = []
+    for d in idx:
+        ds = d.date()
+        if ds <= date(2021, 4, 15):
+            closes.append(110.0)  # 一期派息
+        elif ds <= date(2021, 6, 1):
+            closes.append(60.0)   # 敲入
+        else:
+            closes.append(70.0)   # 到期仍低于行权 80
+    market = pd.Series(closes, index=idx)
+    spec = {
+        "product_type": "phoenix", "direction": "buy",
+        "start_date": "2021-03-15", "maturity_date": "2022-03-15",
+        "s0": 100.0, "notional": 1_000_000.0, "r": 0.04,
+        "day_count": "ACT365",
+        "ko_barrier_pct": 103, "ki_barrier_pct": 75, "ki_strike_pct": 80,
+        "coupon_barrier_pct": 75, "period_coupon": 0.01,
+        "ko_observation_dates": ["2021-04-15", "2022-03-15"],
+        "lock_term_months": 0,
+    }
+    rebased = _rebased_series(market, date(2021, 3, 15), 100.0)
+    pv = _maturity_settlement_pv(
+        spec, weekday_cal, market, 100.0, date(2022, 3, 15),
+        already_ki=True, rebased=rebased,
+    )
+    # put: (80-70)/100 * 1e6 = 100_000; 票息约 10_000 → 净约 -90_000
+    assert pv < -50_000
+
+
+def test_airbag_expired_intrinsic(weekday_cal):
+    """气囊到期 ITM 内在价值不得为 0。"""
+    import pandas as pd
+    from bp_api.quant.otc.pricer import _maturity_settlement_pv
+
+    idx = pd.date_range("2021-03-15", "2022-03-15", freq="B")
+    market = pd.Series(120.0, index=idx)  # 未敲入上行
+    spec = {
+        "product_type": "airbag", "direction": "buy",
+        "start_date": "2021-03-15", "maturity_date": "2022-03-15",
+        "s0": 100.0, "notional": 1_000_000.0,
+        "strike_pct": 100, "barrier_pct": 70,
+        "knockin_parti": 1.0, "call_parti": 1.0, "reset_call_parti": 1.0,
+        "discrete_obs": True,
+    }
+    pv = _maturity_settlement_pv(
+        spec, weekday_cal, market, 100.0, date(2022, 3, 15), already_ki=False,
+    )
+    # (120-100)/100 * 1e6 = 200_000
+    assert pv == pytest.approx(200_000.0, rel=1e-6)
+
+
+def test_barrier_quad_no_double_rebate():
+    """rebate>0 时 quad 有限; 即期 rebate 口径下 UP-OUT 深度虚值接近 rebate*DF。"""
+    t, r = 1.0, 0.03
+    rebate = 5.0
+    # spot 已在障碍之上 → 立即敲出, 价值 ≈ rebate (即期)
+    pv = eng.barrier_quad(
+        s=120.0, strike=100.0, barrier=110.0, rebate=rebate,
+        updown=UpDown.UP, inout=InOut.OUT, callput=CallPut.CALL,
+        r=r, q=0.0, vol=0.2, t=t, n_steps=50, n_points=201,
+    )
+    assert np.isfinite(pv)
+    assert pv == pytest.approx(rebate, rel=0.05, abs=0.5)

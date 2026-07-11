@@ -65,6 +65,22 @@ def _parse_date(v) -> date:
     return date.fromisoformat(str(v)[:10])
 
 
+def _df(
+    r: float,
+    day_count: DayCount | str,
+    d0: date,
+    d1: date,
+    cal: TradingCalendarView,
+) -> float:
+    """现金流贴现因子: 使用所选 day_count 年化 (与票息应计口径一致)。
+
+    GBM 路径仍用交易日网格 (business_offset / t_step); 扩散时钟与 DF 刻度可不同。
+    """
+    if d1 <= d0:
+        return 1.0
+    return float(math.exp(-r * year_fraction(day_count, d0, d1, cal)))
+
+
 def _effective_start(start: date, cal: TradingCalendarView) -> date:
     return cal.roll(start, "following") or start
 
@@ -112,8 +128,9 @@ def _price_once(
     n_steps = cal.business_offset(valuation, maturity)
     if n_steps <= 0:
         return (0.0, None) if return_paths else 0.0
+    # 扩散用交易日时钟; 现金流 DF 用 day_count (见 _df)
     t_year = n_steps / t_step
-    mat_discount = float(np.exp(-r * t_year))
+    mat_discount = _df(r, day_count, valuation, maturity, cal)
     sgn = sign_of(spec.get("direction", "buy"))
 
     def _lvl(pct) -> float:
@@ -170,7 +187,7 @@ def _price_once(
         coupon_out = float(_f(spec, "coupon_out", 0.0))
         coupon_div = float(_f(spec, "coupon_div", coupon_out))
         ko_amounts = np.array([coupon_out * year_fraction(day_count, start, d, cal) * notional for d in ko_future])
-        ko_discounts = np.array([np.exp(-r * i / t_step) for i in ko_idx])
+        ko_discounts = np.array([_df(r, day_count, valuation, d, cal) for d in ko_future])
         maturity_div_amount = coupon_div * year_fraction(day_count, start, maturity, cal) * notional
         ko_barrier = _lvl(_f(spec, "ko_barrier_pct", 103))
         ki_barrier = _lvl(_f(spec, "ki_barrier_pct", 75))
@@ -189,7 +206,7 @@ def _price_once(
         ko_future = [d for d in _resolve_ko_dates(spec, cal, start, maturity) if d > valuation]
         obs_idx = np.array([cal.business_offset(valuation, d) for d in ko_future], dtype=int)
         period_coupon = float(_f(spec, "period_coupon", 0.0)) * notional
-        discounts = np.array([np.exp(-r * i / t_step) for i in obs_idx])
+        discounts = np.array([_df(r, day_count, valuation, d, cal) for d in ko_future])
         ko_barrier = _lvl(_f(spec, "ko_barrier_pct", 103))
         coupon_barrier = _lvl(_f(spec, "coupon_barrier_pct", _f(spec, "ki_barrier_pct", 75)))
         ki_barrier = _lvl(_f(spec, "ki_barrier_pct", 75))
@@ -221,8 +238,9 @@ def _price_once(
     else:  # BARRIER
         strike = _lvl(_f(spec, "strike_pct", 100))
         barrier = _lvl(_f(spec, "barrier_pct", 110))
-        rebate_amt = float(_f(spec, "rebate", 0.0)) / s0 * notional
         parti = float(_f(spec, "parti", 1.0))
+        # rebate 与 analytic(parti * 含 rebate 的单位价)对齐: 也乘 parti
+        rebate_amt = float(_f(spec, "rebate", 0.0)) / s0 * notional * parti
         updown = UpDown(spec.get("updown", "up"))
         inout = InOut(spec.get("inout", "out"))
         callput = CallPut(spec.get("callput", "call"))
@@ -434,16 +452,108 @@ def _detect_status(
     return status.value, events, spot_val, ko_event_date, first_ki_date
 
 
-def _knocked_out_pv(spec: dict, cal: TradingCalendarView, s0: float, ko_date: date) -> float:
-    """已敲出终止: 敲出票息现值。"""
+def _phoenix_accrued_coupons_pv(
+    spec: dict,
+    cal: TradingCalendarView,
+    rebased: Optional[pd.Series],
+    s0: float,
+    *,
+    end_date: date,
+    asof: date,
+) -> float:
+    """凤凰已派期间票息现值 (asof 视角); 观察日点位 >= 派息障碍则计入。"""
+    start = _parse_date(spec["start_date"])
+    maturity = _parse_date(spec["maturity_date"])
+    day_count = DayCount(spec.get("day_count", "ACT365"))
+    notional = float(spec["notional"])
+    r = float(spec["r"])
+    period = float(_f(spec, "period_coupon", 0.0)) * notional
+    coupon_line = s0 * float(_f(spec, "coupon_barrier_pct", _f(spec, "ki_barrier_pct", 75))) / 100.0
+    total = 0.0
+    for od in _resolve_ko_dates(spec, cal, start, maturity):
+        if od > end_date:
+            break
+        lvl = _level_on_date(rebased, od)
+        if lvl is None:
+            continue
+        if lvl >= coupon_line:
+            total += period * _df(r, day_count, asof, od, cal)
+    return total
+
+
+def _knocked_out_pv(
+    spec: dict,
+    cal: TradingCalendarView,
+    s0: float,
+    ko_date: date,
+    *,
+    rebased: Optional[pd.Series] = None,
+) -> float:
+    """已敲出终止: 锁定票息现值 (雪球敲出票息 / 凤凰累计期间派息)。"""
+    product = ProductType(spec["product_type"])
     start = _parse_date(spec["start_date"])
     day_count = DayCount(spec.get("day_count", "ACT365"))
     notional = float(spec["notional"])
     r = float(spec["r"])
+    sgn = sign_of(spec.get("direction", "buy"))
+    if product == ProductType.PHOENIX:
+        # 与 phoenix_payoff 一致: 观察日先派息再判定敲出; DF 相对起始日(与雪球锁定口径一致)
+        return sgn * _phoenix_accrued_coupons_pv(
+            spec, cal, rebased, s0, end_date=ko_date, asof=start,
+        )
     coupon_out = float(_f(spec, "coupon_out", 0.0))
     yf = year_fraction(day_count, start, ko_date, cal)
+    return sgn * coupon_out * notional * yf * _df(r, day_count, start, ko_date, cal)
+
+
+def _airbag_barrier_maturity_pv(
+    spec: dict,
+    market: Optional[pd.Series],
+    s0: float,
+    maturity: date,
+) -> float:
+    """气囊/障碍到期内在价值: 复用 payoff (discount=1)。"""
+    product = ProductType(spec["product_type"])
+    notional = float(spec["notional"])
     sgn = sign_of(spec.get("direction", "buy"))
-    return sgn * coupon_out * notional * yf * math.exp(-r * yf)
+    final_spot = _spot_raw(market, maturity, s0)
+    # 单路径: [估值占位, 到期]; discrete 监控用 paths[:,1:]
+    paths = np.array([[final_spot, final_spot]], dtype=float)
+
+    def _lvl(pct) -> float:
+        return s0 * float(pct) / 100.0
+
+    if product == ProductType.AIRBAG:
+        pay = eng.airbag_payoff(
+            paths,
+            strike=_lvl(_f(spec, "strike_pct", 100)),
+            barrier=_lvl(_f(spec, "barrier_pct", 70)),
+            knockin_parti=float(_f(spec, "knockin_parti", 1.0)),
+            call_parti=float(_f(spec, "call_parti", 1.0)),
+            reset_call_parti=float(_f(spec, "reset_call_parti", 1.0)),
+            s0=s0,
+            notional=notional,
+            discount=1.0,
+            discrete=bool(spec.get("discrete_obs", True)),
+        )
+    else:
+        parti = float(_f(spec, "parti", 1.0))
+        rebate_amt = float(_f(spec, "rebate", 0.0)) / s0 * notional * parti
+        pay = eng.barrier_payoff(
+            paths,
+            strike=_lvl(_f(spec, "strike_pct", 100)),
+            barrier=_lvl(_f(spec, "barrier_pct", 110)),
+            rebate=rebate_amt,
+            parti=parti,
+            updown=UpDown(spec.get("updown", "up")),
+            inout=InOut(spec.get("inout", "out")),
+            callput=CallPut(spec.get("callput", "call")),
+            s0=s0,
+            notional=notional,
+            discount=1.0,
+            discrete=bool(spec.get("discrete_obs", True)),
+        )
+    return sgn * float(pay[0])
 
 
 def _maturity_settlement_pv(
@@ -454,11 +564,13 @@ def _maturity_settlement_pv(
     maturity: date,
     *,
     already_ki: bool,
+    rebased: Optional[pd.Series] = None,
 ) -> float:
     """到期结算价值 (非 MC, 已实现 payoff)。"""
     product = ProductType(spec["product_type"])
-    if product not in (ProductType.SNOWBALL, ProductType.PHOENIX):
-        return 0.0
+    if product in (ProductType.AIRBAG, ProductType.BARRIER):
+        return _airbag_barrier_maturity_pv(spec, market, s0, maturity)
+
     start = _parse_date(spec["start_date"])
     day_count = DayCount(spec.get("day_count", "ACT365"))
     notional = float(spec["notional"])
@@ -466,12 +578,22 @@ def _maturity_settlement_pv(
     sgn = sign_of(spec.get("direction", "buy"))
     final_spot = _spot_raw(market, maturity, s0)
     ki_strike = s0 * float(_f(spec, "ki_strike_pct", 80)) / 100.0
+
+    if product == ProductType.PHOENIX:
+        coupons = _phoenix_accrued_coupons_pv(
+            spec, cal, rebased, s0, end_date=maturity, asof=start,
+        )
+        if already_ki:
+            loss = max(ki_strike - final_spot, 0.0) / s0 * notional
+            return sgn * coupons - sgn * loss
+        return sgn * coupons
+
     if already_ki:
         loss = max(ki_strike - final_spot, 0.0) / s0 * notional
         return -sgn * loss
     coupon_div = float(_f(spec, "coupon_div", _f(spec, "coupon_out", 0.0)))
     yf = year_fraction(day_count, start, maturity, cal)
-    return sgn * coupon_div * notional * yf * math.exp(-r * yf)
+    return sgn * coupon_div * notional * yf * _df(r, day_count, start, maturity, cal)
 
 
 def _lifecycle_pv(
@@ -487,12 +609,15 @@ def _lifecycle_pv(
     first_ki_date: Optional[date],
 ) -> float:
     """生命周期感知价值: 敲出锁定票息 / 到期结算 / 存续 MC。"""
+    rebased = _rebased_series(market, eff_start, s0)
     if ko_event_date is not None and vd >= ko_event_date:
-        return _knocked_out_pv(spec, cal, s0, ko_event_date)
+        return _knocked_out_pv(spec, cal, s0, ko_event_date, rebased=rebased)
     if vd >= maturity:
         already_ki = first_ki_date is not None and first_ki_date <= maturity
         return _maturity_settlement_pv(
-            spec, cal, market, s0, maturity, already_ki=already_ki or bool(spec.get("already_ki")),
+            spec, cal, market, s0, maturity,
+            already_ki=already_ki or bool(spec.get("already_ki")),
+            rebased=rebased,
         )
     sub = copy.deepcopy(spec)
     sub["valuation_date"] = vd.isoformat()
@@ -710,7 +835,7 @@ def price_deal(
     )
 
     if status == DealStatus.KNOCKED_OUT.value and ko_event_date is not None:
-        locked_coupon = _knocked_out_pv(spec, cal, s0, ko_event_date)
+        locked_coupon = _knocked_out_pv(spec, cal, s0, ko_event_date, rebased=rebased)
         chart_end = ko_event_date
         chart_days = cal.sessions_in(eff_start, chart_end, include_start=True, include_end=True) or [eff_start]
         # 结果卡口径: 已实现敲出票息; 示意图末日强制同值

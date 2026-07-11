@@ -274,10 +274,10 @@ export function OtcPricingClient() {
         already_ki: f.already_ki as boolean,
       };
     }
-    if (product === "phoenix") {
+    if product === "phoenix") {
       return {
         ...common,
-        ko_barrier_pct: n(f.ko_barrier), ki_barrier_pct: n(f.ki_barrier),
+        ko_barrier_pct: n(f.ko_barrier), ki_barrier_pct: n(f.ki_barrier), ki_strike_pct: n(f.ki_strike),
         coupon_barrier_pct: n(f.coupon_barrier), period_coupon: n(f.period_coupon) / 100,
         ko_freq_months: 1, lock_term_months: n(f.lock_term_months),
         already_ki: f.already_ki as boolean,
@@ -957,6 +957,7 @@ export function OtcPricingClient() {
               <>
                 <Field label="派息障碍" hint="% of 初始"><NumInput value={f.coupon_barrier} onChange={(v) => set("coupon_barrier", v)} step="1" suffix="%" /></Field>
                 <Field label="每期派息" hint="占名义 %"><NumInput value={f.period_coupon} onChange={(v) => set("period_coupon", v)} step="0.01" suffix="%" /></Field>
+                <Field label="敲入行权" hint="% of 初始"><NumInput value={f.ki_strike} onChange={(v) => set("ki_strike", v)} step="1" suffix="%" /></Field>
                 <FieldSwitch label="是否已敲入" checked={f.already_ki as boolean} onChange={(v) => set("already_ki", v)} />
               </>
             )}

@@ -33,6 +33,20 @@ def test_max_weight_cap(synthetic_returns):
     assert abs(w.sum() - 1.0) < 1e-6
 
 
+def test_max_weight_feasible_when_n_small():
+    """n * max_weight < 1 时放宽为 1/n, 不得静默跳过上限。"""
+    import pandas as pd
+
+    rng = np.random.default_rng(0)
+    rets = pd.DataFrame(
+        rng.normal(0, 0.01, (200, 2)),
+        columns=["A", "B"],
+    )
+    w, _ = optimize(rets, method="all_risk_parity", max_weight=1.0 / 3.0)
+    assert abs(w.sum() - 1.0) < 1e-6
+    assert float(w.max()) <= 0.5 + 1e-6
+
+
 def test_quadrant_method_structure(synthetic_returns):
     q_assets = {
         "overheat": ["A0", "A1"],

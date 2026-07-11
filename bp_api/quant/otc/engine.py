@@ -390,20 +390,24 @@ def _log_grid(spot: float, vol: float, t: float, n_points: int = 801) -> np.ndar
 def _transition_matrix(
     ln_s: np.ndarray, dt: float, r: float, q: float, vol: float
 ) -> np.ndarray:
-    """从 t 到 t+dt 的对数正态转移核矩阵 shape (n, n)。"""
+    """从 t 到 t+dt 的对数正态转移核矩阵 shape (n, n)。
+
+    T[i, j] = P(ln_s[j] → ln_s[i]); 列归一化使 sum_i T[i,j] = 1。
+    后向期望: E[V | j] = sum_i T[i,j] V[i] = (T.T @ V)[j]。
+    """
     n = len(ln_s)
     if dt <= 0:
         return np.eye(n)
     drift = (r - q - 0.5 * vol * vol) * dt
     std = vol * np.sqrt(dt)
-    # T[i,j] = prob going from ln_s[j] at t to ln_s[i] at t+dt
+    # T[i,j] = dens of going from ln_s[j] at t to ln_s[i] at t+dt
     diff = ln_s[:, None] - ln_s[None, :] - drift
     kernel = np.exp(-0.5 * (diff / std) ** 2) / (std * np.sqrt(2 * np.pi))
     dx = ln_s[1] - ln_s[0] if n > 1 else 1.0
     kernel *= dx
-    row_sums = kernel.sum(axis=1, keepdims=True)
-    row_sums = np.where(row_sums > 0, row_sums, 1.0)
-    return kernel / row_sums
+    col_sums = kernel.sum(axis=0, keepdims=True)
+    col_sums = np.where(col_sums > 0, col_sums, 1.0)
+    return kernel / col_sums
 
 
 def vanilla_quad(
@@ -471,16 +475,17 @@ def barrier_quad(
     disc = np.exp(-r * dt)
     for _ in range(n_steps - 1, -1, -1):
         T = _transition_matrix(ln_s, dt, r, q, vol)
-        v = disc * (T @ v)
+        v = disc * (T.T @ v)
         spots = np.exp(ln_s)
         if updown == UpDown.UP:
             touched = spots >= barrier
         else:
             touched = spots <= barrier
+        # rebate 为触碰时点即期支付 (已在本步 continuation 贴现之外写入, 避免双重贴现)
         if inout == InOut.OUT:
-            v = np.where(touched, rebate * np.exp(-r * (t - _ * dt)), v)
+            v = np.where(touched, rebate, v)
         else:
-            v = np.where(~touched, rebate * np.exp(-r * (t - _ * dt)), v)
+            v = np.where(~touched, rebate, v)
 
     # 初始 spot 处的价值 (插值)
     ln_spot = np.log(s)

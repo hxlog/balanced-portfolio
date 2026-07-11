@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from bp_api.quant.backtest import run_backtest
 
@@ -107,6 +108,20 @@ def test_stamp_duty_only_on_sell(synthetic_prices):
     # 加入印花税后终值 NAV 更低; 且印花税率越高 NAV 越低(单调)。
     assert res1.nav["nav"].iloc[-1] < res0.nav["nav"].iloc[-1]
     assert res2.nav["nav"].iloc[-1] < res1.nav["nav"].iloc[-1]
+
+
+def test_inception_costs_reduce_nav(synthetic_prices):
+    """建仓按买入周转计费后, 首日 NAV < 1。"""
+    prices, bench, quadrant_assets = synthetic_prices
+    res = run_backtest(
+        prices=prices, benchmark=bench, quadrant_assets=quadrant_assets,
+        method="all_risk_parity", ratio="sharpe",
+        lookback=156, min_window=60, rebalance_band=0.05,
+        risk_free=0.0, trading_days=244,
+        fee_rate=0.00015, slippage_rate=0.00015, stamp_duty_rate=0.0,
+    )
+    assert res.nav["nav"].iloc[0] < 1.0
+    assert res.nav["nav"].iloc[0] == pytest.approx(1.0 - 0.0003, abs=1e-12)
 
 
 def test_cost_formula_buy_sell_split():

@@ -190,6 +190,16 @@ def run_backtest(
     prev_opt = target0
     quadrant_weights = quad0
 
+    # 交易成本: 手续费/滑点双边(买+卖), 印花税仅卖出方。
+    commission_rate = max(float(fee_rate or 0.0), 0.0)
+    slip_rate = max(float(slippage_rate or 0.0), 0.0)
+    stamp_rate = max(float(stamp_duty_rate or 0.0), 0.0)
+
+    # 建仓: 0 → target 视作买入周转=1, 计佣金+滑点 (无卖出则无印花税)
+    inception_cost = 1.0 * (commission_rate + slip_rate)
+    nav = max(0.0, 1.0 - inception_cost)
+    bench_nav = 1.0
+
     rebalances: list[Rebalance] = [
         Rebalance(
             trade_date=effective_start, reason="建仓",
@@ -198,19 +208,12 @@ def run_backtest(
         )
     ]
 
-    nav = 1.0
-    bench_nav = 1.0
     rows = [
-        {"trade_date": effective_start, "nav": 1.0, "benchmark_nav": 1.0,
-         "ret": 0.0, "bench_ret": 0.0}
+        {"trade_date": effective_start, "nav": nav, "benchmark_nav": 1.0,
+         "ret": -inception_cost if inception_cost > 0 else 0.0, "bench_ret": 0.0}
     ]
     # 建仓日权重(当日无收益), 记录用于归因
     weight_rows: list[dict] = [{"trade_date": effective_start, **target0.to_dict()}]
-
-    # 交易成本: 手续费/滑点双边(买+卖), 印花税仅卖出方。
-    commission_rate = max(float(fee_rate or 0.0), 0.0)
-    slip_rate = max(float(slippage_rate or 0.0), 0.0)
-    stamp_rate = max(float(stamp_duty_rate or 0.0), 0.0)
 
     total_steps = max(1, len(price_dates) - (k0 + 1))
     for step_i, k in enumerate(range(k0 + 1, len(price_dates)), start=1):

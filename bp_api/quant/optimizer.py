@@ -100,7 +100,10 @@ def _asset_ratio(returns: pd.DataFrame, ratio: str, rf_daily: float) -> pd.Serie
 # 约束求解 (SLSQP, 仅最大比率类目标使用)
 # ---------------------------------------------------------------------
 def _bounds(n: int, max_weight: Optional[float]) -> list[tuple[float, float]]:
-    hi = 1.0 if max_weight is None else float(max_weight)
+    if max_weight is None:
+        hi = 1.0
+    else:
+        hi = max(float(max_weight), 1.0 / max(n, 1))
     return [(0.0, hi)] * n
 
 
@@ -267,17 +270,22 @@ def _normalize(w: np.ndarray) -> np.ndarray:
 
 
 def _apply_max_weight(w: pd.Series, max_weight: Optional[float]) -> pd.Series:
-    """迭代地把超过上限的权重削平并把多余分给未触顶的标的。"""
-    if max_weight is None or len(w) * max_weight < 0.999:
+    """迭代地把超过上限的权重削平并把多余分给未触顶的标的。
+
+    当 n * max_weight < 1 时放宽为 1/n, 保证可行 (动态宇宙下标准处理)。
+    """
+    if max_weight is None or len(w) == 0:
         return w
+    n = len(w)
+    eff_cap = max(float(max_weight), 1.0 / n)
     w = w.copy()
     for _ in range(100):
-        over = w[w > max_weight]
+        over = w[w > eff_cap]
         if over.empty:
             break
-        excess = (over - max_weight).sum()
-        w[w > max_weight] = max_weight
-        room = w[w < max_weight]
+        excess = (over - eff_cap).sum()
+        w[w > eff_cap] = eff_cap
+        room = w[w < eff_cap]
         if room.empty:
             break
         w[room.index] += excess * room / room.sum()
