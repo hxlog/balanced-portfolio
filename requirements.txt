@@ -1,0 +1,30 @@
+# Balanced Portfolio - 数据落库/增量更新 + 量化引擎 + API 依赖
+# Python 3.11 - 3.14 兼容
+akshare>=1.16.0
+pandas>=2.2.0
+psycopg[binary]>=3.2.0
+psycopg_pool>=3.2.0
+APScheduler>=3.10.0
+python-dotenv>=1.0.0
+tenacity>=8.3.0
+requests>=2.32.0
+curl-cffi>=0.7.0
+
+# 量化引擎（含雪球、凤凰、气囊与障碍产品定价）
+numpy>=1.26.0
+scipy>=1.13.0
+
+# API
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.7.0
+celery>=5.4.0
+redis>=5.0.0
+
+# 鉴权
+PyJWT>=2.8.0
+bcrypt>=4.1.0
+pyotp>=2.9.0
+
+# 测试(开发)
+pytest>=8.0.0

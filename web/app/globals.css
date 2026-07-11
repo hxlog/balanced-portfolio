@@ -1,0 +1,207 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@plugin "@tailwindcss/typography";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --font-size: 16px;
+  --background: #ffffff;
+  --bg-subtle: #fafafa;
+  --foreground: #171717;
+  --card: #ffffff;
+  --card-foreground: #171717;
+  --popover: #ffffff;
+  --popover-foreground: #171717;
+  --primary: #3B82F6;
+  --primary-foreground: #ffffff;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #18181b;
+  --muted: #f4f4f5;
+  --muted-foreground: #666666;
+  --weak-foreground: #a1a1aa;
+  --accent: #f4f4f5;
+  --accent-foreground: #18181b;
+  --destructive: #E5484D;
+  --destructive-foreground: #ffffff;
+  --border: rgba(0, 0, 0, 0.1);
+  --input: transparent;
+  --input-background: #f3f3f5;
+  --switch-background: #cbced4;
+  --font-weight-medium: 500;
+  --font-weight-normal: 400;
+  --ring: rgba(59, 130, 246, 0.5);
+
+  --up: #E5484D;
+  --down: #30A46C;
+  --radius: 0.75rem;
+}
+
+.dark {
+  --background: #0A0A0A;
+  --bg-subtle: #111111;
+  --foreground: #EDEDED;
+  --card: #161616;
+  --card-foreground: #EDEDED;
+  --popover: #161616;
+  --popover-foreground: #EDEDED;
+  --primary: #3B82F6;
+  --primary-foreground: #FFFFFF;
+  --secondary: #27272a;
+  --secondary-foreground: #fafafa;
+  --muted: #27272a;
+  --muted-foreground: #A1A1A1;
+  --weak-foreground: #6E6E6E;
+  --accent: #27272a;
+  --accent-foreground: #fafafa;
+  --destructive: #E5484D;
+  --destructive-foreground: #ffffff;
+  --border: rgba(255, 255, 255, 0.10);
+  --input: rgba(255, 255, 255, 0.10);
+  --ring: rgba(59, 130, 246, 0.5);
+
+  --up: #E5484D;
+  --down: #30A46C;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-bg-subtle: var(--bg-subtle);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-weak: var(--weak-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-input-background: var(--input-background);
+  --color-switch-background: var(--switch-background);
+  --color-ring: var(--ring);
+
+  --color-up: var(--up);
+  --color-down: var(--down);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    overflow-x: clip;
+    max-width: 100%;
+    font-size: var(--font-size);
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+  body {
+    max-width: 100%;
+    overflow-x: clip;
+    @apply bg-background text-foreground;
+  }
+  img, video, svg {
+    max-width: 100%;
+    height: auto;
+  }
+  pre, table {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  h1:not(.prose *), h2:not(.prose *), h3:not(.prose *), h4:not(.prose *) { font-weight: var(--font-weight-medium); line-height: 1.5; }
+  h1:not(.prose *) { font-size: var(--text-2xl); }
+  h2:not(.prose *) { font-size: var(--text-xl); }
+  h3:not(.prose *) { font-size: var(--text-lg); }
+  h4:not(.prose *) { font-size: var(--text-base); }
+  label { font-size: var(--text-base); font-weight: var(--font-weight-medium); line-height: 1.5; }
+  button { font-size: var(--text-base); font-weight: var(--font-weight-medium); line-height: 1.5; }
+  input { font-size: var(--text-base); font-weight: var(--font-weight-normal); line-height: 1.5; }
+}
+
+/* ===== Markdown 文档渲染: Shiki 双主题 + prose 微调 ===== */
+
+/* 标题被 rehype-autolink-headings(wrap) 包裹在 <a> 里, 不应继承链接蓝色 */
+.prose h1 a, .prose h2 a, .prose h3 a, .prose h4 a, .prose h5 a, .prose h6 a {
+  color: inherit;
+  text-decoration: none;
+}
+.prose h1 a:hover, .prose h2 a:hover, .prose h3 a:hover, .prose h4 a:hover {
+  text-decoration: none;
+  opacity: 0.8;
+}
+/* KaTeX 展示公式: 长公式横向滚动, 不裁切(配合 body overflow-x:clip) */
+.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-width: 100%;
+  padding: 0.25rem 0;
+}
+/* prose 内长字符串/URL/行内 code 可在任意处断行, 不撑破屏宽 */
+.prose {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+[data-rehype-pretty-code-figure] {
+  position: relative;
+  margin: 1.25rem 0;
+}
+[data-rehype-pretty-code-figure] pre {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.875rem 1rem;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  background: var(--bg-subtle);
+}
+.dark [data-rehype-pretty-code-figure] pre {
+  background: #0c0d0e;
+}
+[data-rehype-pretty-code-figure] [data-line] {
+  padding: 0 0.25rem;
+}
+/* dual theme: rehype-pretty-code 0.14 在 token span 注入 --shiki-light / --shiki-dark 内联变量,
+   pre 带 data-theme="github-light github-dark"; 按 .dark 类取用对应变量。 */
+[data-rehype-pretty-code-figure] span {
+  color: var(--shiki-light);
+}
+.dark [data-rehype-pretty-code-figure] span {
+  color: var(--shiki-dark);
+}
+[data-rehype-pretty-code-figure] span,
+[data-rehype-pretty-code-figure] span span {
+  background-color: transparent !important;
+}
+[data-rehype-pretty-code-title] {
+  display: inline-block;
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  border-radius: 0.5rem 0.5rem 0 0;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  background: var(--muted);
+  margin-bottom: -1px;
+}
+[data-rehype-pretty-code-title] + pre {
+  border-radius: 0 0.5rem 0.5rem 0.5rem;
+}
+/* 行高亮 */
+[data-rehype-pretty-code-figure] [data-line][data-highlight="true"] {
+  background: var(--muted);
+  border-left: 2px solid var(--primary);
+}

@@ -1,0 +1,67 @@
+# ===== 环境与密钥 =====
+.env
+.env.local
+.env.*.local
+
+# ===== Python 依赖与缓存 =====
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ===== Node / 前端构建产物(任意目录) =====
+node_modules/
+.pnpm-store/
+.next/
+out/
+.turbo/
+.vercel/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ===== 本地参考/原型(非生产代码, 勿提交) =====
+Balanced Portfolio Prototype Design Figma/
+autocallables-pricing-master/
+vendor/
+风险平价理论资料/
+.claude/
+
+# 根目录产品说明与粘贴素材
+Balanced Portfolio*.md
+产品原型图*.md
+Pasted image *.png
+Pasted_image_*.png
+*.pdf
+*_out.txt
+candidates.json
+validated_candidates.json
+
+# ===== 日志 =====
+logs/
+*.log
+
+# ===== IDE / OS =====
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== 临时脚本 =====
+_e2e.py
