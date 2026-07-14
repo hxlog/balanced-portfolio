@@ -5,9 +5,11 @@
 
 **Balanced Portfolio 是基于桥水基金风险平价理论的投资组合管理与回测系统，包括中金所股指期货描述性统计和场外期权自动敲入敲出产品(autocallables)结构化产品定价功能**，供广大投资者参考和交流学习。
 
-项目主页：[github.com/hxlog/balanced-portfolio](https://github.com/hxlog/balanced-portfolio)
+项目仓库：[github.com/hxlog/balanced-portfolio](https://github.com/hxlog/balanced-portfolio)
 
 Demo：https://xushilu.com
+
+介绍与说明（长文）：[我全栈开发的第一个产品：Balanced Portfolio 多资产风险平价全天候策略回测系统](https://prologue.dev/blog/my-first-full-stack-development-project-balanced-portfolio-a-global-multi-asset-risk-parity-backtesting-system)
 
 ## 主要功能
 
