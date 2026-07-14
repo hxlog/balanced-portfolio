@@ -55,12 +55,13 @@ def start(app: AppConfig) -> None:
         except Exception as exc:  # noqa: BLE001
             logger.exception("CFFEX 增量同步异常: %s", exc)
 
+    # 注意: 勿传 next_run_time=None — APScheduler 会将其视为 paused, 周期永不触发。
+    # 启动立即执行由下方 job()/cffex_job() 负责; interval 从 start() 后按间隔调度。
     scheduler.add_job(
         job,
         "interval",
         hours=app.schedule_hours,
         id="bp_incremental",
-        next_run_time=None,  # 不在启动时立即执行(由 CLI --run-now 控制)
         max_instances=1,
         coalesce=True,
     )
@@ -69,7 +70,6 @@ def start(app: AppConfig) -> None:
         "interval",
         minutes=20,
         id="bp_enqueue_ready",
-        next_run_time=None,
         max_instances=1,
         coalesce=True,
     )
@@ -78,7 +78,6 @@ def start(app: AppConfig) -> None:
         "interval",
         hours=app.cffex_sync_hours,
         id="bp_cffex_sync",
-        next_run_time=None,
         max_instances=1,
         coalesce=True,
     )

@@ -94,7 +94,7 @@ def load_config() -> AppConfig:
         request_interval=_get_float("BP_REQUEST_INTERVAL", 2.5),
         request_jitter=_get_float("BP_REQUEST_JITTER", 3.5),
         schedule_hours=_get_int("BP_SCHEDULE_HOURS", 6),
-        cffex_sync_hours=_get_int("BP_CFFEX_SYNC_HOURS", 2),
+        cffex_sync_hours=_get_int("BP_CFFEX_SYNC_HOURS", 1),
         log_level=os.getenv("BP_LOG_LEVEL", "INFO").upper(),
     )
 
