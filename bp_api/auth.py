@@ -322,29 +322,36 @@ def create_user(email: str, password: str) -> None:
         conn.commit()
 
 
-def update_user(email: str, portfolio_limit: Optional[int] = None, status: Optional[str] = None) -> None:
+def update_user(email: str, portfolio_limit: Optional[int] = None, status: Optional[str] = None) -> dict:
     email = email.strip().lower()
     if is_super_admin(email):
         raise HTTPException(400, "不能修改超级管理员限制")
+    if portfolio_limit is None and status is None:
+        raise HTTPException(400, "未提供可更新字段")
     with db.get_conn() as conn:
         if not _has_bp_user(conn):
             raise HTTPException(400, "请先执行平台升级 DDL")
         with conn.cursor() as cur:
-            cur.execute("SELECT 1 FROM bp_user WHERE email=%s", (email,))
-            if cur.fetchone() is None:
+            cur.execute("SELECT portfolio_limit FROM bp_user WHERE email=%s", (email,))
+            row = cur.fetchone()
+            if row is None:
                 raise HTTPException(404, "用户不存在")
+            current_limit = int(row[0])
             if portfolio_limit is not None:
                 if portfolio_limit < 0:
                     raise HTTPException(400, "组合上限不能为负数")
                 cur.execute(
-                    "UPDATE bp_user SET portfolio_limit=%s WHERE email=%s",
+                    """UPDATE bp_user SET portfolio_limit=%s WHERE email=%s
+                       RETURNING portfolio_limit""",
                     (portfolio_limit, email),
                 )
+                current_limit = int(cur.fetchone()[0])
             if status is not None:
                 if status not in ("active", "disabled"):
                     raise HTTPException(400, "用户状态非法")
                 cur.execute("UPDATE bp_user SET status=%s WHERE email=%s", (status, email))
         conn.commit()
+    return {"email": email, "portfolio_limit": current_limit}
 
 
 def delete_user(email: str, actor_email: str) -> None:

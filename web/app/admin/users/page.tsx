@@ -22,6 +22,7 @@ export default function AdminUsersPage() {
   const [loading, setLoading] = useState(true);
   const [savingLimit, setSavingLimit] = useState<string | null>(null);
   const [limits, setLimits] = useState<Record<string, number>>({});
+  const [saveOk, setSaveOk] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -74,10 +75,20 @@ export default function AdminUsersPage() {
   };
 
   const onSaveLimit = async (target: string) => {
+    const raw = limits[target];
+    const portfolio_limit = Number.isFinite(raw) ? Math.trunc(raw) : NaN;
+    if (!Number.isFinite(portfolio_limit) || portfolio_limit < 0) {
+      setError("组合上限须为非负整数");
+      setSaveOk(null);
+      return;
+    }
     setSavingLimit(target);
     setError(null);
+    setSaveOk(null);
     try {
-      await api.updateUser(target, { portfolio_limit: limits[target] ?? 3 });
+      const res = await api.updateUser(target, { portfolio_limit });
+      setLimits((m) => ({ ...m, [target]: res.portfolio_limit }));
+      setSaveOk(`${res.email} 组合上限已更新为 ${res.portfolio_limit}`);
       await load();
     } catch (e) {
       setError(String(e));
@@ -102,6 +113,11 @@ export default function AdminUsersPage() {
       {error && (
         <div className="bg-destructive/10 border border-destructive/30 text-destructive text-sm p-4 rounded-lg">
           {error}
+        </div>
+      )}
+      {saveOk && (
+        <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-sm p-4 rounded-lg">
+          {saveOk}
         </div>
       )}
 
@@ -156,20 +172,30 @@ export default function AdminUsersPage() {
                       ) : (
                         <div className="flex items-center gap-2">
                           <Input
-                            type="number"
-                            min={0}
-                            value={limits[u.email] ?? u.portfolio_limit ?? 3}
-                            onChange={(e) => setLimits((m) => ({ ...m, [u.email]: Number(e.target.value) }))}
-                            className="w-20 h-8 font-mono"
-                          />
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => onSaveLimit(u.email)}
-                            disabled={savingLimit === u.email}
-                          >
-                            保存
-                          </Button>
+  id={`portfolio-limit-${u.email}`}
+  name={`portfolio_limit_${u.email}`}
+  type="number"
+  min={0}
+  step={1}
+  value={limits[u.email] ?? u.portfolio_limit ?? 3}
+  onChange={(e) => {
+    const n = Number(e.target.value);
+    setLimits((m) => ({
+      ...m,
+      [u.email]: Number.isFinite(n) ? Math.trunc(n) : 0,
+    }));
+  }}
+  className="w-20 h-8 font-mono"
+/>
+<Button
+  type="button"
+  variant="outline"
+  size="sm"
+  onClick={() => onSaveLimit(u.email)}
+  disabled={savingLimit === u.email}
+>
+  保存
+</Button>
                         </div>
                       )}
                     </TableCell>

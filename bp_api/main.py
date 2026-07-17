@@ -203,8 +203,8 @@ def delete_admin_user(email: str, actor: auth.UserContext = Depends(auth.require
 
 @app.patch("/api/admin/users/{email}")
 def update_admin_user(email: str, payload: UpdateUserIn, _: auth.UserContext = Depends(auth.require_super_admin)) -> dict:
-    auth.update_user(email, payload.portfolio_limit, payload.status)
-    return {"ok": True}
+    updated = auth.update_user(email, payload.portfolio_limit, payload.status)
+    return {"ok": True, **updated}
 
 
 @app.post("/api/auth/change-password")

@@ -765,10 +765,13 @@ export const api = {
   deleteUser: (email: string) =>
     req<{ ok: boolean }>(`/api/admin/users/${encodeURIComponent(email)}`, { method: "DELETE" }),
   updateUser: (email: string, input: { portfolio_limit?: number | null; status?: string }) =>
-    req<{ ok: boolean }>(`/api/admin/users/${encodeURIComponent(email)}`, {
-      method: "PATCH",
-      body: JSON.stringify(input),
-    }),
+    req<{ ok: boolean; email: string; portfolio_limit: number }>(
+      `/api/admin/users/${encodeURIComponent(email)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(input),
+      },
+    ),
   login: (email: string, password: string, otp_code?: string) =>
     sessionFetch<{ token?: string; email: string; requires_2fa?: boolean }>("/api/session", {
       method: "POST",
