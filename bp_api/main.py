@@ -118,7 +118,7 @@ async def lifespan(app: FastAPI):
 from . import cffex as _cffex
 from . import otc_api as _otc
 
-app = FastAPI(title="Balanced Portfolio API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Balanced Portfolio API", version="1.0.0", lifespan=lifespan)
 _cffex.register_routes(app)
 _otc.register_routes(app)
 
