@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Iterable, Iterator, Optional
 
@@ -112,6 +112,22 @@ def get_last_trade_date(
             "SELECT max(trade_date) FROM bp_index_quote_daily "
             "WHERE symbol = %s AND source = %s",
             (symbol, source),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
+def get_quote_updated_at(
+    conn: psycopg.Connection, symbol: str, source: str, trade_date: date
+) -> Optional[datetime]:
+    """单日行情行的 updated_at; 无行则 None。用于判断盘中脏 close 是否需收盘后重拉。"""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT updated_at FROM bp_index_quote_daily
+            WHERE symbol = %s AND source = %s AND trade_date = %s
+            """,
+            (symbol, source, trade_date),
         )
         row = cur.fetchone()
         return row[0] if row else None

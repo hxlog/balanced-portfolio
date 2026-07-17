@@ -53,6 +53,14 @@ _PERIOD_DAYS = {
 CFFEX_SPOT_CACHE_KEY = "cffex:spot:closed"
 
 
+def _spot_cache_key() -> str:
+    """盘前/盘后分桶, 避免 15:10 前后共用同一缓存快照。"""
+    from bp_ingest.calendar import session_close_confirmed_at
+
+    suffix = "post" if session_close_confirmed_at() else "pre"
+    return f"{CFFEX_SPOT_CACHE_KEY}:{suffix}"
+
+
 def _lazy_cmap():
     """Lazy-import cffex_contract_map (避免 uvicorn reload loop)。"""
     from bp_ingest.cffex_contract_map import (
@@ -64,6 +72,8 @@ def _lazy_cmap():
 def invalidate_cffex_spot_cache() -> None:
     """期货/现货入库后失效看板快照缓存。"""
     cache.delete(CFFEX_SPOT_CACHE_KEY)
+    cache.delete(f"{CFFEX_SPOT_CACHE_KEY}:pre")
+    cache.delete(f"{CFFEX_SPOT_CACHE_KEY}:post")
     cache.delete_pattern("cffex:history:*")
     cache.delete_pattern("cffex:stats:*")
 
@@ -74,14 +84,19 @@ def pick_effective_trade_date(
     spot_symbols_by_date: dict[date, set[str]],
     required_varieties: list[str] | None = None,
     required_spot_symbols: list[str] | None = None,
+    *,
+    max_confirmed_date: date | None = None,
 ) -> Optional[date]:
     """最近一个「四品种期货齐全且四挂钩指数同日有收盘」的交易日。
 
     纯函数, 便于单测。candidate_dates 须降序。
+    max_confirmed_date: 若给定, 只考虑 <= 该日的候选(排除未确认收盘的今日)。
     """
     vars_need = set(required_varieties or CFFEX_VARIETIES)
     spots_need = set(required_spot_symbols or CFFEX_INDEX_SYMBOLS)
     for d in candidate_dates:
+        if max_confirmed_date is not None and d > max_confirmed_date:
+            continue
         if not vars_need.issubset(futures_varieties_by_date.get(d, set())):
             continue
         if not spots_need.issubset(spot_symbols_by_date.get(d, set())):
@@ -94,9 +109,62 @@ def pick_effective_trade_date(
 # 收盘快照 (纯 DB 读)
 # ---------------------------------------------------------------------------
 
+def _index_closes_post_confirmed(
+    cur,
+    trade_date: date,
+    *,
+    now: datetime,
+) -> bool:
+    """四挂钩指数在 trade_date 的原始行情是否均在收盘确认时刻之后写入。
+
+    只看 bp_index_quote_daily(抓取落库时间)。bp_quote_clean 的 updated_at
+    会在 rebuild 时被刷新, 即使 close 仍是盘中脏价, 不能当作收盘确认证据。
+    历史日(早于今天)直接通过。
+    """
+    from bp_ingest.calendar import close_confirm_deadline, now_cst
+
+    wall = now_cst(now)
+    if trade_date < wall.date():
+        return True
+    deadline = close_confirm_deadline(trade_date)
+    cur.execute(
+        """
+        SELECT symbol, MAX(updated_at) AS ua
+        FROM bp_index_quote_daily
+        WHERE symbol = ANY(%s) AND trade_date = %s
+        GROUP BY symbol
+        """,
+        (CFFEX_INDEX_SYMBOLS, trade_date),
+    )
+    rows = cur.fetchall()
+    by_sym = {r[0]: r[1] for r in rows}
+    for sym in CFFEX_INDEX_SYMBOLS:
+        ua = by_sym.get(sym)
+        if ua is None:
+            return False
+        if ua.tzinfo is None:
+            ua = ua.replace(tzinfo=CST)
+        else:
+            ua = ua.astimezone(CST)
+        if ua < deadline:
+            return False
+    return True
+
+
 def _build_closing_snapshot() -> dict:
     Contract, days_to_expiry, map_contracts_from_symbols = _lazy_cmap()
-    now = datetime.now(CST)
+    from bp_ingest.calendar import (
+        is_trade_date_close_confirmed,
+        now_cst,
+        session_close_confirmed_at,
+    )
+
+    now = now_cst()
+    today = now.date()
+    # 未确认收盘时, 看板最多展示到昨日(即使库中已有今日脏行)
+    max_confirmed: date | None = today
+    if not is_trade_date_close_confirmed(today, now=now, today=today):
+        max_confirmed = today - timedelta(days=1)
 
     with db.get_conn() as conn:
         with conn.cursor() as cur:
@@ -112,6 +180,7 @@ def _build_closing_snapshot() -> dict:
                     "trading_status": "closed", "indices": [], "contracts": [],
                     "fetched_at": now.isoformat(), "source": "db_empty",
                     "is_synced": False,
+                    "close_confirmed": session_close_confirmed_at(now),
                 }
 
             futures_latest: date = candidate_dates[0]
@@ -147,13 +216,29 @@ def _build_closing_snapshot() -> dict:
 
             spot_latest: date | None = None
             for d in candidate_dates:
+                if max_confirmed is not None and d > max_confirmed:
+                    continue
                 if set(CFFEX_INDEX_SYMBOLS).issubset(spot_symbols_by_date.get(d, set())):
                     spot_latest = d
                     break
 
             effective_td = pick_effective_trade_date(
                 candidate_dates, futures_varieties_by_date, spot_symbols_by_date,
+                max_confirmed_date=max_confirmed,
             )
+            # 今日行若仍是收盘确认前写入的脏价, 继续回退到更早完整日
+            while effective_td is not None and not _index_closes_post_confirmed(
+                cur, effective_td, now=now
+            ):
+                logger.warning(
+                    "CFFEX spot: %s 指数收盘价尚未经收盘后确认, 回退候选日",
+                    effective_td,
+                )
+                earlier = [d for d in candidate_dates if d < effective_td]
+                effective_td = pick_effective_trade_date(
+                    earlier, futures_varieties_by_date, spot_symbols_by_date,
+                    max_confirmed_date=max_confirmed,
+                )
             if effective_td is None:
                 return {
                     "trading_status": "closed", "indices": [], "contracts": [],
@@ -161,6 +246,7 @@ def _build_closing_snapshot() -> dict:
                     "futures_latest": futures_latest.isoformat(),
                     "spot_latest": spot_latest.isoformat() if spot_latest else None,
                     "is_synced": False,
+                    "close_confirmed": session_close_confirmed_at(now),
                 }
 
             is_synced = futures_latest == effective_td
@@ -177,28 +263,36 @@ def _build_closing_snapshot() -> dict:
                 prev_pt = None
                 if idx_sym:
                     cur.execute("""
-                        SELECT close FROM (
-                            SELECT close FROM bp_quote_clean
-                            WHERE symbol = %s AND trade_date = %s
-                            UNION ALL
+                        SELECT close FROM bp_quote_clean
+                        WHERE symbol = %s AND trade_date = %s
+                        LIMIT 1
+                    """, (idx_sym, effective_td))
+                    r = cur.fetchone()
+                    if not r:
+                        cur.execute("""
                             SELECT close FROM bp_index_quote_daily
                             WHERE symbol = %s AND trade_date = %s
-                        ) sub LIMIT 1
-                    """, (idx_sym, effective_td, idx_sym, effective_td))
-                    r = cur.fetchone()
+                            ORDER BY updated_at DESC NULLS LAST
+                            LIMIT 1
+                        """, (idx_sym, effective_td))
+                        r = cur.fetchone()
                     if r:
                         pt = float(r[0])
 
                     cur.execute("""
-                        SELECT close FROM (
-                            SELECT close FROM bp_quote_clean
-                            WHERE symbol = %s AND trade_date = %s
-                            UNION ALL
+                        SELECT close FROM bp_quote_clean
+                        WHERE symbol = %s AND trade_date = %s
+                        LIMIT 1
+                    """, (idx_sym, prev_td))
+                    r = cur.fetchone()
+                    if not r:
+                        cur.execute("""
                             SELECT close FROM bp_index_quote_daily
                             WHERE symbol = %s AND trade_date = %s
-                        ) sub LIMIT 1
-                    """, (idx_sym, prev_td, idx_sym, prev_td))
-                    r = cur.fetchone()
+                            ORDER BY updated_at DESC NULLS LAST
+                            LIMIT 1
+                        """, (idx_sym, prev_td))
+                        r = cur.fetchone()
                     if r:
                         prev_pt = float(r[0])
 
@@ -275,6 +369,7 @@ def _build_closing_snapshot() -> dict:
         CONTRACT_TYPE_ORDER.get(x.get("contract_type", ""), 99),
     ))
 
+    close_ok = is_trade_date_close_confirmed(effective_td, now=now, today=today)
     return {
         "trading_status": "closed",
         "indices": indices_out,
@@ -282,9 +377,11 @@ def _build_closing_snapshot() -> dict:
         "fetched_at": now.isoformat(),
         "source": f"db_close_{effective_td.isoformat()}",
         "data_date": effective_td.isoformat(),
+        "as_of": f"{effective_td.isoformat()} 15:00:00",
         "futures_latest": futures_latest.isoformat(),
         "spot_latest": spot_latest.isoformat() if spot_latest else None,
         "is_synced": is_synced,
+        "close_confirmed": close_ok,
     }
 
 
@@ -294,12 +391,13 @@ def _build_closing_snapshot() -> dict:
 
 def _handle_spot() -> dict:
     """最新收盘快照: Redis 30min 缓存, 未命中则从 DB 构建并回写。"""
-    cached = cache.get_json(CFFEX_SPOT_CACHE_KEY)
+    key = _spot_cache_key()
+    cached = cache.get_json(key)
     if cached is not None:
         return cached
     data = _build_closing_snapshot()
     if data.get("contracts"):
-        cache.set_json(CFFEX_SPOT_CACHE_KEY, data, ttl_seconds=1800)
+        cache.set_json(key, data, ttl_seconds=1800)
     return data
 
 

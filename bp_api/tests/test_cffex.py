@@ -205,3 +205,18 @@ class TestPickEffectiveTradeDate:
             [t], {t: vars_all}, {t: {"000300"}},  # 缺其余指数
         )
         assert picked is None
+
+    def test_max_confirmed_excludes_today(self):
+        from bp_api.cffex import pick_effective_trade_date
+
+        t = date(2026, 7, 17)
+        t1 = date(2026, 7, 16)
+        vars_all = {"IF", "IH", "IC", "IM"}
+        spots_all = {"000300", "000016", "000905", "000852"}
+        picked = pick_effective_trade_date(
+            [t, t1],
+            {t: vars_all, t1: vars_all},
+            {t: spots_all, t1: spots_all},
+            max_confirmed_date=t1,
+        )
+        assert picked == t1

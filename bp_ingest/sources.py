@@ -511,30 +511,41 @@ def get_adapter(source: str) -> SourceAdapter:
     return SOURCES[source]
 
 
-# 东方财富(em)源被反爬 IP 掐断时的等价降级源(em → sina/tx)。
+# 东方财富(em)源被反爬 IP 掐断时的等价降级链(em → sina → tx)。
 # 仅在 em 源抛连接级错误(ConnectionError/RemoteDisconnected/Timeout)时降级;
+# 若降级源尚未发布当日收盘 bar, 继续尝试链上下一源。
 # 降级后数据仍按原 source 落库, 对回测面板透明。
 #
 # 注意: etf_em 不在此映射中 —— ETF 必须用后复权(hfq)数据, 而 etf_sina 返回未复权价,
 # 降级会污染 hfq 系列(混合复权/未复权价, 破坏滚动协方差/ERC 权重)。故 etf_em 拉取
 # 失败时直接报错暂空, 由调度器重试, 绝不降级到 etf_sina。指数/HK/全球无复权概念,
-# sina 与 em 同值, 降级无害, 保留。
-EM_FALLBACK_SOURCE: dict[str, str] = {
-    "cn_index_em": "cn_index_sina",
-    "cn_index_em_px": "cn_index_tx",
-    "hk_index_em": "hk_index_sina",
-    "global_index_em": "global_index_sina",
+# sina/tx 与 em 同值, 降级无害, 保留。
+EM_FALLBACK_CHAIN: dict[str, list[str]] = {
+    "cn_index_em": ["cn_index_sina", "cn_index_tx"],
+    "cn_index_em_px": ["cn_index_tx"],
+    "hk_index_em": ["hk_index_sina"],
+    "global_index_em": ["global_index_sina"],
 }
+
+# 兼容旧引用
+EM_FALLBACK_SOURCE: dict[str, str] = {
+    k: v[0] for k, v in EM_FALLBACK_CHAIN.items() if v
+}
+
+
+def _frame_covers_end(df: pd.DataFrame, end: date) -> bool:
+    if df is None or df.empty or "trade_date" not in df.columns:
+        return False
+    return end in set(df["trade_date"].tolist())
 
 
 def fetch_with_fallback(
     source: str, symbol: str, start: date, end: date, extra: dict | None = None
 ) -> pd.DataFrame:
-    """优先用 source 拉取; 若 em 源被反爬掐断(连接级错误), 自动降级到等价 sina/tx 源。
+    """优先用 source 拉取; 若 em 源被反爬掐断, 沿降级链尝试 sina/tx。
 
-    em 的 push2his/push2 主机基于 TLS 指纹(JA3)/IP 信誉掐断连接(RemoteDisconnected),
-    curl_cffi(Chrome 指纹)可绕过部分端点(ETF), 仍被掐的端点(index_code_id_map 等)降级到 sina/tx。
-    数据落库时仍用原 source 键, 回测面板按原 source 读取, 透明。
+    另: 主源或某一降级源成功但尚未包含 end(常见于新浪晚于腾讯发布当日收盘)时,
+    继续尝试链上下一源, 以便收盘后强制重拉能拿到正式 close。
     """
     import requests as _requests
 
@@ -548,17 +559,45 @@ def fetch_with_fallback(
 
     extra = extra or {}
     adapter = get_adapter(source)
+    chain = EM_FALLBACK_CHAIN.get(source, [])
+    last_df: pd.DataFrame | None = None
+
     try:
-        return adapter.fetch(symbol, start, end, extra)
+        last_df = adapter.fetch(symbol, start, end, extra)
+        if _frame_covers_end(last_df, end) or not chain:
+            return last_df
+        logger.info(
+            "源 %s 拉取 %s 缺 end=%s, 尝试降级链补全日 K",
+            source, symbol, end,
+        )
     except _conn_exc as exc:
-        fb = EM_FALLBACK_SOURCE.get(source)
-        if not fb or fb == source:
+        if not chain:
             raise
         logger.warning(
-            "源 %s 拉取 %s 被掐断(%s), 降级到 %s",
-            source, symbol, type(exc).__name__, fb,
+            "源 %s 拉取 %s 被掐断(%s), 降级链 %s",
+            source, symbol, type(exc).__name__, chain,
         )
-        return get_adapter(fb).fetch(symbol, start, end, extra)
+
+    for fb in chain:
+        try:
+            df = get_adapter(fb).fetch(symbol, start, end, extra)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("降级源 %s 拉取 %s 失败: %s", fb, symbol, exc)
+            continue
+        if _frame_covers_end(df, end):
+            if last_df is not None and not last_df.empty:
+                logger.info("降级源 %s 补齐 %s 的 end=%s", fb, symbol, end)
+            return df
+        if last_df is None or last_df.empty or (
+            not df.empty
+            and df["trade_date"].max() > last_df["trade_date"].max()
+        ):
+            last_df = df
+
+    if last_df is not None:
+        return last_df
+    raise RuntimeError(f"源 {source} 及降级链均无法拉取 {symbol}")
+
 
 
 def prewarm_em_code_maps() -> None:

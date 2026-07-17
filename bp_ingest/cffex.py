@@ -31,6 +31,11 @@ import pandas as pd
 import psycopg
 
 from . import db as ingest_db
+from .calendar import (
+    filter_confirmed_trade_dates,
+    is_trade_date_close_confirmed,
+    now_cst,
+)
 from .config import AppConfig, load_config
 from .cffex_contract_map import (
     CFFEX_VARIETIES,
@@ -203,12 +208,20 @@ def _upsert_premium_daily(conn: psycopg.Connection, row: dict) -> None:
 def _ingest_contracts(
     conn: psycopg.Connection,
     df: pd.DataFrame,
+    *,
+    now: datetime | None = None,
 ) -> int:
     """从 akshare DataFrame 解析合约并写入 bp_cffex_contract_daily。返回写入行数。"""
+    wall = now_cst(now)
+    today = wall.date()
     written = 0
+    skipped_unconfirmed = 0
     for _, row in df.iterrows():
         td = _to_date(row.get("trade_date") or row.get("date"))
         if td is None:
+            continue
+        if not is_trade_date_close_confirmed(td, now=wall, today=today):
+            skipped_unconfirmed += 1
             continue
         sym = str(row.get("symbol", "")).strip().upper()
         # 仅 IF/IH/IC/IM
@@ -228,6 +241,8 @@ def _ingest_contracts(
             "turnover": _safe_num(row.get("turnover")),
         })
         written += 1
+    if skipped_unconfirmed:
+        logger.info("收盘未确认, 跳过 %d 行当日期货日 K", skipped_unconfirmed)
     return written
 
 
@@ -244,6 +259,11 @@ def _compute_premiums(
     优化原理: 将合同数据和指数价格一次性加载到内存,
     在 Python 中完成所有计算, 最后用 execute_values 批量写入。
     """
+    if not trade_dates:
+        return 0
+
+    # 未确认收盘的当日不参与升贴水(避免盘中脏现货/期货)
+    trade_dates = filter_confirmed_trade_dates(list(trade_dates))
     if not trade_dates:
         return 0
 
@@ -267,6 +287,8 @@ def _compute_premiums(
 
     # --- 2. 一次性加载所有指数收盘价 ---
     index_prices: dict[tuple[str, date], float] = {}
+    wall = now_cst()
+    today = wall.date()
     for variety in CFFEX_VARIETIES:
         idx_sym = INDEX_SYMBOL_MAP.get(variety)
         if not idx_sym:
@@ -281,6 +303,8 @@ def _compute_premiums(
                 rows = cur.fetchall()
                 if rows:
                     for td, close_val in rows:
+                        if not is_trade_date_close_confirmed(td, now=wall, today=today):
+                            continue
                         if close_val is not None and (variety, td) not in index_prices:
                             index_prices[(variety, td)] = float(close_val)
             if any((variety, td) in index_prices for td in trade_dates[:5]):
@@ -288,7 +312,7 @@ def _compute_premiums(
         # 任一目标日缺现货则尝试 akshare 补拉 (尤其最新期货日)
         missing = sum(1 for td in trade_dates if (variety, td) not in index_prices)
         if missing > 0:
-            _ensure_index_data(conn, variety, index_prices, trade_dates)
+            _ensure_index_data(conn, variety, index_prices, trade_dates, now=wall)
         logger.info("  指数 %s: %d 个交易日价格已加载", variety,
                      sum(1 for td in trade_dates if (variety, td) in index_prices))
 
@@ -396,21 +420,33 @@ def _compute_premiums(
 def _ensure_index_data(
     conn: psycopg.Connection, variety: str,
     index_prices: dict, trade_dates: list[date],
+    *,
+    now: datetime | None = None,
 ) -> None:
-    """拉取缺失的指数历史数据并写入 DB + 更新内存 index_prices。"""
+    """拉取缺失的指数历史数据并写入 DB + 更新内存 index_prices。
+
+    允许新浪补拉, 但今日未过收盘确认时刻的行不落库、不写入内存价,
+    避免盘中最新价污染正式收盘。
+    """
     idx_sym = INDEX_SYMBOL_MAP.get(variety)
     sina_sym = INDEX_SINA_MAP.get(variety)
     if not idx_sym or not sina_sym:
         return
+    wall = now_cst(now)
+    today = wall.date()
     try:
         logger.info("指数 %s 从 akshare 补拉: %s", variety, sina_sym)
         df = ak.stock_zh_index_daily(symbol=sina_sym)
         if df is None or df.empty:
             return
         rows_written = 0
+        skipped_unconfirmed = 0
         for _, row in df.iterrows():
             td = _to_date(row.get("date") or row.get("trade_date"))
             if td is None:
+                continue
+            if not is_trade_date_close_confirmed(td, now=wall, today=today):
+                skipped_unconfirmed += 1
                 continue
             close_val = row.get("close")
             if close_val is None or (isinstance(close_val, float) and pd.isna(close_val)):
@@ -427,6 +463,8 @@ def _ensure_index_data(
             # 同时更新内存
             index_prices[(variety, td)] = float(close_val)
         conn.commit()
+        if skipped_unconfirmed:
+            logger.info("指数 %s: 收盘未确认, 跳过今日 %d 行", variety, skipped_unconfirmed)
         logger.info("指数 %s: 写入 %d 行", variety, rows_written)
     except Exception as exc:
         logger.warning("指数 %s akshare 补拉失败: %s", variety, exc)
@@ -457,16 +495,21 @@ def cffex_sync(
         logger.info("已清空 bp_cffex_premium_daily (准备重算)")
 
     last_date = _get_last_date(conn)
-    today = date.today()
+    wall = now_cst()
+    today = wall.date()
+    # 盘中不把「今天」当作同步终点, 避免未确认日 K 入库
+    sync_end = today
+    if not is_trade_date_close_confirmed(today, now=wall, today=today):
+        sync_end = today - timedelta(days=1)
 
     if last_date is None or force_full:
         start = DEFAULT_START
-        logger.info("=== 全量回填: %s → %s ===", start, today)
+        logger.info("=== 全量回填: %s → %s ===", start, sync_end)
     else:
         start = last_date - timedelta(days=REVISION_DAYS)
-        logger.info("=== 增量同步: %s → %s (last=%s) ===", start, today, last_date)
+        logger.info("=== 增量同步: %s → %s (last=%s) ===", start, sync_end, last_date)
 
-    end = today
+    end = sync_end
 
     # 1. 拉取期货数据 (仅 re-fetch 模式; recompute_premium 单独模式跳过拉取)
     skip_fetch = recompute_premium and not force_full
@@ -486,7 +529,7 @@ def cffex_sync(
             if y_start <= y_end:
                 df = fetch_cffex_futures_daily(y_start, y_end)
                 if df is not None and not df.empty:
-                    n = _ingest_contracts(conn, df)
+                    n = _ingest_contracts(conn, df, now=wall)
                     stats["contracts"] += n
                     logger.info("  %d年: %d 行入库", year, n)
                     futures_success = True
@@ -511,9 +554,8 @@ def cffex_sync(
 
     conn.commit()
 
-    # 2. premium 计算
+    # 2. premium 计算 — 增量窗口内全量重算, 以便现货收盘价修正后覆盖脏 spot_price
     if recompute_premium or force_full:
-        # 全量重算: 取所有有合约数据的交易日
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT DISTINCT trade_date FROM bp_cffex_contract_daily
@@ -523,8 +565,14 @@ def cffex_sync(
             premium_dates = [r[0] for r in cur.fetchall()]
         logger.info("全量重算 premium: %d 个交易日", len(premium_dates))
     else:
-        premium_dates = _get_fresh_premium_dates(conn, start)
-    logger.info("需计算 premium: %d 个交易日", len(premium_dates))
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT trade_date FROM bp_cffex_contract_daily
+                WHERE variety = ANY(%s) AND trade_date >= %s
+                ORDER BY trade_date
+            """, (CFFEX_VARIETIES, start))
+            premium_dates = [r[0] for r in cur.fetchall()]
+        logger.info("窗口重算 premium: %d 个交易日", len(premium_dates))
 
     stats["premium_days"] = _compute_premiums(conn, premium_dates)
     conn.commit()

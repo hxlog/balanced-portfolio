@@ -57,9 +57,11 @@ interface SpotResponse {
   contracts: ContractSpot[];
   fetched_at: string;
   data_date?: string;  // e.g. "2026-07-03" — 期货与现货同日对齐日
+  as_of?: string;      // e.g. "2026-07-03 15:00:00"
   futures_latest?: string;
   spot_latest?: string | null;
   is_synced?: boolean;
+  close_confirmed?: boolean;
   source?: string;
 }
 
@@ -351,9 +353,17 @@ export function CffexClient() {
     };
   }, [historyData, selectedIndices, indexSeries, isDark, cardBg, fg, textCol, axisLineCol, splitLineCol, chartColors]);
 
-  // --- Trading status badge: 始终「已收盘」+ 同日对齐 data_date ---
-  const dataDate = spotData?.data_date || (spotData?.fetched_at ? new Date(spotData.fetched_at).toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai" }) : null);
-  const dataTimeStr = dataDate ? `${dataDate} 15:00:00` : null;
+  // --- Trading status: 仅展示已确认收盘的同日对齐 data_date ---
+  const dataDate = spotData?.data_date
+    || (spotData?.fetched_at
+      ? new Date(spotData.fetched_at).toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai" })
+      : null);
+  const dataTimeStr = spotData?.as_of
+    || (dataDate ? `${dataDate} 15:00:00` : null);
+  const awaitingSync = spotData?.is_synced === false
+    && !!spotData?.futures_latest
+    && !!spotData?.data_date
+    && spotData.futures_latest !== spotData.data_date;
 
   const statusBadge = (
     <div className="flex flex-col items-start sm:items-end gap-0.5">
@@ -361,6 +371,11 @@ export function CffexClient() {
         <Badge variant="outline" className="text-muted-foreground text-xs">
           已收盘
         </Badge>
+        {awaitingSync && (
+          <Badge variant="outline" className="text-amber-700/80 dark:text-amber-400/80 text-xs border-amber-500/30">
+            待现货对齐
+          </Badge>
+        )}
       </div>
       {dataTimeStr && (
         <span className="text-xs text-muted-foreground tabular-nums">

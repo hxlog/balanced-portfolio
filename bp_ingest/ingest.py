@@ -23,12 +23,55 @@ import pandas as pd
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from . import db
-from .calendar import TradingCalendar
+from .calendar import (
+    TradingCalendar,
+    close_confirm_deadline,
+    is_trade_date_close_confirmed,
+    now_cst,
+)
 from .config import AppConfig
 from .db import ConfigRow, QuoteRow
 from .sources import get_adapter, fetch_with_fallback
 
 logger = logging.getLogger(__name__)
+
+
+def _drop_unconfirmed_today_bars(
+    df: pd.DataFrame, today: date, *, now: datetime | None = None
+) -> pd.DataFrame:
+    """丢弃尚未过收盘确认的「今日」行, 避免盘中最新价写入 close。"""
+    if df.empty or "trade_date" not in df.columns:
+        return df
+    if is_trade_date_close_confirmed(today, now=now, today=today):
+        return df
+    mask = df["trade_date"] != today
+    dropped = int((~mask).sum())
+    if dropped:
+        logger.info("收盘未确认, 丢弃今日 %d 行日 K (不落库)", dropped)
+    return df.loc[mask].reset_index(drop=True)
+
+
+def _needs_post_close_refresh(
+    conn,
+    symbol: str,
+    source: str,
+    today: date,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """今日已收盘确认, 但库中今日行仍是 15:10 前写入 → 必须重拉覆盖。"""
+    if not is_trade_date_close_confirmed(today, now=now, today=today):
+        return False
+    updated_at = db.get_quote_updated_at(conn, symbol, source, today)
+    if updated_at is None:
+        return False
+    deadline = close_confirm_deadline(today)
+    ua = updated_at
+    if ua.tzinfo is None:
+        ua = ua.replace(tzinfo=now_cst(now).tzinfo)
+    else:
+        ua = ua.astimezone(deadline.tzinfo)
+    return ua < deadline
 
 
 def _polite_sleep(app: AppConfig) -> None:
@@ -114,14 +157,35 @@ def _sync_one(
     cal: TradingCalendar,
     app: AppConfig,
     today: date,
+    *,
+    now: datetime | None = None,
 ) -> SyncResult:
     adapter = get_adapter(cfg.source)
+    wall = now_cst(now)
 
     last_date = db.get_last_trade_date(conn, cfg.symbol, cfg.source)
-    expected_latest = cal.expected_latest(today, app.lag_days)
+    expected_latest = cal.confirmed_expected_latest(today, app.lag_days, now=wall)
 
-    # 交易日护栏: 已到最新则跳过
-    if last_date is not None and expected_latest is not None and last_date >= expected_latest:
+    # 今日行若写于收盘确认前(盘中脏 close), 不论 lag_days 是否把 expected 挡在 T-1,
+    # 都必须在收盘后重拉覆盖 — 否则脏价会永久 skip。
+    force_refresh = (
+        last_date is not None
+        and last_date == today
+        and _needs_post_close_refresh(conn, cfg.symbol, cfg.source, today, now=wall)
+    )
+    if force_refresh:
+        logger.info(
+            "%s@%s 今日行写于收盘确认前, 强制重拉覆盖正式收盘价",
+            cfg.symbol, cfg.source,
+        )
+
+    # 交易日护栏: 已到最新则跳过(收盘后脏价例外见 force_refresh)
+    if (
+        last_date is not None
+        and expected_latest is not None
+        and last_date >= expected_latest
+        and not force_refresh
+    ):
         return SyncResult(cfg.symbol, cfg.source, "skip", 0, f"已最新 @ {last_date}")
 
     # 增量窗口
@@ -130,6 +194,8 @@ def _sync_one(
     else:
         start = last_date - timedelta(days=app.revision_days)
     end = expected_latest or today
+    if force_refresh:
+        end = max(end, today) if end is not None else today
 
     if start > end:
         return SyncResult(cfg.symbol, cfg.source, "skip", 0, "窗口为空")
@@ -144,6 +210,7 @@ def _sync_one(
         return fetch_with_fallback(cfg.source, cfg.symbol, start, end, cfg.extra_params)
 
     df = _fetch()
+    df = _drop_unconfirmed_today_bars(df, today, now=wall)
     if df.empty:
         # 新品种首拉无数据也记成功(避免反复重试), 不回写 start_date
         db.mark_sync_success(conn, cfg.config_id)
@@ -159,10 +226,10 @@ def _sync_one(
     writeback = df["trade_date"].min() if cfg.start_date is None else None
     db.mark_sync_success(conn, cfg.config_id, writeback)
 
-    return SyncResult(
-        cfg.symbol, cfg.source, "ok", n,
-        f"{df['trade_date'].min()} ~ {df['trade_date'].max()}",
-    )
+    detail = f"{df['trade_date'].min()} ~ {df['trade_date'].max()}"
+    if force_refresh:
+        detail = f"收盘重拉 {detail}"
+    return SyncResult(cfg.symbol, cfg.source, "ok", n, detail)
 
 
 def run(
@@ -260,7 +327,8 @@ def run(
                 except Exception as exc:  # noqa: BLE001
                     logger.error("清洗表刷新失败: %s", exc)
                 else:
-                    # 挂钩 CFFEX 的四指数更新后, 失效看板快照 (现货追上期货日)
+                    # 挂钩 CFFEX 的四指数更新后, 失效看板快照并重算近窗升贴水
+                    # (覆盖盘中脏 spot_price 被正式收盘价替换的情形)
                     cffex_idx = {"000300", "000016", "000905", "000852"}
                     if cffex_idx.intersection(clean_targets):
                         try:
@@ -268,6 +336,31 @@ def run(
                             invalidate_cffex_spot_cache()
                         except Exception as exc:  # noqa: BLE001
                             logger.warning("失效 CFFEX 看板缓存失败: %s", exc)
+                        try:
+                            from . import cffex as _cffex
+
+                            since = today - timedelta(days=app.revision_days)
+                            with conn.cursor() as cur:
+                                cur.execute(
+                                    """
+                                    SELECT DISTINCT trade_date
+                                    FROM bp_cffex_contract_daily
+                                    WHERE variety = ANY(%s) AND trade_date >= %s
+                                    ORDER BY trade_date
+                                    """,
+                                    (_cffex.CFFEX_VARIETIES, since),
+                                )
+                                premium_dates = [r[0] for r in cur.fetchall()]
+                            if premium_dates:
+                                n_prem = _cffex._compute_premiums(conn, premium_dates)
+                                conn.commit()
+                                logger.info(
+                                    "CFFEX 指数更新后重算 premium: %d 日",
+                                    n_prem,
+                                )
+                        except Exception as exc:  # noqa: BLE001
+                            conn.rollback()
+                            logger.warning("CFFEX premium 重算失败: %s", exc)
 
         if refresh_clean:
             try:
