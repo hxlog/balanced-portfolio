@@ -99,7 +99,20 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               >
                 GitHub 源代码
               </a>
-              <span>© 2026 Balanced Portfolio contributors</span>
+              <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs">
+                <span>© 2026 Balanced Portfolio contributors</span>
+                <span aria-hidden="true" className="text-border">
+                  |
+                </span>
+                <a
+                  href="https://beian.miit.gov.cn/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-foreground transition-colors"
+                >
+                  粤ICP备2024174552号-2
+                </a>
+              </div>
             </div>
           </footer>
         </Providers>
