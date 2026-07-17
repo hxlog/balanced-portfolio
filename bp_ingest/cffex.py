@@ -13,7 +13,7 @@
 
 用法:
   python -m bp_ingest cffex-backfill              # 全量/增量 (自动判断)
-  python -m bp_ingest cffex-backfill --full        # 强制全量
+  python -m bp_ingest cffex-backfill --full        # 强制全量 (按月 ZIP 并发, 不限频)
   python -m bp_ingest cffex-incremental            # T-1 增量
 """
 
@@ -21,14 +21,17 @@ from __future__ import annotations
 
 import logging
 import re
-import time
+import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from io import BytesIO, StringIO
 from typing import Optional
 
 import akshare as ak
 import pandas as pd
 import psycopg
+import requests
 
 from . import db as ingest_db
 from .calendar import (
@@ -58,6 +61,13 @@ DEFAULT_START = date(2017, 1, 1)
 
 # 增量修正窗口 (自然日)
 REVISION_DAYS = 7
+
+# 中金所按月 ZIP (内含该月全部交易日 CSV); akshare 逐日重复下同一 ZIP, 极慢
+CFFEX_MONTH_ZIP_URL = "http://www.cffex.com.cn/sj/historysj/{ym}/zip/{ym}.zip"
+# 全量回填并发月数 (中金所无严格限频, 直接打满)
+CFFEX_FETCH_WORKERS = 16
+_INDEX_FUTURE_RE = re.compile(r"^(IF|IH|IC|IM)\d{4}$")
+_SKIP_ROW_RE = re.compile(r"小计|合计|IO|MO|HO")
 
 
 # ======================================================================
@@ -132,51 +142,230 @@ def _get_fresh_premium_dates(conn: psycopg.Connection, since: date) -> list[date
 
 
 # ======================================================================
-# 数据拉取
+# 数据拉取 (按月 ZIP 并发, 不限频)
 # ======================================================================
 
-def fetch_cffex_futures_daily(start: date, end: date) -> pd.DataFrame | None:
-    """拉取 CFFEX 全部期货品种日行情 (OHLCV + settle + open_interest)。"""
+def _iter_months(start: date, end: date) -> list[str]:
+    """闭区间 [start, end] 覆盖的 YYYYMM 列表。"""
+    months: list[str] = []
+    y, m = start.year, start.month
+    while (y, m) <= (end.year, end.month):
+        months.append(f"{y:04d}{m:02d}")
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+    return months
+
+
+def _decode_cffex_csv(raw: bytes) -> str:
+    for enc in ("gb2312", "gbk", "utf-8"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("gbk", errors="replace")
+
+
+def _parse_cffex_day_csv(raw: bytes, day: str) -> pd.DataFrame:
+    """解析中金所单日 CSV → akshare 兼容列 (仅 IF/IH/IC/IM)。"""
+    text = _decode_cffex_csv(raw)
+    data_df = pd.read_csv(StringIO(text))
+    if data_df.empty:
+        return pd.DataFrame()
+
+    col0 = data_df.columns[0]
+    sym = data_df[col0].astype(str).str.strip()
+    keep = ~sym.str.contains(_SKIP_ROW_RE, na=False) & sym.str.match(_INDEX_FUTURE_RE)
+    data_df = data_df.loc[keep].copy()
+    if data_df.empty:
+        return pd.DataFrame()
+    data_df[col0] = sym[keep].values
+
+    n_cols = data_df.shape[1]
+    if n_cols == 15:
+        data_df.columns = [
+            "symbol", "open", "high", "low", "volume", "turnover",
+            "open_interest", "_", "close", "settle", "pre_settle",
+            "_2", "_3", "_4", "_5",
+        ]
+    elif n_cols >= 14:
+        # 14 列及偶发多列: 按前 11 个有效字段对齐
+        rename = {
+            data_df.columns[0]: "symbol",
+            data_df.columns[1]: "open",
+            data_df.columns[2]: "high",
+            data_df.columns[3]: "low",
+            data_df.columns[4]: "volume",
+            data_df.columns[5]: "turnover",
+            data_df.columns[6]: "open_interest",
+            data_df.columns[8]: "close",
+            data_df.columns[9]: "settle",
+            data_df.columns[10]: "pre_settle",
+        }
+        data_df = data_df.rename(columns=rename)
+    else:
+        return pd.DataFrame()
+
+    data_df["date"] = day
+    data_df["trade_date"] = day
+    data_df["symbol"] = data_df["symbol"].astype(str).str.strip().str.upper()
+    return data_df[[
+        "symbol", "date", "trade_date", "open", "high", "low", "close",
+        "volume", "open_interest", "turnover", "settle", "pre_settle",
+    ]]
+
+
+def _fetch_cffex_month_zip(ym: str, start: date, end: date) -> pd.DataFrame:
+    """下载单月 ZIP, 解析区间内全部交易日 CSV。失败返回空 DataFrame。"""
+    url = CFFEX_MONTH_ZIP_URL.format(ym=ym)
     try:
-        s = _fmt_date(start)
-        e = _fmt_date(end)
-        logger.info("拉取 CFFEX 日行情: %s → %s", s, e)
-        df = ak.get_futures_daily(start_date=s, end_date=e, market="CFFEX")
-        if df is None or df.empty:
-            logger.warning("CFFEX %s-%s 返回空数据", s, e)
-            return None
-        return df
-    except Exception as exc:
-        logger.error("拉取 CFFEX 日行情失败: %s", exc)
+        # 每线程独立 Session, 避开全局 hardened session 的线程安全问题;
+        # 中金所直连、不限频。
+        with requests.Session() as sess:
+            sess.trust_env = False
+            r = sess.get(
+                url,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/126.0.0.0 Safari/537.36"
+                    ),
+                },
+                timeout=60,
+            )
+        if r.status_code != 200 or len(r.content) < 100:
+            logger.warning(
+                "CFFEX 月 ZIP 不可用: %s status=%s bytes=%d",
+                ym, r.status_code, len(r.content),
+            )
+            return pd.DataFrame()
+        frames: list[pd.DataFrame] = []
+        with zipfile.ZipFile(BytesIO(r.content)) as zf:
+            for name in zf.namelist():
+                # 文件名形如 20240102_1.csv
+                m = re.match(r"^(\d{8})_1\.csv$", name.split("/")[-1])
+                if not m:
+                    continue
+                day = m.group(1)
+                d = _to_date(day)
+                if d is None or d < start or d > end:
+                    continue
+                with zf.open(name) as f:
+                    day_df = _parse_cffex_day_csv(f.read(), day)
+                if not day_df.empty:
+                    frames.append(day_df)
+        if not frames:
+            return pd.DataFrame()
+        return pd.concat(frames, ignore_index=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("CFFEX 月 ZIP 拉取失败 %s: %s", ym, exc)
+        return pd.DataFrame()
+
+
+def fetch_cffex_futures_daily(
+    start: date,
+    end: date,
+    *,
+    workers: int = CFFEX_FETCH_WORKERS,
+) -> pd.DataFrame | None:
+    """拉取 CFFEX 股指期货日行情 (OHLCV + settle + open_interest)。
+
+    直接按月下载中金所历史 ZIP 并并发解析, 避免 akshare 逐日重复下载同月 ZIP。
+    不插入限频 sleep。
+    """
+    if start > end:
         return None
+    months = _iter_months(start, end)
+    logger.info(
+        "拉取 CFFEX 日行情(按月 ZIP 并发×%d): %s → %s (%d 个月)",
+        workers, _fmt_date(start), _fmt_date(end), len(months),
+    )
+    frames: list[pd.DataFrame] = []
+    done = 0
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        futs = {
+            pool.submit(_fetch_cffex_month_zip, ym, start, end): ym
+            for ym in months
+        }
+        for fut in as_completed(futs):
+            ym = futs[fut]
+            done += 1
+            try:
+                df = fut.result()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("CFFEX %s 任务异常: %s", ym, exc)
+                continue
+            if df is not None and not df.empty:
+                frames.append(df)
+                logger.info("  %s: %d 行 (%d/%d)", ym, len(df), done, len(months))
+            else:
+                logger.info("  %s: 空 (%d/%d)", ym, done, len(months))
+
+    if not frames:
+        logger.warning("CFFEX %s-%s 返回空数据", _fmt_date(start), _fmt_date(end))
+        return None
+    out = pd.concat(frames, ignore_index=True)
+    # 稳定排序, 便于日志/调试
+    if "date" in out.columns:
+        out = out.sort_values(["date", "symbol"]).reset_index(drop=True)
+    logger.info("CFFEX 拉取完成: %d 行 / %d 个月", len(out), len(months))
+    return out
 
 
 # ======================================================================
 # 落库
 # ======================================================================
 
-def _upsert_contract_daily(conn: psycopg.Connection, row: dict) -> None:
-    with conn.cursor() as cur:
-        cur.execute("""
-            INSERT INTO bp_cffex_contract_daily
-                (trade_date, symbol, variety, open, high, low, close,
-                 settle, volume, open_interest, pre_settle, turnover)
-            VALUES (%(trade_date)s, %(symbol)s, %(variety)s,
-                    %(open)s, %(high)s, %(low)s, %(close)s,
-                    %(settle)s, %(volume)s, %(open_interest)s,
-                    %(pre_settle)s, %(turnover)s)
-            ON CONFLICT (symbol, trade_date) DO UPDATE SET
-                open          = EXCLUDED.open,
-                high          = EXCLUDED.high,
-                low           = EXCLUDED.low,
-                close         = EXCLUDED.close,
-                settle        = EXCLUDED.settle,
-                volume        = EXCLUDED.volume,
-                open_interest = EXCLUDED.open_interest,
-                pre_settle    = EXCLUDED.pre_settle,
-                turnover      = EXCLUDED.turnover,
-                updated_at    = now()
-        """, row)
+_TEMP_CONTRACT_TABLE = "tmp_cffex_contract_daily"
+
+_TEMP_CONTRACT_DDL = f"""
+CREATE TEMP TABLE {_TEMP_CONTRACT_TABLE} (
+    trade_date    DATE NOT NULL,
+    symbol        TEXT NOT NULL,
+    variety       TEXT NOT NULL,
+    open          NUMERIC(20,4),
+    high          NUMERIC(20,4),
+    low           NUMERIC(20,4),
+    close         NUMERIC(20,4) NOT NULL,
+    settle        NUMERIC(20,4),
+    volume        BIGINT,
+    open_interest BIGINT,
+    pre_settle    NUMERIC(20,4),
+    turnover      NUMERIC(20,4)
+)
+"""
+
+_MERGE_CONTRACT_SQL = f"""
+INSERT INTO bp_cffex_contract_daily
+    (trade_date, symbol, variety, open, high, low, close,
+     settle, volume, open_interest, pre_settle, turnover)
+SELECT
+    trade_date, symbol, variety, open, high, low, close,
+    settle, volume, open_interest, pre_settle, turnover
+FROM {_TEMP_CONTRACT_TABLE}
+ON CONFLICT (symbol, trade_date) DO UPDATE SET
+    open          = EXCLUDED.open,
+    high          = EXCLUDED.high,
+    low           = EXCLUDED.low,
+    close         = EXCLUDED.close,
+    settle        = EXCLUDED.settle,
+    volume        = EXCLUDED.volume,
+    open_interest = EXCLUDED.open_interest,
+    pre_settle    = EXCLUDED.pre_settle,
+    turnover      = EXCLUDED.turnover,
+    updated_at    = now()
+"""
+
+
+def _safe_int(val) -> int | None:
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return None
+    try:
+        return int(val)
+    except Exception:
+        return None
 
 
 def _upsert_premium_daily(conn: psycopg.Connection, row: dict) -> None:
@@ -211,39 +400,68 @@ def _ingest_contracts(
     *,
     now: datetime | None = None,
 ) -> int:
-    """从 akshare DataFrame 解析合约并写入 bp_cffex_contract_daily。返回写入行数。"""
+    """批量写入 bp_cffex_contract_daily: COPY → 临时表 → INSERT…SELECT ON CONFLICT → DROP。"""
+    if df is None or df.empty:
+        return 0
+
     wall = now_cst(now)
     today = wall.date()
-    written = 0
     skipped_unconfirmed = 0
-    for _, row in df.iterrows():
-        td = _to_date(row.get("trade_date") or row.get("date"))
+    # (symbol, trade_date) → row; 后者覆盖前者, 避免 COPY 源内重复键
+    by_key: dict[tuple[str, date], tuple] = {}
+
+    for row in df.itertuples(index=False):
+        td = _to_date(getattr(row, "trade_date", None) or getattr(row, "date", None))
         if td is None:
             continue
         if not is_trade_date_close_confirmed(td, now=wall, today=today):
             skipped_unconfirmed += 1
             continue
-        sym = str(row.get("symbol", "")).strip().upper()
-        # 仅 IF/IH/IC/IM
-        m = re.match(r"^(IF|IH|IC|IM)\d{4}$", sym)
+        sym = str(getattr(row, "symbol", "") or "").strip().upper()
+        m = _INDEX_FUTURE_RE.match(sym)
         if not m:
             continue
-        variety = m.group(1)
+        close_val = _safe_num(getattr(row, "close", None))
+        if close_val is None:
+            continue  # 表约束 close NOT NULL
+        by_key[(sym, td)] = (
+            td,
+            sym,
+            m.group(1),
+            _safe_num(getattr(row, "open", None)),
+            _safe_num(getattr(row, "high", None)),
+            _safe_num(getattr(row, "low", None)),
+            close_val,
+            _safe_num(getattr(row, "settle", None)),
+            _safe_int(getattr(row, "volume", None)),
+            _safe_int(getattr(row, "open_interest", None)),
+            _safe_num(getattr(row, "pre_settle", None)),
+            _safe_num(getattr(row, "turnover", None)),
+        )
 
-        _upsert_contract_daily(conn, {
-            "trade_date": td, "symbol": sym, "variety": variety,
-            "open": _safe_num(row.get("open")), "high": _safe_num(row.get("high")),
-            "low": _safe_num(row.get("low")), "close": _safe_num(row.get("close")),
-            "settle": _safe_num(row.get("settle")),
-            "volume": int(row["volume"]) if row.get("volume") and not pd.isna(row.get("volume")) else None,
-            "open_interest": int(row["open_interest"]) if row.get("open_interest") and not pd.isna(row.get("open_interest")) else None,
-            "pre_settle": _safe_num(row.get("pre_settle")),
-            "turnover": _safe_num(row.get("turnover")),
-        })
-        written += 1
     if skipped_unconfirmed:
         logger.info("收盘未确认, 跳过 %d 行当日期货日 K", skipped_unconfirmed)
-    return written
+    if not by_key:
+        return 0
+
+    rows = list(by_key.values())
+    logger.info("合约批量落库: COPY %d 行 → 临时表 → upsert", len(rows))
+
+    with conn.cursor() as cur:
+        cur.execute(f"DROP TABLE IF EXISTS {_TEMP_CONTRACT_TABLE}")
+        cur.execute(_TEMP_CONTRACT_DDL)
+        cols = (
+            "trade_date, symbol, variety, open, high, low, close, "
+            "settle, volume, open_interest, pre_settle, turnover"
+        )
+        with cur.copy(f"COPY {_TEMP_CONTRACT_TABLE} ({cols}) FROM STDIN") as copy:
+            for r in rows:
+                copy.write_row(r)
+        cur.execute(_MERGE_CONTRACT_SQL)
+        cur.execute(f"DROP TABLE IF EXISTS {_TEMP_CONTRACT_TABLE}")
+
+    logger.info("合约批量落库完成: %d 行", len(rows))
+    return len(rows)
 
 
 # ======================================================================
@@ -521,20 +739,15 @@ def cffex_sync(
         futures_success = False
 
     if not skip_fetch:
-        year = start.year
-        end_year = end.year
-        while year <= end_year:
-            y_start = max(start, date(year, 1, 1))
-            y_end = min(end, date(year, 12, 31))
-            if y_start <= y_end:
-                df = fetch_cffex_futures_daily(y_start, y_end)
-                if df is not None and not df.empty:
-                    n = _ingest_contracts(conn, df, now=wall)
-                    stats["contracts"] += n
-                    logger.info("  %d年: %d 行入库", year, n)
-                    futures_success = True
-                time.sleep(0.5)
-            year += 1
+        # 一次性按月并发拉取整个区间 (不按年切、不 sleep)
+        df = fetch_cffex_futures_daily(start, end)
+        if df is not None and not df.empty:
+            n = _ingest_contracts(conn, df, now=wall)
+            stats["contracts"] += n
+            logger.info("合约入库: %d 行", n)
+            futures_success = True
+        else:
+            logger.warning("期货拉取无数据")
 
     if not futures_success and last_date is not None and not recompute_premium:
         # 期货无新行时仍尝试重算缺现货的 premium (现货可能刚入库)

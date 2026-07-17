@@ -121,6 +121,10 @@ python -m bp_ingest run --symbols 000300 HSI --no-clean
 python -m bp_ingest clean
 python -m bp_ingest schedule
 
+python -m bp_ingest cffex-backfill
+python -m bp_ingest cffex-backfill --full 
+python -m bp_ingest cffex-backfill --recompute-premium
+
 uvicorn bp_api.main:app --host 127.0.0.1 --port 8000 --reload
 celery -A bp_api.workers.celery_app worker -c 2
 
