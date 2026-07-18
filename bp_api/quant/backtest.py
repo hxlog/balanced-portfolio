@@ -52,6 +52,8 @@ class BacktestResult:
     as_of: Optional[date] = None
     # 逐日持有权重(进入当日、用于当日收益的权重): index=date, cols=资产 key。供绩效归因。
     daily_weights: pd.DataFrame = field(default_factory=pd.DataFrame)
+    # 逐日交易成本(占NAV比例, 建仓日及再平衡日>0, 其余为0), 供绩效归因拆解。
+    daily_costs: pd.Series = field(default_factory=lambda: pd.Series(dtype="float64"))
 
 
 def _union_calendar(prices: pd.DataFrame) -> list:
@@ -214,6 +216,8 @@ def run_backtest(
     ]
     # 建仓日权重(当日无收益), 记录用于归因
     weight_rows: list[dict] = [{"trade_date": effective_start, **target0.to_dict()}]
+    # 逐日交易成本(占NAV比例)
+    cost_list: list[float] = [inception_cost]
 
     total_steps = max(1, len(price_dates) - (k0 + 1))
     for step_i, k in enumerate(range(k0 + 1, len(price_dates)), start=1):
@@ -239,6 +243,7 @@ def run_backtest(
         prev_opt = target
         dev_s = (w_actual - target).abs()
         dev = float(dev_s.max())
+        cost_of_day = 0.0
         if dev > rebalance_band:
             prev = w_actual.copy()
             delta = target - prev
@@ -250,6 +255,7 @@ def run_backtest(
             if cost > 0:
                 nav *= max(0.0, 1.0 - cost)
                 port_ret = (1.0 + port_ret) * max(0.0, 1.0 - cost) - 1.0
+                cost_of_day = cost
             trigger = dev_s.idxmax()
             drift_w = float(w_actual[trigger])
             target_w = float(target[trigger])
@@ -276,6 +282,7 @@ def run_backtest(
             {"trade_date": day, "nav": nav, "benchmark_nav": bench_nav,
              "ret": port_ret, "bench_ret": bench_ret}
         )
+        cost_list.append(cost_of_day)
         if progress_cb and (step_i == 1 or step_i == total_steps or step_i % 50 == 0):
             progress_cb(step_i, total_steps, f"{method} 回测 {step_i}/{total_steps} 交易日")
 
@@ -283,6 +290,9 @@ def run_backtest(
     daily_weights = (
         pd.DataFrame(weight_rows).set_index("trade_date").reindex(columns=assets).fillna(0.0)
     )
+    # 逐日成本序列(建仓日 + 后续每个交易日)
+    cost_dates = price_dates[k0:len(price_dates)]
+    daily_costs = pd.Series(cost_list[:len(cost_dates)], index=cost_dates, dtype="float64")
 
     last_avail = available_assets(len(price_dates) - 1)
     if len(last_avail) >= 2:
@@ -315,6 +325,7 @@ def run_backtest(
         cov_matrix=cov_matrix,
         as_of=price_dates[-1],
         daily_weights=daily_weights,
+        daily_costs=daily_costs,
     )
 
 

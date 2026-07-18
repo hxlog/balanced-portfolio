@@ -299,6 +299,11 @@ export interface Metrics {
   end_date: string;
   period_returns: Record<string, number | null>;
   period_vols: Record<string, number | null>;
+  daily_expected_return?: number | null;
+  annualized_expected_return?: number | null;
+  skewness?: number | null;
+  kurtosis?: number | null;
+  daily_return_median?: number | null;
 }
 
 export interface PortfolioInfo {
@@ -354,6 +359,7 @@ export interface Attribution {
     systematic: number;
     selection: number;
     timing: number;
+    costs?: number | null;
     residual: number;
   };
   assets: AttributionAsset[];

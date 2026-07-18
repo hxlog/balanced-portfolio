@@ -312,10 +312,11 @@ CREATE TABLE IF NOT EXISTS bp_backtest_benchmark (
 );
 
 CREATE TABLE IF NOT EXISTS bp_backtest_attribution (
-    portfolio_id BIGINT NOT NULL REFERENCES bp_portfolio(portfolio_id) ON DELETE CASCADE,
-    method       TEXT   NOT NULL,
-    payload      JSONB  NOT NULL,
-    CONSTRAINT pk_bp_backtest_attribution PRIMARY KEY (portfolio_id, method)
+    portfolio_id  BIGINT NOT NULL REFERENCES bp_portfolio(portfolio_id) ON DELETE CASCADE,
+    method        TEXT   NOT NULL,
+    benchmark_key TEXT   NOT NULL DEFAULT 'bond6040',
+    payload       JSONB  NOT NULL,
+    CONSTRAINT pk_bp_backtest_attribution PRIMARY KEY (portfolio_id, method, benchmark_key)
 );
 
 CREATE TABLE IF NOT EXISTS bp_task (

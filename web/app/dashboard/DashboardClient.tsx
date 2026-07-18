@@ -562,9 +562,9 @@ function DashboardView({
         {/* Quadrant matrix */}
         <Card className="lg:col-span-2 min-w-0">
           <CardHeader>
-            <CardTitle>四象限配置矩阵</CardTitle>
+            <CardTitle>经济场景四象限配置矩阵</CardTitle>
             <CardDescription>
-              根据通胀与增长预期将资产分配至不同宏观周期环境。* 表示跨象限品种, 权重见右侧持仓表
+              根据宏观经济学基本理论，将通胀与增长预期将占优资产分配至不同宏观周期环境。* 表示跨象限品种, 每个调仓期及最新持仓的资产权重见右侧持仓表
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -806,7 +806,7 @@ function DashboardView({
               <TableBody>
                 <MetricRow label="夏普比率" p={mPort?.sharpe} b={mBench?.sharpe} fmt={(v) => v?.toFixed(2)} />
                 <MetricRow label="Sortino 比率" p={mPort?.sortino} b={mBench?.sortino} fmt={(v) => v?.toFixed(2)} />
-                <MetricRow label="信息比率 (基准:沪深300)" p={mPort?.information_ratio} b={null} fmt={(v) => v?.toFixed(2)} />
+                <MetricRow label={`信息比率 (基准:${benchName})`} p={mPort?.information_ratio} b={null} fmt={(v) => v?.toFixed(2)} />
                 <MetricRow label="Calmar 比率" p={mPort?.calmar} b={mBench?.calmar} fmt={(v) => v?.toFixed(2)} />
                 <MetricRow label="最大回撤" p={mPort?.max_drawdown} b={mBench?.max_drawdown} fmt={(v) => pct(v)} />
                 <MetricRow label="最大回撤修复天数" p={mPort?.max_drawdown_recovery_days} b={mBench?.max_drawdown_recovery_days}
@@ -822,8 +822,28 @@ function DashboardView({
         <Card>
           <CardHeader><CardTitle>日收益率分布</CardTitle></CardHeader>
           <CardContent>
-            {distOption ? <EChart option={distOption} style={{ height: 300, width: "100%" }} />
-              : <div className="text-sm text-muted-foreground py-12 text-center">数据不足</div>}
+            {distOption ? (
+              <>
+                <EChart option={distOption} style={{ height: 300, width: "100%" }} />
+                <div className="mt-4 overflow-x-auto">
+                  <Table className="min-w-[400px]">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="pl-0">统计量</TableHead>
+                        <TableHead className="text-right text-primary">{portfolio.name}</TableHead>
+                        <TableHead className="text-right text-muted-foreground">{benchName}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      <DistStatRow label="日收益率期望" p={mPort?.daily_expected_return} b={mBench?.daily_expected_return} fmt={(v) => pct(v, 3)} />
+                      <DistStatRow label="年化期望 (252日)" p={mPort?.annualized_expected_return} b={mBench?.annualized_expected_return} fmt={(v) => pct(v, 2)} />
+                      <DistStatRow label="偏度" p={mPort?.skewness} b={mBench?.skewness} fmt={(v) => v?.toFixed(4)} />
+                      <DistStatRow label="超额峰度" p={mPort?.kurtosis} b={mBench?.kurtosis} fmt={(v) => v?.toFixed(4)} />
+                    </TableBody>
+                  </Table>
+                </div>
+              </>
+            ) : <div className="text-sm text-muted-foreground py-12 text-center">数据不足</div>}
           </CardContent>
         </Card>
       </div>
@@ -886,6 +906,16 @@ function MetricRow({ label, p, b, fmt }: { label: string; p?: number | null; b?:
   );
 }
 
+function DistStatRow({ label, p, b, fmt }: { label: string; p?: number | null; b?: number | null; fmt: (v: number | null | undefined) => string | undefined }) {
+  return (
+    <TableRow>
+      <TableCell className="pl-0 font-medium">{label}</TableCell>
+      <TableCell className="text-right font-mono">{p == null ? "-" : (fmt(p) ?? "-")}</TableCell>
+      <TableCell className="text-right font-mono text-muted-foreground">{b == null ? "-" : (fmt(b) ?? "-")}</TableCell>
+    </TableRow>
+  );
+}
+
 function rebalanceTrigger(rb: Rebalance) {
   if (!rb.prev_weights || !rb.target_weights) return null;
   let key = "";
@@ -936,7 +966,7 @@ function RebalanceSummary({
         <p>
           <span className="text-muted-foreground">触发原因：</span>
           「{assetName}」漂移最大，实际 {pct(trigger.drift)} vs 目标 {pct(trigger.target)}
-          （偏离 {devPp.toFixed(2)}pp &gt; {bandPct}pp），故执行本次调仓。
+          （偏离 {devPp.toFixed(2)}pp &gt; {bandPct}pp），剩余现金将分配给其他资产，再平衡+红利再投资。
         </p>
       )}
     </>
@@ -1258,7 +1288,7 @@ function PortfolioParamsCard({ portfolio, currentMethod }: { portfolio: Portfoli
     <Card>
       <CardHeader className="pb-3">
         <CardTitle className="text-base">组合参数</CardTitle>
-        <CardDescription>创建/编辑时设定的回测与优化参数（只读）</CardDescription>
+        <CardDescription>该投资组合设定的回测与优化参数</CardDescription>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3 text-sm">
@@ -1297,8 +1327,8 @@ function AttributionSection({
     { label: "组合总收益", value: s.total_return, hint: "回测区间几何累计" },
     { label: "系统性 Beta", value: s.systematic, hint: `β=${s.beta.toFixed(2)}（对${benchName}）` },
     { label: "截面选择", value: s.selection, hint: "选品（按平均配置）" },
-    { label: "时序调仓", value: s.timing, hint: "动态调仓/择时" },
-    { label: "残差", value: s.residual, hint: "成本与口径差" },
+    { label: "时序调仓", value: s.timing, hint: `动态调仓/择时（已扣费${s.costs != null ? signPct(s.costs) : "-"}）` },
+    { label: "残差", value: s.residual, hint: "Carino 链接近似误差" },
   ];
 
   // 瀑布图: 系统性 + 选择 + 调仓 + 残差 → 总收益
@@ -1414,7 +1444,7 @@ function AttributionSection({
       <CardHeader>
         <CardTitle>绩效归因</CardTitle>
         <CardDescription>
-          组合收益拆解为 系统性Beta（{benchName}） + 截面选择 + 时序调仓 + 残差，并列出各资产与每次调仓的收益贡献。
+          组合收益拆解为 系统性Beta（{benchName}） + 截面选择 + 时序调仓（已扣交易成本） + 残差（Carino链接近似误差），并列出各资产与每次调仓的收益贡献。
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -1497,6 +1527,16 @@ function buildDistOption(
     arr.forEach((v) => { let idx = Math.floor((v - lo) / width); if (idx >= bins) idx = bins - 1; if (idx < 0) idx = 0; c[idx]++; });
     return c;
   };
+  // 计算中位数（映射到 bin 索引用于 markLine 的 xAxis）
+  const median = (arr: number[]) => {
+    const sorted = [...arr].sort((a, b) => a - b);
+    const mid = sorted.length / 2;
+    return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[Math.floor(mid)];
+  };
+  const portMedian = median(rets);
+  const benchMedian = median(bench);
+  const portMedianBin = Math.round((portMedian - lo) / width);
+  const benchMedianBin = Math.round((benchMedian - lo) / width);
   return {
     tooltip: { trigger: "axis", backgroundColor: cardBg, textStyle: { color: fg } },
     legend: { data: ["组合", benchName], textStyle: { color: textCol }, top: 0 },
@@ -1508,8 +1548,26 @@ function buildDistOption(
     },
     yAxis: { type: "value", axisLabel: { color: textCol }, splitLine: { lineStyle: { color: splitLineCol } } },
     series: [
-      { name: "组合", type: "bar", data: hist(rets), itemStyle: { color: "rgba(59,130,246,0.7)" }, barWidth: "90%", barGap: "-100%" },
-      { name: benchName, type: "bar", data: hist(bench), itemStyle: { color: "rgba(161,161,161,0.5)" }, barWidth: "90%" },
+      {
+        name: "组合", type: "bar", data: hist(rets),
+        itemStyle: { color: "rgba(59,130,246,0.7)" }, barWidth: "90%", barGap: "-100%",
+        markLine: {
+          silent: true, symbol: "none",
+          lineStyle: { color: "#3B82F6", type: "dashed", width: 1.5 },
+          label: { formatter: `中位数 ${(portMedian * 100).toFixed(2)}%`, color: "#3B82F6", fontSize: 10 },
+          data: [{ xAxis: portMedianBin }],
+        },
+      },
+      {
+        name: benchName, type: "bar", data: hist(bench),
+        itemStyle: { color: "rgba(161,161,161,0.5)" }, barWidth: "90%",
+        markLine: {
+          silent: true, symbol: "none",
+          lineStyle: { color: "#A1A1A1", type: "dashed", width: 1.5 },
+          label: { formatter: `中位数 ${(benchMedian * 100).toFixed(2)}%`, color: "#A1A1A1", fontSize: 10 },
+          data: [{ xAxis: benchMedianBin }],
+        },
+      },
     ],
   };
 }

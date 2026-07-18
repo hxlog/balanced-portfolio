@@ -63,8 +63,11 @@ Demo：https://xushilu.com
    ```env
    PGPASSWORD=<database-password>
    BP_JWT_SECRET=<random-long-secret>
+   <!-- JWT推荐生成高强度密钥 -->
    BP_ADMIN_EMAIL=admin@example.com
+   <!-- 管理员账户的又想和密码 -->
    BP_ADMIN_INITIAL_PASSWORD=<initial-admin-password>
+   <!-- inline是开发模式，生产环境可使用redis（填写celery） -->
    BP_TASK_MODE=inline
    ```
 
@@ -115,19 +118,37 @@ Demo：https://xushilu.com
 ## 常用命令
 
 ```bash
+# 行情调度测试
 python -m bp_ingest ping
+
+# 行情调度启动
 python -m bp_ingest run
+
+# 行情调度只提取沪深300和恒生指数，不自动清洗数据
 python -m bp_ingest run --symbols 000300 HSI --no-clean
+
+# 清洗行情数据，将交易日标准化成A股交易日，再计算涨跌幅
 python -m bp_ingest clean
+
+# 行情调度任务，建议配合pm2使用
 python -m bp_ingest schedule
 
+# 中金所股指期货行情跑增量
 python -m bp_ingest cffex-backfill
+
+# 中金所股指期货行情跑全量（会删除历史期货行情数据！！！）
 python -m bp_ingest cffex-backfill --full 
+
+# 中金所股指期货数据计算基差和贴水
 python -m bp_ingest cffex-backfill --recompute-premium
 
+# 后端服务启动，建议配合pm2
 uvicorn bp_api.main:app --host 127.0.0.1 --port 8000 --reload
+
+# redis celery查询
 celery -A bp_api.workers.celery_app worker -c 2
 
+# 前端next.js的开发与build命令
 cd web
 npm run dev
 npm run build
@@ -136,6 +157,7 @@ npm run build
 ## 测试
 
 ```bash
+# CI测试
 python -m pytest bp_api/tests -q
 cd web && npm run build
 ```

@@ -608,6 +608,7 @@ function RegisterDialog() {
         </DialogHeader>
         <div className="space-y-3 py-2 text-sm text-muted-foreground">
           <p>由于回测任务占用云服务器资源较多容易造成宕机，笔者云服务器资源有限，暂不开放注册与回测功能，但本产品永久免费且开源，你可以直接部署自己的实例。</p>
+          <p>测试公共账户名和密码都是test1</p>
           <a
               href="https://github.com/hxlog/balanced-portfolio"
               target="_blank"

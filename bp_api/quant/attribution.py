@@ -35,7 +35,7 @@ def _empty() -> dict:
     return {
         "summary": {
             "total_return": 0.0, "beta": 0.0, "systematic": 0.0,
-            "selection": 0.0, "timing": 0.0, "residual": 0.0,
+            "selection": 0.0, "timing": 0.0, "costs": 0.0, "residual": 0.0,
         },
         "assets": [],
         "rebalances": [],
@@ -50,6 +50,7 @@ def compute_attribution(
     rebalances: Optional[list[dict]] = None,
     name_map: Optional[dict[str, str]] = None,
     quad_map: Optional[dict[str, list]] = None,
+    daily_costs: Optional[pd.Series] = None,
 ) -> dict:
     """返回 {summary, assets[], rebalances[]}。
 
@@ -57,6 +58,7 @@ def compute_attribution(
     asset_returns: 各资产日简单收益(宽表), 用于按日 contribution = w·r。
     bench_ret    : 组合配置基准的日收益(用于 β); 可为 None。
     nav          : 实际组合单位净值序列(含费/滑点), 用于总收益与逐调仓区间收益。
+    daily_costs  : 逐日交易成本(占NAV比例, 建仓日及再平衡日>0, 其余为0); 归入时序调仓桶。
     """
     name_map = name_map or {}
     quad_map = quad_map or {}
@@ -92,22 +94,33 @@ def compute_attribution(
     selection_t = (wbar * R).sum(axis=1) - beta * rb
     timing_t = ((W - wbar) * R).sum(axis=1)
 
+    # 逐日交易成本(建仓日及再平衡日>0, 其余为0), Carino 链接后从时序调仓中扣除
+    costs_aligned = np.zeros(len(dates))
+    if daily_costs is not None:
+        cost_series = pd.Series(daily_costs).reindex(dates).fillna(0.0)
+        costs_aligned = cost_series.values.astype(float)
+
     k = _carino_coeffs(rp, explained_total)
     sys_c = float(np.sum(k * systematic_t))
     sel_c = float(np.sum(k * selection_t))
     tim_c = float(np.sum(k * timing_t))
+    cost_c = float(np.sum(k * costs_aligned))
 
-    # 实际净值总收益(含费/滑点); 残差 = 实际 − 税前解释
+    # 扣费后时序调仓净贡献（成本归入时序调仓）
+    tim_c_net = tim_c - cost_c
+
+    # 实际净值总收益(含费/滑点); 残差 = 实际 − 税前解释(仅保留 Carino 链接近似误差)
     nav = pd.Series(nav).dropna()
     port_total = float(nav.iloc[-1] / nav.iloc[0] - 1.0) if len(nav) > 1 else explained_total
-    residual = port_total - (sys_c + sel_c + tim_c)
+    residual = port_total - (sys_c + sel_c + tim_c_net)
 
     summary = {
         "total_return": port_total,
         "beta": beta,
         "systematic": sys_c,
         "selection": sel_c,
-        "timing": tim_c,
+        "timing": tim_c_net,
+        "costs": cost_c,
         "residual": residual,
     }
 

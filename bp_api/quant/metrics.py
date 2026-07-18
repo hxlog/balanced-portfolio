@@ -93,6 +93,45 @@ def _ytd_return(nav: pd.Series) -> Optional[float]:
     return float(nav.iloc[-1] / base - 1.0)
 
 
+def daily_expected_return(rets: pd.Series) -> float:
+    """日收益率期望（算术平均）。"""
+    return float(rets.mean()) if len(rets) > 0 else 0.0
+
+
+def annualized_expected_return(rets: pd.Series, trading_days: int = DEFAULT_TRADING_DAYS) -> float:
+    """年化期望 = 日均值 × 年交易日数。"""
+    return float(rets.mean() * trading_days) if len(rets) > 0 else 0.0
+
+
+def skewness(rets: pd.Series) -> float:
+    """偏度（调整样本偏度）。"""
+    n = len(rets)
+    if n < 3:
+        return 0.0
+    m = rets.mean()
+    s = rets.std(ddof=0)
+    if s < 1e-12:
+        return 0.0
+    return float(((rets - m) ** 3).mean() / (s ** 3))
+
+
+def kurtosis_excess(rets: pd.Series) -> float:
+    """超额峰度（excess kurtosis = 峰度 − 3）。"""
+    n = len(rets)
+    if n < 4:
+        return 0.0
+    m = rets.mean()
+    s = rets.std(ddof=0)
+    if s < 1e-12:
+        return 0.0
+    return float(((rets - m) ** 4).mean() / (s ** 4) - 3.0)
+
+
+def median_return(rets: pd.Series) -> float:
+    """日收益率中位数。"""
+    return float(rets.median()) if len(rets) > 0 else 0.0
+
+
 def compute_metrics(
     nav: pd.Series,
     benchmark_nav: Optional[pd.Series] = None,
@@ -143,4 +182,9 @@ def compute_metrics(
         "end_date": str(nav.index[-1]),
         "period_returns": period_returns,
         "period_vols": period_vols,
+        "daily_expected_return": daily_expected_return(rets),
+        "annualized_expected_return": annualized_expected_return(rets, trading_days),
+        "skewness": skewness(rets),
+        "kurtosis": kurtosis_excess(rets),
+        "daily_return_median": median_return(rets),
     }

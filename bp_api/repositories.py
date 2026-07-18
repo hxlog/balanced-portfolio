@@ -140,7 +140,6 @@ BENCHMARKS: dict[str, dict] = {
         "legs": [(0.6, "10Y", "bond_csi_treasury"), (0.4, "000300", "cn_index_em")],
     },
 }
-INFO_RATIO_BENCH = "000300"  # 信息比率固定基准: 沪深300
 DEFAULT_BENCHMARK_KEY = "bond6040"
 
 
@@ -483,26 +482,25 @@ def run_and_save(
         dates = list(computed[default_method][0].nav.index)
         bench_navs = _compute_benchmark_navs(conn, dates)
 
-        # 绩效归因复用资料: 资产日收益 + 配置基准日收益 + 名称/象限映射
+        # 绩效归因复用资料: 资产日收益 + 名称/象限映射
         asset_returns = prices.pct_change()
-        bench_key = pdef.benchmark_key if pdef.benchmark_key in bench_navs else (
-            next(iter(bench_navs), None)
-        )
-        bench_ret = bench_navs[bench_key]["ret"] if bench_key in bench_navs else None
         name_map = {asset_key(a["symbol"], a["source"]): (a["display_name"] or a["symbol"]) for a in pdef.assets}
         quad_map = _asset_quadrants(pdef.assets)
 
         for method, (result, metrics) in computed.items():
             _save_results(conn, pdef, method, result, metrics)
-            try:
-                attr = compute_attribution(
-                    result.daily_weights, asset_returns, bench_ret, result.nav["nav"],
-                    [{"trade_date": rb.trade_date, "reason": rb.reason} for rb in result.rebalances],
-                    name_map, quad_map,
-                )
-                _save_attribution(conn, pid, method, attr)
-            except Exception:  # noqa: BLE001 - 归因失败不应阻断回测落库
-                logger.exception("绩效归因计算失败 pid=%s method=%s", pid, method)
+            # 为每个可用基准预计算归因
+            for bkey, bdf in bench_navs.items():
+                try:
+                    attr = compute_attribution(
+                        result.daily_weights, asset_returns, bdf["ret"], result.nav["nav"],
+                        [{"trade_date": rb.trade_date, "reason": rb.reason} for rb in result.rebalances],
+                        name_map, quad_map,
+                        daily_costs=result.daily_costs,
+                    )
+                    _save_attribution(conn, pid, method, bkey, attr)
+                except Exception:  # noqa: BLE001 - 归因失败不应阻断回测落库
+                    logger.exception("绩效归因计算失败 pid=%s method=%s benchmark=%s", pid, method, bkey)
 
         _save_benchmarks(conn, pid, bench_navs)
         with conn.cursor() as cur:
@@ -551,11 +549,12 @@ def _compute(
     keys = [asset_key(s, src) for s, src in pairs]
     prices = panel[keys]
 
-    # 回测内置基准固定用沪深300, 以保证信息比率口径统一(展示基准另行预计算)
-    ir_leg = BENCHMARKS[INFO_RATIO_BENCH]["legs"][0]
-    bench = _load_series(conn, ir_leg[1], ir_leg[2])
+    # 回测内部基准使用组合配置的基准(不再硬编码沪深300)
+    bkey = _resolve_benchmark_key(pdef.benchmark_key)
+    leg = BENCHMARKS[bkey]["legs"][0]
+    bench = _load_series(conn, leg[1], leg[2])
     if bench.empty:
-        raise ValueError(f"信息比率基准 {INFO_RATIO_BENCH} 无清洗数据")
+        raise ValueError(f"配置基准 {BENCHMARKS[bkey]['name']} 无清洗数据")
 
     method_base = {m: i * 100 + 1 for i, m in enumerate(BACKTEST_METHODS)}
 
@@ -682,14 +681,14 @@ def _save_benchmarks(
             )
 
 
-def _save_attribution(conn: psycopg.Connection, pid: int, method: str, attribution: dict) -> None:
+def _save_attribution(conn: psycopg.Connection, pid: int, method: str, benchmark_key: str, attribution: dict) -> None:
     with conn.cursor() as cur:
         cur.execute(
-            """INSERT INTO bp_backtest_attribution (portfolio_id, method, payload)
-               VALUES (%s, %s, %s)
-               ON CONFLICT (portfolio_id, method)
+            """INSERT INTO bp_backtest_attribution (portfolio_id, method, benchmark_key, payload)
+               VALUES (%s, %s, %s, %s)
+               ON CONFLICT (portfolio_id, method, benchmark_key)
                DO UPDATE SET payload = EXCLUDED.payload""",
-            (pid, method, Json(_json_safe(attribution))),
+            (pid, method, benchmark_key, Json(_json_safe(attribution))),
         )
 
 
@@ -978,10 +977,17 @@ def get_result(
         cov_row = cur.fetchone()
 
         cur.execute(
-            "SELECT payload FROM bp_backtest_attribution WHERE portfolio_id=%s AND method=%s",
-            (pid, sel),
+            "SELECT payload FROM bp_backtest_attribution WHERE portfolio_id=%s AND method=%s AND benchmark_key=%s",
+            (pid, sel, bsel),
         )
         attr_row = cur.fetchone()
+        # 向后兼容: 若无匹配 benchmark_key 的归因, fallback 到旧数据(任意 benchmark_key)
+        if not attr_row:
+            cur.execute(
+                "SELECT payload FROM bp_backtest_attribution WHERE portfolio_id=%s AND method=%s LIMIT 1",
+                (pid, sel),
+            )
+            attr_row = cur.fetchone()
     attribution = attr_row[0] if attr_row else None
     corr = (
         {"labels": cov_row[1], "matrix": cov_row[2], "cov": cov_row[3]}
@@ -995,7 +1001,7 @@ def get_result(
             "quadrant_weights": cov_row[5],
         }
 
-    # 基准指标按所选基准序列即时计算(组合指标的信息比率仍固定为沪深300)
+    # 基准指标按所选基准序列即时计算; 组合信息比率也按选中基准重算
     from .quant.metrics import compute_metrics as _cm, max_drawdown_recovery_days as _mdd_days
     if nav:
         pser = pd.Series({r["trade_date"]: r["nav"] for r in nav}).sort_index()
@@ -1003,8 +1009,14 @@ def get_result(
             metrics["portfolio"]["max_drawdown_recovery_days"] = _mdd_days(pser)
     if bench_map:
         bser = pd.Series({d: v[0] for d, v in bench_map.items()}).sort_index()
+        # 即时重算 benchmark 指标
         metrics["benchmark"] = _cm(bser, None, pdef.risk_free_rate)
         metrics["benchmark"]["max_drawdown_recovery_days"] = _mdd_days(bser)
+        # 用选中基准即时重算组合信息比率(跟随 dashboard 基准选择)
+        if nav:
+            remetrics = _cm(pser, bser, pdef.risk_free_rate)
+            if "portfolio" in metrics:
+                metrics["portfolio"]["information_ratio"] = remetrics.get("information_ratio")
 
     summaries = []
     best_method = None
