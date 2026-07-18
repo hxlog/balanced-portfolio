@@ -301,7 +301,9 @@ export interface Metrics {
   period_vols: Record<string, number | null>;
   daily_expected_return?: number | null;
   annualized_expected_return?: number | null;
+  daily_volatility?: number | null;
   skewness?: number | null;
+  bowley_skewness?: number | null;
   kurtosis?: number | null;
   daily_return_median?: number | null;
 }

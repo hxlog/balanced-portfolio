@@ -835,10 +835,13 @@ function DashboardView({
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      <DistStatRow label="日收益率期望" p={mPort?.daily_expected_return} b={mBench?.daily_expected_return} fmt={(v) => pct(v, 3)} />
-                      <DistStatRow label="年化期望 (252日)" p={mPort?.annualized_expected_return} b={mBench?.annualized_expected_return} fmt={(v) => pct(v, 2)} />
-                      <DistStatRow label="偏度" p={mPort?.skewness} b={mBench?.skewness} fmt={(v) => v?.toFixed(4)} />
-                      <DistStatRow label="超额峰度" p={mPort?.kurtosis} b={mBench?.kurtosis} fmt={(v) => v?.toFixed(4)} />
+                      <DistStatRow label="日收益率期望" p={mPort?.daily_expected_return} b={mBench?.daily_expected_return} fmt={(v) => pct(v, 3)} higherIsBetter />
+                      <DistStatRow label="年化期望 (252日)" p={mPort?.annualized_expected_return} b={mBench?.annualized_expected_return} fmt={(v) => pct(v, 2)} higherIsBetter />
+                      <DistStatRow label="波动率" p={mPort?.daily_volatility} b={mBench?.daily_volatility} fmt={(v) => pct(v, 3)} higherIsBetter={false} />
+                      <DistStatRow label="年化波动率" p={mPort?.annualized_vol} b={mBench?.annualized_vol} fmt={(v) => pct(v, 2)} higherIsBetter={false} />
+                      <DistStatRow label="偏度" p={mPort?.skewness} b={mBench?.skewness} fmt={(v) => v?.toFixed(4)} higherIsBetter />
+                      <DistStatRow label="Bowley 偏度" p={mPort?.bowley_skewness} b={mBench?.bowley_skewness} fmt={(v) => v?.toFixed(4)} higherIsBetter />
+                      <DistStatRow label="峰度" p={mPort?.kurtosis} b={mBench?.kurtosis} fmt={(v) => v?.toFixed(4)} higherIsBetter={false} />
                     </TableBody>
                   </Table>
                 </div>
@@ -906,12 +909,26 @@ function MetricRow({ label, p, b, fmt }: { label: string; p?: number | null; b?:
   );
 }
 
-function DistStatRow({ label, p, b, fmt }: { label: string; p?: number | null; b?: number | null; fmt: (v: number | null | undefined) => string | undefined }) {
+function DistStatRow({ label, p, b, fmt, higherIsBetter }: {
+  label: string; p?: number | null; b?: number | null;
+  fmt: (v: number | null | undefined) => string | undefined;
+  higherIsBetter: boolean;
+}) {
+  const pv = p ?? null, bv = b ?? null;
+  let pBetter = false, bBetter = false;
+  if (pv != null && bv != null) {
+    if (higherIsBetter) { pBetter = pv > bv; bBetter = bv > pv; }
+    else { pBetter = pv < bv; bBetter = bv < pv; }
+  }
   return (
     <TableRow>
       <TableCell className="pl-0 font-medium">{label}</TableCell>
-      <TableCell className="text-right font-mono">{p == null ? "-" : (fmt(p) ?? "-")}</TableCell>
-      <TableCell className="text-right font-mono text-muted-foreground">{b == null ? "-" : (fmt(b) ?? "-")}</TableCell>
+      <TableCell className={`text-right font-mono ${pBetter ? "text-primary" : ""}`}>
+        {pv == null ? "-" : (fmt(pv) ?? "-")}
+      </TableCell>
+      <TableCell className={`text-right font-mono ${bBetter ? "text-primary" : ""}`}>
+        {bv == null ? "-" : (fmt(bv) ?? "-")}
+      </TableCell>
     </TableRow>
   );
 }
@@ -1537,10 +1554,11 @@ function buildDistOption(
   const benchMedian = median(bench);
   const portMedianBin = Math.round((portMedian - lo) / width);
   const benchMedianBin = Math.round((benchMedian - lo) / width);
+  // 中位数 markLine 标签位置: 组合在上端(end)、基准在下端(start)，避免文字重叠
   return {
     tooltip: { trigger: "axis", backgroundColor: cardBg, textStyle: { color: fg } },
     legend: { data: ["组合", benchName], textStyle: { color: textCol }, top: 0 },
-    grid: { top: 40, right: 20, bottom: 30, left: 45 },
+    grid: { top: 40, right: 20, bottom: 40, left: 45 },
     xAxis: {
       type: "category", data: centers.map((c) => (c * 100).toFixed(1)),
       axisLabel: { color: textCol, interval: 7 }, axisLine: { lineStyle: { color: axisLineCol } },
@@ -1554,7 +1572,7 @@ function buildDistOption(
         markLine: {
           silent: true, symbol: "none",
           lineStyle: { color: "#3B82F6", type: "dashed", width: 1.5 },
-          label: { formatter: `中位数 ${(portMedian * 100).toFixed(2)}%`, color: "#3B82F6", fontSize: 10 },
+          label: { position: "end", formatter: `中位数 ${(portMedian * 100).toFixed(2)}%`, color: "#3B82F6", fontSize: 10 },
           data: [{ xAxis: portMedianBin }],
         },
       },
@@ -1564,7 +1582,7 @@ function buildDistOption(
         markLine: {
           silent: true, symbol: "none",
           lineStyle: { color: "#A1A1A1", type: "dashed", width: 1.5 },
-          label: { formatter: `中位数 ${(benchMedian * 100).toFixed(2)}%`, color: "#A1A1A1", fontSize: 10 },
+          label: { position: "start", formatter: `中位数 ${(benchMedian * 100).toFixed(2)}%`, color: "#A1A1A1", fontSize: 10 },
           data: [{ xAxis: benchMedianBin }],
         },
       },

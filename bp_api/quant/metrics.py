@@ -103,6 +103,11 @@ def annualized_expected_return(rets: pd.Series, trading_days: int = DEFAULT_TRAD
     return float(rets.mean() * trading_days) if len(rets) > 0 else 0.0
 
 
+def daily_volatility(rets: pd.Series) -> float:
+    """日波动率（日收益率标准差，ddof=1）。"""
+    return float(rets.std(ddof=1)) if len(rets) > 1 else 0.0
+
+
 def skewness(rets: pd.Series) -> float:
     """偏度（调整样本偏度）。"""
     n = len(rets)
@@ -115,8 +120,21 @@ def skewness(rets: pd.Series) -> float:
     return float(((rets - m) ** 3).mean() / (s ** 3))
 
 
-def kurtosis_excess(rets: pd.Series) -> float:
-    """超额峰度（excess kurtosis = 峰度 − 3）。"""
+def bowley_skewness(rets: pd.Series) -> float:
+    """Bowley 偏度 = (Q3 + Q1 − 2·Q2) / (Q3 − Q1)，基于四分位数的鲁棒偏度。"""
+    if len(rets) < 3:
+        return 0.0
+    q1 = float(rets.quantile(0.25))
+    q2 = float(rets.quantile(0.50))
+    q3 = float(rets.quantile(0.75))
+    denom = q3 - q1
+    if abs(denom) < 1e-12:
+        return 0.0
+    return float((q3 + q1 - 2.0 * q2) / denom)
+
+
+def kurtosis(rets: pd.Series) -> float:
+    """峰度（Pearson 峰度，正态分布=3）。"""
     n = len(rets)
     if n < 4:
         return 0.0
@@ -124,7 +142,7 @@ def kurtosis_excess(rets: pd.Series) -> float:
     s = rets.std(ddof=0)
     if s < 1e-12:
         return 0.0
-    return float(((rets - m) ** 4).mean() / (s ** 4) - 3.0)
+    return float(((rets - m) ** 4).mean() / (s ** 4))
 
 
 def median_return(rets: pd.Series) -> float:
@@ -184,7 +202,9 @@ def compute_metrics(
         "period_vols": period_vols,
         "daily_expected_return": daily_expected_return(rets),
         "annualized_expected_return": annualized_expected_return(rets, trading_days),
+        "daily_volatility": daily_volatility(rets),
         "skewness": skewness(rets),
-        "kurtosis": kurtosis_excess(rets),
+        "bowley_skewness": bowley_skewness(rets),
+        "kurtosis": kurtosis(rets),
         "daily_return_median": median_return(rets),
     }
