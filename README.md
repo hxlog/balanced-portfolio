@@ -9,6 +9,8 @@
 
 Demo：https://xushilu.com
 
+Demo测试账户和密码都是`test1`
+
 介绍与说明（长文）：[我全栈开发的第一个产品：Balanced Portfolio 多资产风险平价全天候策略回测系统](https://prologue.dev/blog/my-first-full-stack-development-project-balanced-portfolio-a-global-multi-asset-risk-parity-backtesting-system)
 
 ## 主要功能
