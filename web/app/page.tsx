@@ -70,7 +70,7 @@ export default async function Home() {
               variant="outline"
               className="rounded-full px-8 text-base"
             >
-              <a href="#methodology">了解方法论</a>
+              <a href="/methodology">了解方法论</a>
             </Button>
           </div>
         </div>
@@ -121,7 +121,7 @@ export default async function Home() {
                 四象限资产配置矩阵
               </h2>
               <p className="text-lg text-muted-foreground">
-                经济环境在增长与通胀之间循环。我们将大类资产划分至不同象限，利用它们之间的低相关性构建全天候组合。
+                经济环境在繁荣-萧条与通胀-通缩之间循环。我们将大类资产划分至四个象限，利用它们之间的低相关性和收益分布独立性构建全天候组合。
               </p>
 
               <div className="grid grid-cols-2 gap-px bg-border rounded-xl overflow-hidden shadow-sm">
@@ -164,7 +164,7 @@ export default async function Home() {
               <div className="flex justify-between items-start mb-6">
                 <div>
                   <h3 className="text-xl font-medium mb-1">
-                    多资产投资组合中国市场版
+                    多资产投资组合中国市场调整版
                   </h3>
                   <p className="text-sm text-muted-foreground">
                     中证A500 · 标普500 · 黄金 · 10年国债...
@@ -215,7 +215,7 @@ export default async function Home() {
                 中金所股指期货看板
               </h2>
               <p className="text-lg text-muted-foreground">
-                Alpha量化策略/期权交易对冲管理需要的股指期货看板，基差的描述性统计，降低对冲成本。
+                Alpha量化策略/期权交易对冲管理需要的股指期货看板，展示基差的时间序列与描述性统计，降低对冲成本。
               </p>
 
               <div className="space-y-5">
@@ -226,7 +226,7 @@ export default async function Home() {
                   <div>
                     <h4 className="text-base font-medium">合约监控</h4>
                     <p className="text-sm text-muted-foreground mt-1">
-                      覆盖中金所股指期货品种的合约矩阵，收盘后自动更新最新的指数与合约点位。
+                      覆盖中金所股指期货品种的合约矩阵。
                     </p>
                   </div>
                 </div>
@@ -368,16 +368,18 @@ export default async function Home() {
           <div className="grid lg:grid-cols-2 gap-16 items-center">
             <div className="space-y-8">
               <h2 className="text-3xl md:text-4xl font-semibold tracking-tight">
-                场外结构化产品定价
+                场外结构化衍生品定价
               </h2>
               <p className="text-lg text-muted-foreground">
-                雪球、凤凰、气囊、障碍等场外期权的Monte Carlo / Black-Scholes Model 闭式解解析 / 数值积分法 的定价与簿记。
+                <b>一站式场外期权的盈亏与敞口分析</b>
+                <br />
+                支持雪球、凤凰、气囊、障碍等结构的定价与簿记。
+                <br />
+                求解方法：Monte Carlo / Black-Scholes Model 闭式解解析 / 数值积分法。
+                <br />
+                按A股交易日历展示合约的Greeks、PV值、PoL与收益示意图。
 
-
-                严格按 A 股交易日历做日度敲入、月度敲出观察。
                 
-
-                展示Greeks、PV值、PoL与收益示意图。
               </p>
 
               <div className="space-y-5">

@@ -5,11 +5,20 @@ description: "关于风险平价回测系统、股指期货数据看板、场外
 
 # 方法论 Methodology
 
-基于桥水基金创始人达利欧（Ray Dalio）的**风险平价框架**，把全球大类资产按宏观周期放入四象限，以历史波动率与协方差为风险度量，构建长期夏普比率大于 1 的全天候指数投资组合。
+**Balanced Portfolio 是基于桥水基金风险平价理论的投资组合管理与回测系统，包括中金所股指期货描述性统计和场外期权自动敲入敲出产品(autocallables)结构化产品定价功能**，供广大投资者参考和交流学习。
 
-本文将讲清风险平价、四象限、四种优化约束收敛方法、回测机制、数据治理与交易成本的全部细节。
+项目仓库：[github.com/hxlog/balanced-portfolio](https://github.com/hxlog/balanced-portfolio)
 
-## 风险平价（Risk Parity）
+Demo测试账户和密码都是`test1`
+
+介绍与说明（长文）：[我全栈开发的第一个产品：Balanced Portfolio 多资产风险平价全天候策略回测系统](https://prologue.dev/blog/my-first-full-stack-development-project-balanced-portfolio-a-global-multi-asset-risk-parity-backtesting-system)
+
+本项目基于桥水基金创始人达利欧（Ray Dalio）的**风险平价框架**，把全球大类资产按宏观周期放入四象限，以历史波动率与协方差为风险度量，构建长期夏普比率大于 1 的全天候指数投资组合。
+
+本文将讲清风险平价（Risk Parity）、四象限、四种优化约束收敛方法、回测机制、数据治理与交易成本的全部细节。
+
+
+## 风险平价
 
 传统组合常按资金等额或主观比例配置，结果是少数高波动资产贡献了组合绝大部分风险——典型的"看似分散、实则集中"。风险平价反其道而行：**让每个资产（或每个象限）对组合总波动率的边际贡献相等**，从而在风险维度上真正分散。
 

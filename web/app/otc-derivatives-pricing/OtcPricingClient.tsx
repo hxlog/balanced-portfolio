@@ -822,7 +822,7 @@ export function OtcPricingClient() {
           <div className="flex items-center gap-2">
             <TrendingUp className="w-5 h-5 text-primary" />
             <h1 className="text-xl font-semibold tracking-tight">场外衍生品定价</h1>
-            <Badge variant="secondary" className="font-normal">Monte Carlo / 解析 · 全套 Greeks</Badge>
+            <Badge variant="secondary" className="font-normal">Monte Carlo 方法解析求PV和Greeks</Badge>
           </div>
           <p className="text-sm text-muted-foreground leading-relaxed">
             雪球 / 凤凰 / 气囊 / 障碍 场外结构化产品定价与簿记。品种与算法参考 pricelib，
