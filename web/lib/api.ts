@@ -844,4 +844,7 @@ export const api = {
       `/api/admin/assets/${encodeURIComponent(source)}/${encodeURIComponent(symbol)}/selectable`,
       { method: "PATCH", body: JSON.stringify({ selectable }) },
     ),
+  /** 失效 /builder 的 SSR 资产缓存; admin 资产写操作后调用, 失败由调用方吞掉。*/
+  revalidateAssets: () =>
+    req<{ ok: boolean; tag: string }>("/api/revalidate", { method: "POST" }),
 };

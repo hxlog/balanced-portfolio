@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "管理后台",
-  description: "Balanced Portfolio 管理后台（不公开索引）。",
+  description: "Balanced Portfolio 管理后台。",
   robots: { index: false, follow: false },
 };
 

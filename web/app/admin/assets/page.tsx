@@ -144,12 +144,15 @@ export default function AdminAssetsPage() {
     setProbeResult(null);
     setProbeError(null);
     await load();
+    // 失效 /builder 资产缓存, 让新加标的立即可选(失败不阻断)
+    await api.revalidateAssets().catch(() => {});
   };
 
   const remove = async (a: AdminAsset) => {
     if (!window.confirm(`确认软删除 ${a.name || a.symbol}?`)) return;
     await api.deleteAdminAsset(a.source, a.symbol);
     await load();
+    await api.revalidateAssets().catch(() => {});
   };
 
   const syncAll = async () => {
@@ -222,6 +225,7 @@ export default function AdminAssetsPage() {
     setAssets((list) => list.map((x) => (x.symbol === a.symbol && x.source === a.source ? { ...x, is_selectable: next } : x)));
     try {
       await api.setAssetSelectable(a.source, a.symbol, next);
+      await api.revalidateAssets().catch(() => {});
     } catch (e) {
       window.alert(String(e instanceof Error ? e.message : e));
       await load();
