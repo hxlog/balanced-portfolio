@@ -33,6 +33,13 @@ const QUADRANT_COLOR: Record<Quadrant, string> = {
 type Selected = Record<Quadrant, Asset[]>;
 const emptySelection: Selected = { overheat: [], stagflation: [], recovery: [], recession: [] };
 
+// 推荐 ETF 分组(需求11): 按金融最佳实践分三类, 命中资产池即展示, 点击多选。
+const RECOMMENDED_GROUPS: { label: string; symbols: string[] }[] = [
+  { label: "国内宽基", symbols: ["510300", "510500", "512100", "588080", "159915", "159845"] },
+  { label: "红利类", symbols: ["510880", "515180", "515890", "512890", "159581", "501031"] },
+  { label: "海外投资", symbols: ["513500", "513100", "513300", "159870", "513520", "513880"] },
+];
+
 function keyOf(a: Asset | { symbol: string; source: string }) {
   return `${a.symbol}@${a.source}`;
 }
@@ -623,6 +630,22 @@ function AssetPicker({
       (q === "" || (a.name || "").includes(q) || a.symbol.toLowerCase().includes(q.toLowerCase()))
   );
 
+  // 推荐分组: 命中资产池(且未被本象限选中)的推荐 ETF
+  const recommended = RECOMMENDED_GROUPS.map((g) => ({
+    ...g,
+    assets: assets.filter((a) => g.symbols.includes(a.symbol) && !usedSet.has(keyOf(a))),
+  })).filter((g) => g.assets.length > 0);
+
+  const toggleRecommended = (group: typeof recommended[number]) => {
+    const ks = group.assets.map((a) => keyOf(a));
+    setPending((prev) => {
+      const next = new Set(prev);
+      const allChecked = ks.every((k) => next.has(k));
+      ks.forEach((k) => (allChecked ? next.delete(k) : next.add(k)));
+      return next;
+    });
+  };
+
   const toggle = (a: Asset) => {
     const k = keyOf(a);
     setPending((prev) => {
@@ -683,6 +706,40 @@ function AssetPicker({
             </SelectContent>
           </Select>
         </div>
+        {recommended.length > 0 && category === "all" && vendor === "all" && q === "" && (
+          <div className="mb-3 space-y-2">
+            <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">推荐 ETF（点击整组多选）</div>
+            {recommended.map((g) => {
+              const ks = g.assets.map((a) => keyOf(a));
+              const allChecked = ks.every((k) => pending.has(k));
+              return (
+                <div key={g.label} className="flex items-center gap-2">
+                  <Badge
+                    variant={allChecked ? "default" : "secondary"}
+                    className="shrink-0 font-normal cursor-pointer select-none"
+                    onClick={() => toggleRecommended(g)}
+                  >
+                    {g.label}（{g.assets.length}）
+                  </Badge>
+                  <div className="flex flex-wrap gap-1 min-w-0">
+                    {g.assets.map((a) => (
+                      <span
+                        key={keyOf(a)}
+                        onClick={() => toggle(a)}
+                        className={`inline-flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded border cursor-pointer select-none ${
+                          pending.has(keyOf(a)) ? "border-primary text-primary bg-primary/10" : "border-border text-muted-foreground hover:text-foreground"
+                        }`}
+                        title={`${a.name} (${a.symbol})`}
+                      >
+                        {a.symbol}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
         <div className="max-h-80 overflow-auto space-y-1">
           {filtered.map((a) => {
             const k = keyOf(a);
