@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
+import Script from "next/script";
 import "./globals.css";
 import "katex/dist/katex.min.css";
 import { Providers } from "./providers";
@@ -10,6 +11,12 @@ const SITE_URL = process.env.BP_SITE_URL || "http://localhost:3000";
 const SITE_NAME = "Balanced Portfolio";
 const SITE_DESC =
   "面向机构与专业投资者的风险平价指数投资组合管理与回测平台，基于桥水达利欧四象限框架。";
+
+// umami 站点埋点: 仅生产环境且配置了 website-id 时启用(开发环境不调用)。
+const UMAMI_WEBSITE_ID = process.env.BP_UMAMI_WEBSITE_ID || "";
+const UMAMI_SRC = process.env.BP_UMAMI_SRC || "https://umami.morean.cn/script.js";
+const IS_PROD = process.env.NODE_ENV === "production";
+const ENABLE_UMAMI = IS_PROD && UMAMI_WEBSITE_ID.length > 0;
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -74,6 +81,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="zh-CN" suppressHydrationWarning>
       <body className="min-h-screen flex flex-col bg-background text-foreground font-sans antialiased">
+        {ENABLE_UMAMI && (
+          <Script
+            defer
+            src={UMAMI_SRC}
+            data-website-id={UMAMI_WEBSITE_ID}
+            strategy="afterInteractive"
+          />
+        )}
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
