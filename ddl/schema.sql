@@ -55,6 +55,8 @@ VALUES
     ('bond_csi_treasury', '中债国债指数(财富/全收益)',                                         'bond_treasury_index_cbond', 'bond',         FALSE, FALSE, '期限标识, 如 10Y / 30Y / 0-3Y', '中债'),
     ('etf_em',            'ETF行情-东财(后复权)',                                             'fund_etf_hist_em',          'etf',          TRUE,  TRUE,  'ETF代码, 如 518880(黄金ETF)', '东财'),
     ('etf_sina',          'ETF行情-新浪(全量, 自动加市场前缀)',                                 'fund_etf_hist_sina',        'etf',          TRUE,  FALSE, 'ETF代码, 如 510050 / 518880(自动加 sh/sz 前缀)', '新浪'),
+    ('etf_tx',            'ETF行情-腾讯 fqkline(后复权/前复权/不复权)',                          'tencent_fqkline',           'etf',          TRUE,  TRUE,  'ETF代码, 如 518880(自动加 sh/sz 前缀)', '腾讯'),
+    ('index_tx',          '指数行情-腾讯 fqkline(不复权)',                                      'tencent_fqkline',           'cn_index',     TRUE,  TRUE,  '带市场前缀, 如 sh000300 / sz399552', '腾讯'),
     ('futures_cffex',     '中金所期货日行情(IF/IH/IC/IM)',                                    'get_futures_daily',         'futures',      TRUE,  TRUE,  '品种代码如 IF/IH/IC/IM', '中金所'),
     ('crypto_yfinance',   '加密/外汇/商品-Yahoo Finance日线(OHLCV)',                             'yfinance.download',         'alternative',  TRUE,  TRUE,  'BTC-USD / DX-Y.NYB / GC=F', 'Yahoo Finance'),
     ('dxy_em',            '美元指数(DXY)-东方财富直连 push2his (secid 100.UDI)',                 'em_push2his_kline',         'forex',        FALSE, TRUE,  'DX-Y.NYB', '东方财富'),

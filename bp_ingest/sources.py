@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from typing import Callable, NoReturn, Optional
 
 import akshare as ak
@@ -454,6 +454,92 @@ def _fetch_etf_sina(symbol: str, start: date, end: date, extra: dict) -> pd.Data
 
 
 # ---------------------------------------------------------------------
+# 腾讯 web.ifzq.gtimg.cn fqkline (ETF/指数通用; 支持 qfq/hfq/不复权)
+# ---------------------------------------------------------------------
+_TX_KLINE_COLS = ["date", "open", "close", "high", "low", "volume"]
+
+# 腾讯 fqkline 每页最大条数(实测 >800 会 param error 或异常截断; 800 安全)
+_TX_PAGE_SIZE = 800
+
+
+def _tx_market_prefix(symbol: str) -> str:
+    """腾讯 fqkline 需 sh/sz 市场前缀; 纯代码按交易所自动补。"""
+    s = symbol.strip().lower()
+    if s.startswith(("sh", "sz")):
+        return s
+    if s.startswith(("5", "6", "9")):  # 510xxx/56xxxx/58xxxx/9xxxxx 上交所 ETF/基金
+        return f"sh{s}"
+    if s.startswith(("1", "0", "3")):  # 159xxx/16xxxx/18xxxx 深交所; 000300/399xxx 指数
+        return f"sz{s}" if s.startswith(("1", "3")) else f"sh{s}"
+    return f"sh{s}"  # 兜底沪市
+
+
+def _fetch_tx_kline(
+    symbol: str, start: date, end: date, adjust: str
+) -> pd.DataFrame:
+    """直连腾讯 fqkline 拉取日 K(ETF/指数通用), 按 800/页向前分页拼全历史。
+
+    端点 https://web.ifzq.gtimg.cn/appstock/app/fqkline/get
+    param 格式: {code},day,{start},{end},{count},{fq}  (fq: qfq / hfq / 空=不复权)
+    日线行: [date, open, close, high, low, volume] (无 amount/换手率)。
+
+    复权口径注意: 腾讯 hfq 为「单位累计净值」口径(每份 1.0 起步), 与东财 hfq 的
+    「后复权价格」口径绝对值不同; 但两口径日收益率一致。因此腾讯只在东财失败时
+    作降级源, 由 ingest 层按「收益率对齐」重锚到东财口径(绝不混用绝对价)。
+    """
+    import requests as _requests
+
+    fq = {"qfq": "qfq", "hfq": "hfq", "": ""}.get(adjust, "")
+    code = _tx_market_prefix(symbol)
+    url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+
+    frames: list[pd.DataFrame] = []
+    page_end = end
+    for _ in range(40):  # 防御上限(40×800=32000 日, 远超任何品种历史)
+        param = f"{code},day,{start:%Y-%m-%d},{page_end:%Y-%m-%d},{_TX_PAGE_SIZE},{fq}"
+        try:
+            r = _requests.get(url, params={"param": param}, timeout=20)
+            data = r.json()
+        except Exception as exc:  # noqa: BLE001
+            if _is_conn_error(exc):
+                raise
+            return pd.DataFrame(columns=STANDARD_COLUMNS)
+
+        node = (data.get("data") or {}).get(code)
+        if not isinstance(node, dict):
+            break
+        key = {"qfq": "qfqday", "hfq": "hfqday", "": "day"}.get(fq, "day")
+        arr = node.get(key) or node.get("day") or []
+        if not arr:
+            break
+        df = pd.DataFrame(arr, columns=_TX_KLINE_COLS)
+        frames.append(df)
+        if len(arr) < _TX_PAGE_SIZE:
+            break  # 已到 start 边界
+        # 下一页: 以本页最早日期再往前翻(去重靠 _finalize 排序去重)
+        page_end = date.fromisoformat(str(df["date"].iloc[0])) - timedelta(days=1)
+        if page_end < start:
+            break
+
+    if not frames:
+        return pd.DataFrame(columns=STANDARD_COLUMNS)
+    raw = pd.concat(frames, ignore_index=True)
+    raw = raw.drop_duplicates(subset=["date"], keep="last")
+    return _finalize(_rename(raw, {"date": "trade_date"}), start, end)
+
+
+def _fetch_etf_tx(symbol: str, start: date, end: date, extra: dict) -> pd.DataFrame:
+    """腾讯 ETF 日 K; adjust 从 extra 取(qfq/hfq/空), 默认不复权。"""
+    adjust = extra.get("adjust", "") or ""
+    return _fetch_tx_kline(symbol, start, end, adjust)
+
+
+def _fetch_index_tx(symbol: str, start: date, end: date, extra: dict) -> pd.DataFrame:
+    """腾讯指数日 K(指数不分复权, 恒为不复权口径)。"""
+    return _fetch_tx_kline(symbol, start, end, "")
+
+
+# ---------------------------------------------------------------------
 # Yahoo Finance (crypto / forex / commodity) — 走 yfinance
 # ---------------------------------------------------------------------
 def _fetch_crypto_yfinance(symbol: str, start: date, end: date, extra: dict) -> pd.DataFrame:
@@ -590,6 +676,12 @@ SOURCES: dict[str, SourceAdapter] = {
     "etf_sina": SourceAdapter(
         "etf_sina", "fund_etf_hist_sina", False, True, False, _fetch_etf_sina
     ),
+    "etf_tx": SourceAdapter(
+        "etf_tx", "tencent_fqkline", True, True, False, _fetch_etf_tx
+    ),
+    "index_tx": SourceAdapter(
+        "index_tx", "tencent_fqkline", True, True, False, _fetch_index_tx
+    ),
     "crypto_yfinance": SourceAdapter(
         "crypto_yfinance", "yfinance.download", True, True, False, _fetch_crypto_yfinance
     ),
@@ -608,20 +700,19 @@ def get_adapter(source: str) -> SourceAdapter:
     return SOURCES[source]
 
 
-# 东方财富(em)源被反爬 IP 掐断时的等价降级链(em → sina → tx)。
-# 仅在 em 源抛连接级错误(ConnectionError/RemoteDisconnected/Timeout)时降级;
-# 若降级源尚未发布当日收盘 bar, 继续尝试链上下一源。
-# 降级后数据仍按原 source 落库, 对回测面板透明。
+# 多源聚合降级链(主源 → 降级源)。仅聚合「收益率一致」的源:
+# 同复权口径(qfq↔qfq / hfq↔hfq / 指数不复权)下, 各源绝对价仅差一个常数倍(累计收益率相同),
+# 因此可用「重叠日收盘比值」把降级源重锚到主源口径, 绝不混用原始绝对价。
+# 只有东财/腾讯提供真正后复权(hfq); 新浪 ETF 仅原始价(不复权), 不纳入 hfq/qfq 聚合链。
 #
-# 注意: etf_em 不在此映射中 —— ETF 必须用后复权(hfq)数据, 而 etf_sina 返回未复权价,
-# 降级会污染 hfq 系列(混合复权/未复权价, 破坏滚动协方差/ERC 权重)。故 etf_em 拉取
-# 失败时直接报错暂空, 由调度器重试, 绝不降级到 etf_sina。指数/HK/全球无复权概念,
-# sina/tx 与 em 同值, 降级无害, 保留。
-EM_FALLBACK_CHAIN: dict[str, list[str]] = {
-    "cn_index_em": ["cn_index_sina", "cn_index_tx"],
-    "cn_index_em_px": ["cn_index_tx"],
+# 指数(不复权): 东财 → 新浪 → 腾讯(三者同值, 比值恒 1)。
+# ETF: 东财 → 腾讯, adjust 由资产 extra_params.adjust 驱动(hfq 为回测口径; qfq 仅 probe/展示)。
+AGGREGATE_CHAINS: dict[str, list[str]] = {
+    "cn_index_em": ["cn_index_sina", "cn_index_tx", "index_tx"],
+    "cn_index_em_px": ["cn_index_tx", "index_tx"],
     "hk_index_em": ["hk_index_sina"],
     "global_index_em": ["global_index_sina"],
+    "etf_em": ["etf_tx"],
 }
 
 
@@ -631,13 +722,70 @@ def _frame_covers_end(df: pd.DataFrame, end: date) -> bool:
     return end in set(df["trade_date"].tolist())
 
 
-def fetch_with_fallback(
-    source: str, symbol: str, start: date, end: date, extra: dict | None = None
+def _align_fallback_to_base(
+    base_df: pd.DataFrame | None,
+    fb_df: pd.DataFrame,
+    anchor_close: float | None = None,
+    anchor_date: date | None = None,
 ) -> pd.DataFrame:
-    """优先用 source 拉取; 若 em 源被反爬掐断, 沿降级链尝试 sina/tx。
+    """把降级源按「重叠日收盘比值」重锚到主源口径。
 
-    另: 主源或某一降级源成功但尚未包含 end(常见于新浪晚于腾讯发布当日收盘)时,
-    继续尝试链上下一源, 以便收盘后强制重拉能拿到正式 close。
+    同复权口径下两源日收益率一致 → 绝对价仅差一个常数倍, 故在任一重叠交易日取
+    base_close / fb_close 作为缩放因子, 把降级源 ohlc 整体缩放, 与主源价格连续可比。
+    无重叠时(base_df 空/无交集)退而求其次用库中锚点(anchor_close@anchor_date)对齐;
+    仍无锚点则原样返回, 由调用方视为新资产整段降级。
+    """
+    if fb_df is None or fb_df.empty:
+        return fb_df
+    # 1) 与主源本窗口结果的交集对齐
+    if base_df is not None and not base_df.empty:
+        base_dates = set(base_df["trade_date"].tolist())
+        overlap = fb_df[fb_df["trade_date"].isin(base_dates)]
+        if not overlap.empty:
+            anchor = overlap.sort_values("trade_date").iloc[-1]
+            b_rows = base_df[base_df["trade_date"] == anchor["trade_date"]]
+            if not b_rows.empty:
+                b_close = b_rows["close"].iloc[0]
+                f_close = anchor["close"]
+                if b_close and not pd.isna(b_close) and f_close and not pd.isna(f_close):
+                    ratio = float(b_close) / float(f_close)
+                    if ratio and ratio != 1.0:
+                        out = fb_df.copy()
+                        for col in ("open", "high", "low", "close"):
+                            out[col] = out[col] * ratio
+                        return out
+    # 2) 库中锚点对齐(主源整段失败、仅底层已有历史时)
+    if anchor_close and anchor_date is not None:
+        anchor_rows = fb_df[fb_df["trade_date"] == anchor_date]
+        if not anchor_rows.empty:
+            f_close = anchor_rows["close"].iloc[0]
+            if f_close and not pd.isna(f_close):
+                ratio = float(anchor_close) / float(f_close)
+                if ratio and ratio != 1.0:
+                    out = fb_df.copy()
+                    for col in ("open", "high", "low", "close"):
+                        out[col] = out[col] * ratio
+                    return out
+    return fb_df
+
+
+def fetch_with_fallback(
+    source: str,
+    symbol: str,
+    start: date,
+    end: date,
+    extra: dict | None = None,
+    *,
+    anchor_close: float | None = None,
+    anchor_date: date | None = None,
+) -> pd.DataFrame:
+    """优先用主源拉取; 若主源被反爬掐断或未覆盖 end, 沿聚合链降级并按收益率对齐重锚。
+
+    - 主源/降级源同复权口径, 绝对价仅差常数倍 → 缩放对齐后合并(主源优先, 降级源补尾部缺口)。
+    - 主源整段失败时, 用库中锚点 close(anchor_close@anchor_date, 主源口径)把降级源重锚,
+      避免混入降级源不同基数的绝对价(如腾讯 hfq 的单位净值口径)污染收益序列。
+    - 降级源未发布当日收盘时, 继续尝试链上下一源(收盘后强制重拉能拿到正式 close)。
+    - 返回的 DataFrame 仍是主源口径价格, 对回测/清洗透明。
     """
     import requests as _requests
 
@@ -651,7 +799,7 @@ def fetch_with_fallback(
 
     extra = extra or {}
     adapter = get_adapter(source)
-    chain = EM_FALLBACK_CHAIN.get(source, [])
+    chain = AGGREGATE_CHAINS.get(source, [])
     last_df: pd.DataFrame | None = None
 
     try:
@@ -676,17 +824,24 @@ def fetch_with_fallback(
         except Exception as exc:  # noqa: BLE001
             logger.warning("降级源 %s 拉取 %s 失败: %s", fb, symbol, exc)
             continue
-        if _frame_covers_end(df, end):
+        if df is None or df.empty:
+            continue
+        aligned = _align_fallback_to_base(last_df, df, anchor_close, anchor_date)
+        if _frame_covers_end(aligned, end):
             if last_df is not None and not last_df.empty:
+                merged = pd.concat([last_df, aligned], ignore_index=True)
+                merged = merged.drop_duplicates(subset=["trade_date"], keep="first")
+                merged = merged.sort_values("trade_date").reset_index(drop=True)
                 logger.info("降级源 %s 补齐 %s 的 end=%s", fb, symbol, end)
-            return df
+                return merged
+            return aligned
         if last_df is None or last_df.empty or (
-            not df.empty
-            and df["trade_date"].max() > last_df["trade_date"].max()
+            not aligned.empty
+            and aligned["trade_date"].max() > last_df["trade_date"].max()
         ):
-            last_df = df
+            last_df = aligned
 
-    if last_df is not None:
+    if last_df is not None and not last_df.empty:
         return last_df
     raise RuntimeError(f"源 {source} 及降级链均无法拉取 {symbol}")
 

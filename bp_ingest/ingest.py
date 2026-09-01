@@ -207,13 +207,23 @@ def _sync_one(
         return SyncResult(cfg.symbol, cfg.source, "skip", 0, "窗口为空")
 
     # 函数内重试(带随机指数退避+抖动), 抗东财偶发断连/限流; 次数与退避上限由 config 控制
+    # 多源降级锚点: 库中最后收盘(主源口径)。主源整段失败时用它把降级源重锚到主源口径,
+    # 避免混入腾讯 hfq 的单位净值口径绝对价污染收益序列(见 sources.py fetch_with_fallback)。
+    anchor_close = None
+    if last_date is not None:
+        ac = db.get_close_at(conn, cfg.symbol, cfg.source, last_date)
+        anchor_close = float(ac) if ac is not None else None
+
     @retry(
         stop=stop_after_attempt(app.max_retries),
         wait=wait_random_exponential(multiplier=1, max=60),
         reraise=True,
     )
     def _fetch() -> pd.DataFrame:
-        return fetch_with_fallback(cfg.source, cfg.symbol, start, end, cfg.extra_params)
+        return fetch_with_fallback(
+            cfg.source, cfg.symbol, start, end, cfg.extra_params,
+            anchor_close=anchor_close, anchor_date=last_date,
+        )
 
     df = _fetch()
     df = _drop_unconfirmed_today_bars(df, today, now=wall)

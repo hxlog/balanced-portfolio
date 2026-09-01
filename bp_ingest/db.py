@@ -117,6 +117,20 @@ def get_last_trade_date(
         return row[0] if row else None
 
 
+def get_close_at(
+    conn: psycopg.Connection, symbol: str, source: str, trade_date: date
+) -> Optional[Decimal]:
+    """取某交易日的收盘价; 用于多源降级时把降级源价格重锚到主源口径。"""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT close FROM bp_index_quote_daily "
+            "WHERE symbol = %s AND source = %s AND trade_date = %s",
+            (symbol, source, trade_date),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
 def get_quote_updated_at(
     conn: psycopg.Connection, symbol: str, source: str, trade_date: date
 ) -> Optional[datetime]:

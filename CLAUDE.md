@@ -110,8 +110,8 @@ psql -h localhost -U postgres -d balanced_portfolio -f ddl/schema.sql
 - `sources.py` 是 akshare 适配器注册表，每个 source 归一化到标准列 schema（`trade_date, open, high, low, close, volume, amount, turnover_rate, pct_change`，close 必须存在）。
 - `fetch_with_fallback` 在东财(em)连接级错误时降级到 sina/tx；`_is_conn_error` 判定反爬掐断。`prewarm_em_code_maps` 预热 secid 解析映射。
 - 资产池以东方财富为主（`cn_index_em`/`etf_em` 等），新浪/腾讯作降级；CFFEX 走 `get_futures_daily`。资产配置存 `bp_index_config`，软删除(`is_deleted`)。
-- `http_session.py` 用 curl-cffi 硬化指纹绕反爬；`BP_EM_COOKIE`/`BP_SINA_COOKIE` 可选注入。
-- `scripts/`（`check_cookies.py`、`validate_candidates.py`、`gen_seed_sql.py`）是资产池维护脚本，不参与 API 运行；`candidates.json`/`validated_candidates.json` 本地维护、不入 git。
+- `http_session.py` 用 curl-cffi 硬化指纹绕反爬(仅 TLS 指纹, 已移除 cookie 注入/预热)。
+- `scripts/`（`validate_candidates.py`、`gen_seed_sql.py`）是资产池维护脚本，不参与 API 运行；`candidates.json`/`validated_candidates.json` 本地维护、不入 git。
 
 ## 数据库迁移纪律
 
