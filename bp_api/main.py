@@ -238,7 +238,7 @@ def reorder_portfolios(
     if user.user_id is None:
         raise HTTPException(401, "需要登录")
     with db.get_conn() as conn:
-        repo.reorder_portfolios(conn, user.user_id, payload.ordered_ids)
+        repo.reorder_portfolios(conn, user.user_id, payload.ordered_ids, user.is_admin)
         conn.commit()
     return {"ok": True}
 

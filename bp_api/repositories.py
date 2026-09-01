@@ -396,9 +396,12 @@ def update_portfolio(
 
 
 def list_portfolios(conn: psycopg.Connection, user_id: Optional[int] = None, is_admin: bool = False) -> list[dict]:
-    # 当前用户的自定义顺序优先; 未排序的按 portfolio_id 降序兜底。NULL 排到最后。
+    # demo 按全局 display_order 排序(管理员调整, 访客/用户均生效);
+    # 自建组合按当前用户 bp_user_portfolio_order 排序, 未排序的按 portfolio_id 降序兜底。
     order_clause = (
-        "ORDER BY p.is_demo DESC, COALESCE(o.display_order, 2147483647) ASC, p.portfolio_id DESC"
+        "ORDER BY p.is_demo DESC, "
+        "CASE WHEN p.is_demo THEN p.display_order ELSE NULL END ASC NULLS LAST, "
+        "COALESCE(o.display_order, 2147483647) ASC, p.portfolio_id DESC"
     )
     cols = (
         "p.portfolio_id, p.name, p.method, p.ratio, p.start_date, "
@@ -430,7 +433,7 @@ def list_portfolios(conn: psycopg.Connection, user_id: Optional[int] = None, is_
                           effective_start_date, is_demo, status, owner_user_id
                    FROM bp_portfolio
                    WHERE is_demo = TRUE
-                   ORDER BY is_demo DESC, portfolio_id DESC"""
+                   ORDER BY display_order NULLS LAST, portfolio_id DESC"""
             )
         return [
             {"portfolio_id": r[0], "name": r[1], "method": r[2], "ratio": r[3],
@@ -440,21 +443,42 @@ def list_portfolios(conn: psycopg.Connection, user_id: Optional[int] = None, is_
         ]
 
 
-def reorder_portfolios(conn: psycopg.Connection, user_id: int, ordered_ids: list[int]) -> None:
-    """保存当前用户的组合下拉顺序; 仅对其可见的组合生效。"""
+def reorder_portfolios(
+    conn: psycopg.Connection,
+    user_id: int,
+    ordered_ids: list[int],
+    is_admin: bool = False,
+) -> None:
+    """保存组合下拉顺序, 分两类:
+    - 示例组合(demo): 管理员调整的是**全局展示顺序**(写入 bp_portfolio.display_order,
+      对匿名访客/所有用户生效); 非管理员对 demo 的排序被忽略。
+    - 自建组合: 写入当前用户的 bp_user_portfolio_order(仅其可见的自建组合生效)。
+    """
     if user_id is None:
         raise ValueError("缺少用户")
     with conn.cursor() as cur:
         cur.execute(
-            """SELECT portfolio_id FROM bp_portfolio
-               WHERE is_demo = TRUE OR owner_user_id = %s
-                  OR EXISTS (SELECT 1 FROM bp_user WHERE user_id=%s AND role='admin')""",
-            (user_id, user_id),
+            "SELECT portfolio_id, is_demo, owner_user_id FROM bp_portfolio WHERE portfolio_id = ANY(%s)",
+            (ordered_ids,),
         )
-        visible = {r[0] for r in cur.fetchall()}
-        for order, pid in enumerate(ordered_ids):
-            if pid not in visible:
-                continue
+        rows = {(r[0], r[1], r[2]) for r in cur.fetchall()}
+        # 自建组合(含 admin 自有非 demo): 写当前用户个人顺序
+        own_ids = [
+            pid for pid in ordered_ids
+            if any(r[0] == pid and not r[1] and r[2] == user_id for r in rows)
+        ]
+        if is_admin:
+            # 管理员额外可写全局 demo 顺序(对访客/所有用户生效)
+            demo_ids = [
+                pid for pid in ordered_ids
+                if any(r[0] == pid and r[1] for r in rows)
+            ]
+            for order, pid in enumerate(demo_ids):
+                cur.execute(
+                    "UPDATE bp_portfolio SET display_order=%s, updated_at=now() WHERE portfolio_id=%s AND is_demo=TRUE",
+                    (order, pid),
+                )
+        for order, pid in enumerate(own_ids):
             cur.execute(
                 """INSERT INTO bp_user_portfolio_order (user_id, portfolio_id, display_order)
                    VALUES (%s, %s, %s)
@@ -1178,7 +1202,10 @@ def get_result(
 
 
 def get_demo_id(conn: psycopg.Connection, portfolio_id: Optional[int] = None) -> Optional[int]:
-    """返回示例组合 id; 指定 portfolio_id 时须为 demo, 否则取最早创建的 demo。"""
+    """返回示例组合 id; 指定 portfolio_id 时须为 demo, 否则取 display_order 最小者(未设则回退最早创建)。
+
+    display_order 是管理员调整的全局示例顺序(匿名访客/登录用户无个人顺序时的默认展示)。
+    """
     with conn.cursor() as cur:
         if portfolio_id is not None:
             cur.execute(
@@ -1187,8 +1214,10 @@ def get_demo_id(conn: psycopg.Connection, portfolio_id: Optional[int] = None) ->
             )
         else:
             cur.execute(
-                "SELECT portfolio_id FROM bp_portfolio WHERE is_demo = TRUE "
-                "ORDER BY portfolio_id ASC LIMIT 1"
+                """SELECT portfolio_id FROM bp_portfolio
+                   WHERE is_demo = TRUE
+                   ORDER BY display_order NULLS LAST, portfolio_id ASC
+                   LIMIT 1"""
             )
         r = cur.fetchone()
         return r[0] if r else None

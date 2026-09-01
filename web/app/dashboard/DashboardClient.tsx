@@ -162,6 +162,17 @@ function DashboardInner({ initialDemo = null }: { initialDemo?: BacktestResult |
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
+  // 默认组合解析(需求2): 登录用户无 id 时, 默认展示其「自建组合顺序第一名」;
+  // 无自建组合则回退到全局示例(demo)第一名(后端 get_demo_id 已按 display_order 返回)。
+  useEffect(() => {
+    if (userId == null || idParam != null || loading) return;
+    const firstOwn = portfolios.find((p) => !p.is_demo && p.owner_user_id === userId);
+    if (firstOwn) {
+      router.replace(`/dashboard?id=${firstOwn.portfolio_id}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, idParam, portfolios, loading]);
+
   const switchTo = (m: string, b: string) => {
     if (m === method && b === benchmark) return;
     const k = cacheKey(m, b);
@@ -1219,7 +1230,9 @@ function ReorderDialog({ portfolios, onSaved }: { portfolios: PortfolioInfo[]; o
       </DialogTrigger>
       <DialogContent className="max-w-md">
         <DialogHeader><DialogTitle>调整组合顺序</DialogTitle></DialogHeader>
-        <p className="text-xs text-muted-foreground">仅影响你自己看到的下拉顺序；示例组合固定排在前。</p>
+        <p className="text-xs text-muted-foreground">
+          第一个组合将作为默认显示。示例组合顺序为全局展示顺序（需管理员身份调整，对所有访客生效）；自建组合顺序仅影响你自己的下拉顺序。
+        </p>
         <div className="max-h-[50vh] overflow-auto space-y-1.5 pr-1">
           {items.map((p, i) => (
             <div key={p.portfolio_id} className="flex items-center gap-2 rounded-md border border-border px-3 py-2">
