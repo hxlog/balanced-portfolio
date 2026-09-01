@@ -709,11 +709,15 @@ function AssetPicker({
                   {checked && <Check className="w-3 h-3" />}
                 </div>
                 <span className="text-sm flex-1">{a.name || a.symbol}</span>
-                {a.vendor ? (
+                {a.logical_source === "etf" ? (
+                  <Badge variant="secondary" className="font-normal h-5 px-1.5 text-[10px]">ETF{typeof a.adjust === "string" && a.adjust ? ` · ${ADJUST_LABEL[a.adjust] ?? a.adjust}` : ""}</Badge>
+                ) : a.logical_source === "cn_index" ? (
+                  <Badge variant="secondary" className="font-normal h-5 px-1.5 text-[10px]">指数</Badge>
+                ) : a.vendor ? (
                   <Badge variant="secondary" className="font-normal h-5 px-1.5 text-[10px]">{a.vendor}</Badge>
                 ) : null}
                 <span className="text-xs text-muted-foreground font-mono">
-                  {a.symbol}{a.adjust ? ` · ${ADJUST_LABEL[a.adjust] ?? a.adjust}` : ""}{a.category ? ` · ${a.category}` : ""}
+                  {a.symbol}{a.adjust && a.logical_source !== "etf" ? ` · ${ADJUST_LABEL[a.adjust] ?? a.adjust}` : ""}{a.category ? ` · ${a.category}` : ""}
                 </span>
               </div>
             );

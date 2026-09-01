@@ -475,7 +475,11 @@ export default function AdminAssetsPage() {
                       <TableCell className="font-medium">{a.name || a.symbol}</TableCell>
                       <TableCell className="font-mono">{a.symbol}</TableCell>
                       <TableCell className="whitespace-nowrap">
-                        {a.vendor ? (
+                        {a.logical_source === "etf" || a.logical_source === "cn_index" ? (
+                          <Badge variant="secondary" className="mr-1.5 font-normal">
+                            {a.logical_source === "etf" ? "ETF(后复权)" : "指数(聚合)"}
+                          </Badge>
+                        ) : a.vendor ? (
                           <Badge variant="secondary" className="mr-1.5 font-normal">{a.vendor}</Badge>
                         ) : null}
                         <span className="font-mono text-xs text-muted-foreground">{a.source}</span>

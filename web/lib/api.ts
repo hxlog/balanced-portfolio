@@ -271,6 +271,7 @@ export interface Asset {
   asset_class?: string;
   vendor?: string;   // 数据供应商中文短名(东财/新浪/腾讯/中金所/中债)
   adjust?: string;   // 复权: bfq/qfq/hfq(仅 ETF; 缺省视为不复权)
+  logical_source?: string;  // 逻辑源分组(etf/cn_index/hk_index/global_index/...), 用于隐藏物理 vendor
 }
 
 export interface NavPoint {
@@ -508,6 +509,8 @@ export interface DataSource {
   supports_date_range: boolean;
   is_enabled: boolean;
   vendor?: string | null;
+  logical_source?: string | null;
+  is_backup?: boolean;
 }
 
 export interface AdminAsset {
@@ -521,6 +524,7 @@ export interface AdminAsset {
   asset_class?: string | null;
   vendor?: string | null;
   adjust?: string | null;
+  logical_source?: string | null;
   last_raw_date?: string | null;
   last_clean_date?: string | null;
   raw_rows: number;

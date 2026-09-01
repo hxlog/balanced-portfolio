@@ -184,7 +184,8 @@ def list_assets(conn: psycopg.Connection) -> list[dict]:
         cur.execute(
             """
             SELECT c.symbol, c.source, c.category, c.name, s.asset_class,
-                   s.vendor, c.extra_params->>'adjust' AS adjust
+                   s.vendor, c.extra_params->>'adjust' AS adjust,
+                   COALESCE(s.logical_source, c.source) AS logical_source
             FROM bp_index_config c
             JOIN bp_data_source s ON s.code = c.source
             WHERE c.is_deleted = 0 AND c.is_selectable = TRUE
@@ -195,6 +196,7 @@ def list_assets(conn: psycopg.Connection) -> list[dict]:
             {
                 "symbol": r[0], "source": r[1], "category": r[2], "name": r[3],
                 "asset_class": r[4], "vendor": r[5], "adjust": r[6],
+                "logical_source": r[7],
             }
             for r in cur.fetchall()
         ]
@@ -1234,11 +1236,13 @@ def set_portfolio_demo(conn: psycopg.Connection, pid: int, is_demo: bool) -> Non
 
 
 def list_data_sources(conn: psycopg.Connection) -> list[dict]:
-    """行情源枚举(供资产管理下拉与 symbol 书写提示)。"""
+    """行情源枚举(供资产管理下拉与 symbol 书写提示)。含逻辑源分组与备源标记。"""
     with conn.cursor() as cur:
         cur.execute(
             """SELECT code, description, asset_class, symbol_hint,
-                      supports_date_range, is_enabled, vendor
+                      supports_date_range, is_enabled, vendor,
+                      COALESCE(logical_source, code) AS logical_source,
+                      COALESCE(is_backup, false) AS is_backup
                FROM bp_data_source
                ORDER BY asset_class, code"""
         )
@@ -1251,6 +1255,8 @@ def list_data_sources(conn: psycopg.Connection) -> list[dict]:
                 "supports_date_range": r[4],
                 "is_enabled": r[5],
                 "vendor": r[6],
+                "logical_source": r[7],
+                "is_backup": r[8],
             }
             for r in cur.fetchall()
         ]
@@ -1263,7 +1269,8 @@ def list_admin_assets(conn: psycopg.Connection) -> list[dict]:
                       s.asset_class, s.vendor,
                       st.last_raw_date, st.last_clean_date, st.raw_rows, st.clean_rows,
                       st.last_success_at, st.last_error, st.last_probe_ms,
-                      c.is_selectable, c.extra_params->>'adjust' AS adjust
+                      c.is_selectable, c.extra_params->>'adjust' AS adjust,
+                      COALESCE(s.logical_source, c.source) AS logical_source
                FROM bp_index_config c
                JOIN bp_data_source s ON s.code = c.source
                LEFT JOIN bp_asset_data_status st
@@ -1289,6 +1296,7 @@ def list_admin_assets(conn: psycopg.Connection) -> list[dict]:
                 "last_probe_ms": r[14],
                 "is_selectable": bool(r[15]),
                 "adjust": r[16],
+                "logical_source": r[17],
             }
             for r in cur.fetchall()
         ]
