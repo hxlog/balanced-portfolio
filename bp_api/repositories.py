@@ -782,6 +782,87 @@ def _build_holdings_list(
     ]
 
 
+def _build_actual_holdings(
+    conn: psycopg.Connection,
+    weights: dict,
+    name_map: dict[str, dict],
+    quad_map: dict[str, list],
+    from_date: date,
+    as_of_date: date,
+) -> dict | None:
+    """计算 as_of 当日「实际持仓」：目标权重按自上次调仓以来逐日涨跌幅自然漂移。
+
+    算法: 对每个持仓, 取 bp_quote_clean 在 (from_date, as_of_date] 区间的 ret(清洗口径),
+    复利得到累计增长 g_i=\\prod(1+ret); 漂移权重 = target_i*g_i / \\sum(target_j*g_j)。
+    同时返回每个持仓在 as_of 日的当日涨跌幅(ret)与累计涨跌幅(g_i-1)。
+
+    区间内无 ret 数据(如停更)时 g_i=1(权重不漂移), 当日涨跌幅为 None。
+    """
+    if not weights or as_of_date <= from_date:
+        return None
+    pairs = []
+    for k in weights:
+        meta = name_map.get(k, {})
+        sym, src = meta.get("symbol"), meta.get("source")
+        if not sym or not src:
+            symbols = k.rsplit("@", 1)
+            if len(symbols) == 2:
+                sym, src = symbols
+        if sym and src:
+            pairs.append((k, sym, src))
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT symbol, source, ret FROM bp_quote_clean
+               WHERE trade_date > %s AND trade_date <= %s
+                 AND (symbol, source) IN (
+                    SELECT * FROM unnest(%s::text[], %s::text[])
+                 )
+               ORDER BY trade_date""",
+            (from_date, as_of_date, [p[1] for p in pairs], [p[2] for p in pairs]),
+        )
+        rows = cur.fetchall()
+
+    ret_by_key: dict[str, list[float]] = {p[0]: [] for p in pairs}
+    for sym, src, ret in rows:
+        k = f"{sym}@{src}"
+        if k in ret_by_key and ret is not None:
+            ret_by_key[k].append(float(ret))
+
+    drift: dict[str, float] = {}
+    day_ret: dict[str, float | None] = {}
+    cum_ret: dict[str, float] = {}
+    for k in weights:
+        rs = ret_by_key.get(k, [])
+        if not rs:
+            drift[k] = 1.0
+            day_ret[k] = None
+            cum_ret[k] = 0.0
+            continue
+        g = 1.0
+        for r in rs:
+            g *= 1.0 + r
+        drift[k] = g
+        day_ret[k] = rs[-1]
+        cum_ret[k] = g - 1.0
+
+    denom = sum(weights.get(k, 0.0) * drift.get(k, 1.0) for k in weights) or 1.0
+    holdings = []
+    for k, w in sorted(weights.items(), key=lambda x: -x[1]):
+        actual_w = (w * drift.get(k, 1.0)) / denom
+        holdings.append({
+            "key": k,
+            "symbol": name_map.get(k, {}).get("symbol"),
+            "source": name_map.get(k, {}).get("source"),
+            "name": name_map.get(k, {}).get("display_name") or name_map.get(k, {}).get("symbol") or k,
+            "target_weight": w,
+            "weight": actual_w,
+            "day_return": day_ret.get(k),
+            "period_return": cum_ret.get(k, 0.0),
+        })
+    return {"as_of_date": as_of_date.isoformat(), "holdings": holdings}
+
+
 def get_portfolio_status(conn: psycopg.Connection, pid: int) -> dict:
     """轻量状态查询, 供轮询用。"""
     with conn.cursor() as cur:
@@ -1058,10 +1139,29 @@ def get_result(
         quadrant_weights = latest["quadrant_weights"]
         holdings = _build_holdings_list(latest["target_weights"], name_map, quad_map)
 
+    # 当天实际持仓 = 最近一次再平衡目标权重按清洗口径日涨跌幅自然漂移到 as_of
+    actual_holdings = None
+    as_of = pdef.data_as_of_date or pdef.result_updated_at
+    if holdings and rebalances:
+        latest_date = date.fromisoformat(str(rebalances[-1]["trade_date"]))
+        as_of_date = as_of.date() if hasattr(as_of, "date") else as_of
+        if isinstance(as_of_date, datetime):
+            as_of_date = as_of_date.date()
+        if as_of_date is not None:
+            actual_holdings = _build_actual_holdings(
+                conn,
+                {h["key"]: h["weight"] for h in holdings},
+                name_map,
+                quad_map,
+                latest_date,
+                as_of_date,
+            )
+
     return {
         "portfolio": portfolio, "nav": nav, "rebalances": rebalances,
         "metrics": metrics, "holdings": holdings,
         "optimal_holdings": optimal_holdings,
+        "actual_holdings": actual_holdings,
         "quadrant_weights": quadrant_weights, "corr": corr,
         "attribution": attribution,
         "method": sel, "available_methods": available,

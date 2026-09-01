@@ -272,6 +272,7 @@ function DashboardView({
   const [rbIdx, setRbIdx] = useState(rebalances.length - 1);
   const [hideSmallHoldings, setHideSmallHoldings] = useState(true);
   const [showOptimalHoldings, setShowOptimalHoldings] = useState(false);
+  const [showActualHoldings, setShowActualHoldings] = useState(false);
   const rebalancesDesc = useMemo(
     () => rebalances.map((r, idx) => ({ r, idx })).reverse(),
     [rebalances],
@@ -279,10 +280,14 @@ function DashboardView({
   const optimalAsOf = (optimal_holdings?.as_of_date ?? mPort?.end_date ?? nav.at(-1)?.trade_date ?? "")
     .slice(0, 10);
   const hasOptimalHoldings = (optimal_holdings?.holdings?.length ?? 0) > 0;
+  const actualHoldings = data.actual_holdings;
+  const actualAsOf = (actualHoldings?.as_of_date ?? "").slice(0, 10);
+  const hasActualHoldings = (actualHoldings?.holdings?.length ?? 0) > 0;
   // 切换方法/组合后数据变化 → 重置选中的调仓期为最近
   useEffect(() => {
     setRbIdx(rebalances.length - 1);
     setShowOptimalHoldings(false);
+    setShowActualHoldings(false);
   }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
   const rb = rebalances[Math.min(rbIdx, rebalances.length - 1)];
 
@@ -310,7 +315,24 @@ function DashboardView({
       }));
   }, [optimal_holdings, nameMap]);
 
-  const visibleHoldings = showOptimalHoldings && hasOptimalHoldings ? holdingsAtOptimal : holdingsAtRb;
+  // 当天实际持仓(漂移后权重 + 当日/区间涨跌幅), 供持仓卡第三视图与独立表格
+  const holdingsAtActual = useMemo(() => {
+    if (!actualHoldings?.holdings?.length) return [];
+    return actualHoldings.holdings
+      .filter((h) => h.weight >= ZERO_EPS)
+      .sort((a, b) => b.weight - a.weight)
+      .map((h) => ({
+        key: h.key,
+        name: h.name || nameMap[h.key] || h.key,
+        weight: h.weight,
+        target_weight: h.target_weight,
+        day_return: h.day_return,
+        period_return: h.period_return,
+      }));
+  }, [actualHoldings, nameMap]);
+
+  const showActual = showActualHoldings && hasActualHoldings;
+  const visibleHoldings = showActual ? holdingsAtActual : (showOptimalHoldings && hasOptimalHoldings ? holdingsAtOptimal : holdingsAtRb);
 
   const displayHoldings = useMemo(() => {
     if (!hideSmallHoldings) {
@@ -631,7 +653,7 @@ function DashboardView({
                   className="text-sm bg-transparent border border-border rounded px-2 py-1 text-muted-foreground focus:outline-none max-w-[160px]"
                   value={rbIdx}
                   onChange={(e) => setRbIdx(Number(e.target.value))}
-                  disabled={showOptimalHoldings}
+                  disabled={showOptimalHoldings || showActual}
                 >
                   {rebalancesDesc.map(({ r, idx }) => (
                     <option key={r.trade_date} value={idx}>
@@ -648,6 +670,15 @@ function DashboardView({
                 />
                 不显示低于5%的持仓
               </label>
+              <label className={`flex items-center gap-2 text-sm select-none ${hasActualHoldings ? "text-muted-foreground cursor-pointer" : "text-muted-foreground/50 cursor-not-allowed"}`}>
+                <Checkbox
+                  id="show-actual-holdings"
+                  checked={showActual}
+                  disabled={!hasActualHoldings}
+                  onCheckedChange={(v) => setShowActualHoldings(v === true)}
+                />
+                显示当天实际持仓{actualAsOf ? ` ${actualAsOf}` : ""}
+              </label>
               <label className={`flex items-center gap-2 text-sm select-none ${hasOptimalHoldings ? "text-muted-foreground cursor-pointer" : "text-muted-foreground/50 cursor-not-allowed"}`}>
                 <Checkbox
                   id="show-optimal-holdings"
@@ -661,20 +692,46 @@ function DashboardView({
           </CardHeader>
           <CardContent className="flex-1 flex flex-col">
             <div className="h-[200px] mb-4"><EChart option={pieOption} style={{ height: "100%", width: "100%" }} /></div>
-            <div className="flex-1 overflow-auto max-h-[220px] pr-2 min-w-0">
+            <div className="flex-1 overflow-auto max-h-[260px] pr-2 min-w-0">
               <Table className="min-w-0">
-                <TableBody>
-                  {displayHoldings.map((h) => (
-                    <TableRow key={h.key}>
-                      <TableCell className={`py-2 pl-0 font-medium ${h.isOther ? "text-muted-foreground" : ""}`}>
-                        {h.name}
-                      </TableCell>
-                      <TableCell className="py-2 text-right font-mono">{pct(h.weight)}</TableCell>
+                {showActual && (
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="pl-0">资产</TableHead>
+                      <TableHead className="text-right">实际权重</TableHead>
+                      <TableHead className="text-right">当日涨跌</TableHead>
                     </TableRow>
-                  ))}
+                  </TableHeader>
+                )}
+                <TableBody>
+                  {displayHoldings.map((h) => {
+                    const dr = (h as { day_return?: number | null }).day_return;
+                    return (
+                      <TableRow key={h.key}>
+                        <TableCell className={`py-2 pl-0 font-medium ${h.isOther ? "text-muted-foreground" : ""}`}>
+                          {h.name}
+                        </TableCell>
+                        {showActual && dr !== undefined ? (
+                          <>
+                            <TableCell className="py-2 text-right font-mono">{pct(h.weight)}</TableCell>
+                            <TableCell className={`py-2 text-right font-mono ${dr == null ? "text-muted-foreground" : dr > 0 ? "text-up" : dr < 0 ? "text-down" : "text-muted-foreground"}`}>
+                              {dr == null ? "-" : signPct(dr)}
+                            </TableCell>
+                          </>
+                        ) : (
+                          <TableCell className="py-2 text-right font-mono">{pct(h.weight)}</TableCell>
+                        )}
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
+            {showActual && (
+              <p className="text-[11px] text-muted-foreground mt-2 leading-relaxed">
+                实际权重 = 最近一次再平衡目标权重 × 各资产逐日涨跌幅自然漂移后归一；当日涨跌为该资产在 {actualAsOf} 的日收益率（清洗口径，缺口日收益计 0）。
+              </p>
+            )}
           </CardContent>
         </Card>
       </div>

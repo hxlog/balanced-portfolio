@@ -301,6 +301,15 @@ export interface Holding {
   weight: number;
 }
 
+export interface ActualHolding extends Holding {
+  /** 最近一次再平衡的目标权重 */
+  target_weight: number;
+  /** as_of 当日涨跌幅(清洗口径, 小数) */
+  day_return: number | null;
+  /** 自上次调仓以来的累计涨跌幅(小数) */
+  period_return: number;
+}
+
 export interface Metrics {
   annualized_return: number;
   annualized_vol: number;
@@ -404,6 +413,11 @@ export interface BacktestResult {
     as_of_date: string;
     holdings: Holding[];
     quadrant_weights?: Record<string, number> | null;
+  } | null;
+  /** as_of 当日实际持仓(目标权重自然漂移 + 当日/区间涨跌幅) */
+  actual_holdings?: {
+    as_of_date: string;
+    holdings: ActualHolding[];
   } | null;
   quadrant_weights?: Record<string, number> | null;
   corr: { labels: string[]; matrix: number[][]; cov?: number[][] };
