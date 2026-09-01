@@ -467,6 +467,8 @@ export interface AuthProfile {
   /** 真实管理员(可见全部组合、管理用户/资产/示例) */
   is_super_admin: boolean;
   role?: "user" | "admin";
+  /** 资产编辑权(可进 /admin/assets 增/改/测/拉增量, 不可删/停用) */
+  can_manage_assets?: boolean;
   /** 是否已绑定 TOTP 两步验证 */
   totp_enabled: boolean;
   /** 管理员尚未绑定 TOTP 时为 true，前端需强制其绑定 */
@@ -481,6 +483,7 @@ export interface AdminUser {
   status?: string;
   portfolio_count?: number;
   portfolio_limit?: number | null;
+  can_manage_assets?: boolean;
 }
 
 export interface DataSource {
@@ -788,7 +791,7 @@ export const api = {
     }),
   deleteUser: (email: string) =>
     req<{ ok: boolean }>(`/api/admin/users/${encodeURIComponent(email)}`, { method: "DELETE" }),
-  updateUser: (email: string, input: { portfolio_limit?: number | null; status?: string }) =>
+  updateUser: (email: string, input: { portfolio_limit?: number | null; status?: string; can_manage_assets?: boolean }) =>
     req<{ ok: boolean; email: string; portfolio_limit: number }>(
       `/api/admin/users/${encodeURIComponent(email)}`,
       {

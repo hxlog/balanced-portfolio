@@ -207,7 +207,7 @@ def delete_admin_user(email: str, actor: auth.UserContext = Depends(auth.require
 
 @app.patch("/api/admin/users/{email}")
 def update_admin_user(email: str, payload: UpdateUserIn, _: auth.UserContext = Depends(auth.require_super_admin)) -> dict:
-    updated = auth.update_user(email, payload.portfolio_limit, payload.status)
+    updated = auth.update_user(email, payload.portfolio_limit, payload.status, payload.can_manage_assets)
     return {"ok": True, **updated}
 
 
@@ -471,13 +471,13 @@ def get_task(task_id: str, user: auth.UserContext = Depends(auth.require_user)) 
 
 
 @app.get("/api/admin/data-sources")
-def list_admin_data_sources(_: auth.UserContext = Depends(auth.require_super_admin)) -> dict:
+def list_admin_data_sources(_: auth.UserContext = Depends(auth.require_asset_editor)) -> dict:
     with db.get_conn() as conn:
         return {"data_sources": repo.list_data_sources(conn)}
 
 
 @app.get("/api/admin/assets")
-def list_admin_assets(_: auth.UserContext = Depends(auth.require_super_admin)) -> dict:
+def list_admin_assets(_: auth.UserContext = Depends(auth.require_asset_editor)) -> dict:
     with db.get_conn() as conn:
         return {"assets": repo.list_admin_assets(conn)}
 
@@ -561,7 +561,7 @@ def enqueue_ready_portfolios_endpoint(
 
 
 @app.post("/api/admin/assets")
-def upsert_admin_asset(payload: AssetAdminIn, _: auth.UserContext = Depends(auth.require_super_admin)) -> dict:
+def upsert_admin_asset(payload: AssetAdminIn, _: auth.UserContext = Depends(auth.require_asset_editor)) -> dict:
     with db.get_conn() as conn:
         if not repo.asset_probe_ok(conn, payload.symbol, payload.source):
             raise HTTPException(400, "请先测试该投资品读取成功后再保存")
@@ -572,7 +572,7 @@ def upsert_admin_asset(payload: AssetAdminIn, _: auth.UserContext = Depends(auth
 
 
 @app.patch("/api/admin/assets/{source}/{symbol}")
-def update_admin_asset(source: str, symbol: str, payload: AssetAdminIn, _: auth.UserContext = Depends(auth.require_super_admin)) -> dict:
+def update_admin_asset(source: str, symbol: str, payload: AssetAdminIn, _: auth.UserContext = Depends(auth.require_asset_editor)) -> dict:
     payload.source = source
     payload.symbol = symbol
     with db.get_conn() as conn:
@@ -608,7 +608,7 @@ def set_admin_asset_selectable(
 
 
 @app.post("/api/admin/assets/{source}/{symbol}/probe")
-def probe_admin_asset(source: str, symbol: str, _: auth.UserContext = Depends(auth.require_super_admin)) -> dict:
+def probe_admin_asset(source: str, symbol: str, _: auth.UserContext = Depends(auth.require_asset_editor)) -> dict:
     started = time.perf_counter()
     today = date.today()
     start = today - timedelta(days=365)
@@ -657,7 +657,7 @@ def probe_admin_asset(source: str, symbol: str, _: auth.UserContext = Depends(au
 
 
 @app.post("/api/admin/assets/{source}/{symbol}/sync")
-def sync_admin_asset(source: str, symbol: str, _: auth.UserContext = Depends(auth.require_super_admin)) -> dict:
+def sync_admin_asset(source: str, symbol: str, _: auth.UserContext = Depends(auth.require_asset_editor)) -> dict:
     """立即拉取该投资品增量数据并入库+清洗(复用 bp_ingest.run 单标的路径)。"""
     from bp_ingest.config import load_config as load_ingest_config
     from bp_ingest import ingest as bp_ingest_run

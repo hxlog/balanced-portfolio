@@ -24,7 +24,7 @@ const CATEGORY_OPTIONS: { value: string; label: string }[] = [
 ];
 
 export default function AdminAssetsPage() {
-  const { isSuperAdmin, ready } = useAuth();
+  const { isSuperAdmin, canManageAssets, ready } = useAuth();
   const [assets, setAssets] = useState<AdminAsset[]>([]);
   const [sources, setSources] = useState<DataSource[]>([]);
   const [loading, setLoading] = useState(true);
@@ -65,8 +65,8 @@ export default function AdminAssetsPage() {
   };
 
   useEffect(() => {
-    if (isSuperAdmin) void load();
-  }, [isSuperAdmin]);
+    if (canManageAssets) void load();
+  }, [canManageAssets]);
 
   const selectedSource = useMemo(
     () => sources.find((s) => s.code === form.source),
@@ -99,7 +99,7 @@ export default function AdminAssetsPage() {
   }, [assets, search, sourceFilter, statusFilter, minRows, rowsSortDesc]);
 
   if (!ready) return <div className="p-12 text-center text-muted-foreground">加载中...</div>;
-  if (!isSuperAdmin) return <div className="p-12 text-center text-destructive">需要管理员权限</div>;
+  if (!canManageAssets) return <div className="p-12 text-center text-destructive">需要资产编辑权限</div>;
 
   const updateForm = (patch: Partial<typeof form>) => {
     setForm((f) => ({ ...f, ...patch }));
@@ -376,18 +376,24 @@ export default function AdminAssetsPage() {
           <div className="flex items-center justify-between gap-3">
             <CardTitle className="text-base">投资品列表</CardTitle>
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={enqueueReady} disabled={enqueueBusy}>
-                <RefreshCw className={`w-4 h-4 mr-1 ${enqueueBusy ? "animate-spin" : ""}`} />
-                重算所有就绪组合
-              </Button>
-              <Button variant="outline" size="sm" onClick={syncAll} disabled={loading}>
-                <Download className="w-4 h-4 mr-1" />
-                拉取增量数据
-              </Button>
-              <Button variant="outline" size="sm" onClick={refreshStatus} disabled={loading}>
-                <RefreshCw className={`w-4 h-4 mr-1 ${loading ? "animate-spin" : ""}`} />
-                刷新状态
-              </Button>
+              {isSuperAdmin && (
+                <Button variant="outline" size="sm" onClick={enqueueReady} disabled={enqueueBusy}>
+                  <RefreshCw className={`w-4 h-4 mr-1 ${enqueueBusy ? "animate-spin" : ""}`} />
+                  重算所有就绪组合
+                </Button>
+              )}
+              {isSuperAdmin && (
+                <Button variant="outline" size="sm" onClick={syncAll} disabled={loading}>
+                  <Download className="w-4 h-4 mr-1" />
+                  拉取增量数据
+                </Button>
+              )}
+              {isSuperAdmin && (
+                <Button variant="outline" size="sm" onClick={refreshStatus} disabled={loading}>
+                  <RefreshCw className={`w-4 h-4 mr-1 ${loading ? "animate-spin" : ""}`} />
+                  刷新状态
+                </Button>
+              )}
             </div>
           </div>
           <CardDescription>
@@ -480,7 +486,7 @@ export default function AdminAssetsPage() {
                       <TableCell className="whitespace-nowrap">
                         {a.is_deleted ? (
                           <Badge variant="outline" className="text-muted-foreground">已删除</Badge>
-                        ) : (
+                        ) : isSuperAdmin ? (
                           <div className="flex items-center gap-2">
                             <Switch
                               checked={!disabled}
@@ -490,6 +496,8 @@ export default function AdminAssetsPage() {
                             />
                             {disabled && <Badge variant="secondary" className="text-muted-foreground font-normal">停用</Badge>}
                           </div>
+                        ) : (
+                          <Badge variant="outline" className="font-normal">启用</Badge>
                         )}
                       </TableCell>
                       <TableCell>{a.last_clean_date || "-"}</TableCell>
@@ -504,9 +512,11 @@ export default function AdminAssetsPage() {
                           {busyKey === key ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                           拉取增量
                         </Button>
-                        <Button variant="outline" size="sm" onClick={() => remove(a)} className="text-destructive">
-                          <Trash2 className="w-4 h-4" /> 删除
-                        </Button>
+                        {isSuperAdmin && (
+                          <Button variant="outline" size="sm" onClick={() => remove(a)} className="text-destructive">
+                            <Trash2 className="w-4 h-4" /> 删除
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   );

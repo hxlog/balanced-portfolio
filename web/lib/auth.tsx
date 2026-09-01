@@ -10,6 +10,8 @@ interface AuthState {
   isWhitelisted: boolean;
   /** 真实管理员：可见全部组合、管理用户/资产/示例 */
   isSuperAdmin: boolean;
+  /** 资产编辑权：可进 /admin/assets 增/改/测/拉增量(不可删/停用/全量) */
+  canManageAssets: boolean;
   role: string | null;
   /** 是否已绑定 TOTP 两步验证 */
   totpEnabled: boolean;
@@ -32,6 +34,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [userId, setUserId] = useState<number | null>(null);
   const [isWhitelisted, setIsWhitelisted] = useState(false);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [canManageAssets, setCanManageAssets] = useState(false);
   const [role, setRole] = useState<string | null>(null);
   const [totpEnabled, setTotpEnabled] = useState(false);
   const [mustSetup2fa, setMustSetup2fa] = useState(false);
@@ -44,6 +47,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUserId(null);
     setIsWhitelisted(false);
     setIsSuperAdmin(false);
+    setCanManageAssets(false);
     setRole(null);
     setTotpEnabled(false);
     setMustSetup2fa(false);
@@ -55,6 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.localStorage.setItem(EMAIL_KEY, profile.email);
     setIsWhitelisted(!!profile.is_whitelisted);
     setIsSuperAdmin(!!profile.is_super_admin);
+    setCanManageAssets(!!profile.can_manage_assets || !!profile.is_super_admin);
     setRole(profile.role ?? null);
     setTotpEnabled(!!profile.totp_enabled);
     setMustSetup2fa(!!profile.must_setup_2fa);
@@ -166,7 +171,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return (
     <AuthContext.Provider
       value={{
-        userId, email, isWhitelisted, isSuperAdmin, role, totpEnabled, mustSetup2fa,
+        userId, email, isWhitelisted, isSuperAdmin, canManageAssets, role, totpEnabled, mustSetup2fa,
         ready, login, logout, changePassword, refresh,
       }}
     >

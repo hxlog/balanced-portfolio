@@ -39,7 +39,7 @@ export function Navbar() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const pathname = usePathname();
   const {
-    email, isSuperAdmin, totpEnabled, mustSetup2fa,
+    email, isSuperAdmin, canManageAssets, totpEnabled, mustSetup2fa,
     login, logout, changePassword, refresh,
   } = useAuth();
 
@@ -51,8 +51,10 @@ export function Navbar() {
 
   const links = [
     ...NAV_LINKS,
-    ...(isSuperAdmin ? [
+    ...(canManageAssets ? [
       { href: "/admin/assets" as const, label: "资产管理" },
+    ] : []),
+    ...(isSuperAdmin ? [
       { href: "/admin/users" as const, label: "用户管理" },
     ] : []),
   ];

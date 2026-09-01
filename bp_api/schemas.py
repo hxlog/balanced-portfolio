@@ -100,6 +100,7 @@ class CreateUserIn(BaseModel):
 class UpdateUserIn(BaseModel):
     portfolio_limit: Optional[int] = None
     status: Optional[str] = None
+    can_manage_assets: Optional[bool] = None
 
 
 class SetDemoIn(BaseModel):

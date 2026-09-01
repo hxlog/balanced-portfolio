@@ -24,6 +24,7 @@ class UserContext:
     email: str
     role: str
     is_admin: bool
+    can_manage_assets: bool = False
 
 
 # ---------------------------------------------------------------------
@@ -116,13 +117,29 @@ def get_user_by_email(email: str) -> Optional[UserContext]:
                 row = cur.fetchone()
                 if row and row[3] == "active":
                     role = "admin" if is_super_admin(row[1]) else row[2]
-                    return UserContext(row[0], row[1], role, role == "admin")
+                    can_manage_assets = _user_can_manage_assets(conn, row[0], role)
+                    return UserContext(row[0], row[1], role, role == "admin", can_manage_assets)
             cur.execute("SELECT email FROM bp_admin_user WHERE email=%s", (email,))
             row = cur.fetchone()
             if row:
                 role = "admin" if is_super_admin(email) else "user"
                 return UserContext(None, email, role, role == "admin")
     return None
+
+
+def _user_can_manage_assets(conn, user_id: int, role: str) -> bool:
+    """资产编辑权: 管理员恒有; 普通用户读 bp_user.can_manage_assets(DDL 34 后存在)。"""
+    if role == "admin":
+        return True
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT can_manage_assets FROM bp_user WHERE user_id=%s", (user_id,)
+            )
+            row = cur.fetchone()
+            return bool(row and row[0])
+    except Exception:  # noqa: BLE001 - 列不存在(未跑 DDL)降级为仅管理员
+        return False
 
 
 # ---------------------------------------------------------------------
@@ -270,10 +287,11 @@ def list_users() -> list[dict]:
             if _has_bp_user(conn):
                 cur.execute(
                     """SELECT u.email, u.created_at, u.role, u.status, u.portfolio_limit,
-                              COUNT(p.portfolio_id) FILTER (WHERE p.is_demo = FALSE) AS portfolio_count
+                              COUNT(p.portfolio_id) FILTER (WHERE p.is_demo = FALSE) AS portfolio_count,
+                              u.can_manage_assets
                        FROM bp_user u
                        LEFT JOIN bp_portfolio p ON p.owner_user_id = u.user_id
-                       GROUP BY u.user_id, u.email, u.created_at, u.role, u.status, u.portfolio_limit
+                       GROUP BY u.user_id, u.email, u.created_at, u.role, u.status, u.portfolio_limit, u.can_manage_assets
                        ORDER BY u.created_at ASC""",
                 )
                 rows = cur.fetchall()
@@ -286,6 +304,7 @@ def list_users() -> list[dict]:
                         "portfolio_limit": None if (is_super_admin(r[0]) or r[2] == "admin") else r[4],
                         "portfolio_count": int(r[5] or 0),
                         "is_super_admin": is_super_admin(r[0]) or r[2] == "admin",
+                        "can_manage_assets": bool(r[6]) or is_super_admin(r[0]) or r[2] == "admin",
                     }
                     for r in rows
                 ]
@@ -322,11 +341,16 @@ def create_user(email: str, password: str) -> None:
         conn.commit()
 
 
-def update_user(email: str, portfolio_limit: Optional[int] = None, status: Optional[str] = None) -> dict:
+def update_user(
+    email: str,
+    portfolio_limit: Optional[int] = None,
+    status: Optional[str] = None,
+    can_manage_assets: Optional[bool] = None,
+) -> dict:
     email = email.strip().lower()
     if is_super_admin(email):
         raise HTTPException(400, "不能修改超级管理员限制")
-    if portfolio_limit is None and status is None:
+    if portfolio_limit is None and status is None and can_manage_assets is None:
         raise HTTPException(400, "未提供可更新字段")
     with db.get_conn() as conn:
         if not _has_bp_user(conn):
@@ -350,8 +374,13 @@ def update_user(email: str, portfolio_limit: Optional[int] = None, status: Optio
                 if status not in ("active", "disabled"):
                     raise HTTPException(400, "用户状态非法")
                 cur.execute("UPDATE bp_user SET status=%s WHERE email=%s", (status, email))
+            if can_manage_assets is not None:
+                cur.execute(
+                    "UPDATE bp_user SET can_manage_assets=%s WHERE email=%s",
+                    (can_manage_assets, email),
+                )
         conn.commit()
-    return {"email": email, "portfolio_limit": current_limit}
+    return {"email": email, "portfolio_limit": current_limit, "can_manage_assets": can_manage_assets}
 
 
 def delete_user(email: str, actor_email: str) -> None:
@@ -412,6 +441,14 @@ def require_super_admin(authorization: str = Header(default="")) -> UserContext:
     return user
 
 
+def require_asset_editor(authorization: str = Header(default="")) -> UserContext:
+    """资产编辑者依赖: 超级管理员或已授权的资产编辑用户均可。"""
+    user = require_user(authorization)
+    if not (user.is_admin or user.can_manage_assets):
+        raise HTTPException(403, "需要资产编辑权限")
+    return user
+
+
 def auth_profile(user: UserContext | str) -> dict:
     if isinstance(user, str):
         user = get_user_by_email(user) or UserContext(None, user, "user", False)
@@ -424,6 +461,8 @@ def auth_profile(user: UserContext | str) -> dict:
         # 是否真实管理员(可见全部组合、管理用户/资产/示例)
         "is_super_admin": user.is_admin,
         "role": user.role,
+        # 资产编辑权(可进 /admin/assets 增/改/测/拉增量, 不可删/停用)
+        "can_manage_assets": bool(user.is_admin or user.can_manage_assets),
         "totp_enabled": has_2fa,
         # 管理员尚未绑定 TOTP 时, 前端强制其先绑定
         "must_setup_2fa": user.is_admin and not has_2fa,

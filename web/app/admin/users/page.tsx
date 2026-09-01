@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Trash2 } from "lucide-react";
+import { Trash2, ShieldCheck } from "lucide-react";
 import { api, AdminUser } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 
@@ -22,6 +22,7 @@ export default function AdminUsersPage() {
   const [loading, setLoading] = useState(true);
   const [savingLimit, setSavingLimit] = useState<string | null>(null);
   const [limits, setLimits] = useState<Record<string, number>>({});
+  const [savingAssetEdit, setSavingAssetEdit] = useState<string | null>(null);
   const [saveOk, setSaveOk] = useState<string | null>(null);
 
   const load = async () => {
@@ -97,6 +98,21 @@ export default function AdminUsersPage() {
     }
   };
 
+  const onToggleAssetEdit = async (target: string, next: boolean) => {
+    setSavingAssetEdit(target);
+    setError(null);
+    setSaveOk(null);
+    try {
+      await api.updateUser(target, { can_manage_assets: next });
+      setSaveOk(`${target} 资产编辑权限已${next ? "授予" : "收回"}`);
+      await load();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSavingAssetEdit(null);
+    }
+  };
+
   if (!ready || !isSuperAdmin) {
     return <div className="p-12 text-center text-muted-foreground">加载中...</div>;
   }
@@ -146,6 +162,7 @@ export default function AdminUsersPage() {
                 <TableRow>
                   <TableHead className="pl-0 min-w-[200px] whitespace-nowrap">邮箱</TableHead>
                   <TableHead className="whitespace-nowrap">角色</TableHead>
+                  <TableHead className="whitespace-nowrap">资产编辑</TableHead>
                   <TableHead className="whitespace-nowrap">组合数</TableHead>
                   <TableHead className="min-w-[180px] whitespace-nowrap">组合上限</TableHead>
                   <TableHead className="whitespace-nowrap">创建时间</TableHead>
@@ -161,6 +178,25 @@ export default function AdminUsersPage() {
                         <Badge variant="secondary">超级管理员</Badge>
                       ) : (
                         <Badge variant="outline">白名单</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {u.is_super_admin ? (
+                        <span className="inline-flex items-center gap-1 text-sm text-muted-foreground">
+                          <ShieldCheck className="w-4 h-4" /> 恒有
+                        </span>
+                      ) : (
+                        <Button
+                          type="button"
+                          variant={u.can_manage_assets ? "outline" : "ghost"}
+                          size="sm"
+                          onClick={() => onToggleAssetEdit(u.email, !u.can_manage_assets)}
+                          disabled={savingAssetEdit === u.email}
+                          className={u.can_manage_assets ? "text-primary border-primary/40" : "text-muted-foreground"}
+                          title="授予后该用户可进 /admin/assets 新增/更新/测试/拉取增量(不可删除、停用、全量拉取)"
+                        >
+                          {u.can_manage_assets ? "已授权" : "未授权"}
+                        </Button>
                       )}
                     </TableCell>
                     <TableCell className="font-mono">
