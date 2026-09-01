@@ -20,6 +20,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { EChart } from "@/components/EChart";
 import { RiskMatrixSection } from "@/components/RiskMatrixSection";
+import { DashboardToc } from "@/components/DashboardToc";
+import { ChartLightbox } from "@/components/ChartLightbox";
 import { ConfirmRecomputeDialog } from "@/components/ConfirmRecomputeDialog";
 import { BacktestProgressDialog } from "@/components/BacktestProgressDialog";
 import { useIsMobile } from "@/components/ui/use-mobile";
@@ -452,8 +454,24 @@ function DashboardView({
   const canCopy = isWhitelisted && (portfolio.is_demo || portfolio.owner_user_id === userId || isSuperAdmin);
   const bestMethod = data.method_summaries?.find((m) => m.is_best_total_return)?.method;
 
+  const tocItems = [
+    { id: "params", label: "组合参数" },
+    { id: "quadrant", label: "四象限配置矩阵" },
+    { id: "holdings", label: "当期持仓" },
+    { id: "nav", label: "净值走势" },
+    { id: "rebalance", label: "调仓变动" },
+    { id: "period", label: "区间收益率与波动率" },
+    { id: "metrics", label: "绩效指标对比" },
+    { id: "distribution", label: "日收益率分布" },
+    { id: "attribution", label: "绩效归因" },
+    { id: "risk-matrix", label: "相关性与协方差矩阵" },
+  ];
+
   return (
-    <div className="flex-1 px-4 py-4 sm:p-6 max-w-7xl mx-auto w-full space-y-4 sm:space-y-6">
+    <div className="flex-1 px-4 py-4 sm:p-6 max-w-[1440px] mx-auto w-full space-y-4 sm:space-y-6">
+      <div className="flex gap-6">
+        <DashboardToc items={tocItems} />
+        <div className="flex-1 min-w-0 space-y-4 sm:space-y-6">
       {/* Top bar */}
       <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
         <div className="px-5 pt-5 pb-4 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -604,7 +622,7 @@ function DashboardView({
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 min-w-0">
         {/* Quadrant matrix */}
-        <Card className="lg:col-span-2 min-w-0">
+        <Card id="quadrant" className="lg:col-span-2 min-w-0 scroll-mt-24">
           <CardHeader>
             <CardTitle>经济场景四象限配置矩阵</CardTitle>
             <CardDescription>
@@ -655,7 +673,7 @@ function DashboardView({
         </Card>
 
         {/* Current holdings */}
-        <Card className="flex flex-col min-w-0">
+        <Card id="holdings" className="flex flex-col min-w-0 scroll-mt-24">
           <CardHeader>
             <div className="flex flex-col gap-3">
               <div className="flex justify-between items-center gap-2">
@@ -749,11 +767,18 @@ function DashboardView({
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* NAV chart */}
-        <Card>
+        <Card id="nav" className="scroll-mt-24">
           <CardHeader>
             <div className="flex justify-between items-center gap-2 flex-wrap">
               <CardTitle>净值走势</CardTitle>
               <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                <ChartLightbox
+                  title="净值走势"
+                  description={`组合 vs 基准 ${benchName}（全屏可缩放查看）`}
+                  option={navOption}
+                  label="净值走势"
+                  className="h-6 w-6"
+                />
                 <select
                   className="text-xs bg-transparent border border-border rounded px-2 py-1 text-muted-foreground focus:outline-none"
                   value={benchmark}
@@ -792,7 +817,7 @@ function DashboardView({
         </Card>
 
         {/* Rebalance timeline */}
-        <Card>
+        <Card id="rebalance" className="scroll-mt-24">
           <CardHeader>
             <div className="flex flex-wrap justify-between items-center gap-2">
               <CardTitle>调仓变动</CardTitle>
@@ -847,7 +872,7 @@ function DashboardView({
       </div>
 
       {/* Period returns / vols */}
-      <Card className="min-w-0">
+      <Card id="period" className="min-w-0 scroll-mt-24">
         <CardHeader><CardTitle>区间收益率与波动率</CardTitle></CardHeader>
         <CardContent className="overflow-x-auto min-w-0">
           <Table className="min-w-[640px]">
@@ -871,7 +896,7 @@ function DashboardView({
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Metrics table */}
-        <Card className="min-w-0">
+        <Card id="metrics" className="min-w-0 scroll-mt-24">
           <CardHeader><CardTitle>绩效指标对比</CardTitle></CardHeader>
           <CardContent className="overflow-x-auto min-w-0">
             <Table className="min-w-0">
@@ -898,7 +923,7 @@ function DashboardView({
         </Card>
 
         {/* Distribution */}
-        <Card>
+        <Card id="distribution" className="scroll-mt-24">
           <CardHeader><CardTitle>日收益率分布</CardTitle></CardHeader>
           <CardContent>
             {distOption ? (
@@ -959,6 +984,8 @@ function DashboardView({
 
       </motion.div>
       </AnimatePresence>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1383,7 +1410,7 @@ function PortfolioParamsCard({ portfolio, currentMethod }: { portfolio: Portfoli
     { label: "成本口径", value: "单边换手（印花税仅卖出）" },
   ];
   return (
-    <Card>
+    <Card id="params" className="scroll-mt-24">
       <CardHeader className="pb-3">
         <CardTitle className="text-base">组合参数</CardTitle>
         <CardDescription>该投资组合设定的回测与优化参数</CardDescription>
@@ -1538,7 +1565,7 @@ function AttributionSection({
   } : null;
 
   return (
-    <Card className="min-w-0">
+    <Card id="attribution" className="min-w-0 scroll-mt-24">
       <CardHeader>
         <CardTitle>绩效归因</CardTitle>
         <CardDescription>

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { EChart } from "@/components/EChart";
+import { ChartLightbox } from "@/components/ChartLightbox";
 import { useIsMobile } from "@/components/ui/use-mobile";
 
 type MatrixAsset = { index: number; label: string; category: string };
@@ -328,6 +329,48 @@ export function RiskMatrixSection({
     });
   }, [selectedLabels, covSub, selectedIndices.length, isDark, cardBg, fg, textCol, axisLineCol, splitLineCol, isMobile]);
 
+  // 灯箱展示用「全量」矩阵(所有成分), 放大按钮看清全貌(与已选子集无关)。
+  const allIndices = useMemo(
+    () => matrixAssets.map((a) => a.index),
+    [matrixAssets],
+  );
+  const allLabels = useMemo(() => allIndices.map((i) => corr.labels[i]), [allIndices, corr.labels]);
+  const fullCorrOption = useMemo(() => {
+    if (allIndices.length < 2) return null;
+    return buildHeatmapOption(
+      allLabels,
+      subMatrix(corr.matrix, allIndices),
+      {
+        isDark: false, cardBg: "#ffffff", fg: "#171717", textCol: "#666666",
+        axisLineCol: "rgba(0,0,0,0.1)", splitLineCol: "rgba(0,0,0,0.05)", isMobile: false,
+        min: -1, max: 1,
+        valueName: "相关系数", format: (v) => v.toFixed(2),
+        mapDecimals: 1, labelDecimals: 2,
+        colors: ["#30A46C", "#f4f4f5", "#E5484D"],
+      },
+    );
+  }, [allIndices, allLabels, corr.matrix]);
+  const fullCovOption = useMemo(() => {
+    if (allIndices.length < 2 || !covFull.length) return null;
+    const full = subMatrix(covFull, allIndices);
+    const { min, max, absMax } = symmetricZeroBounds(full);
+    const mapDecimals = decimalsForMagnitude(absMax);
+    const fmt = (v: number) => v.toFixed(mapDecimals);
+    return buildHeatmapOption(
+      allLabels,
+      full,
+      {
+        isDark: false, cardBg: "#ffffff", fg: "#171717", textCol: "#666666",
+        axisLineCol: "rgba(0,0,0,0.1)", splitLineCol: "rgba(0,0,0,0.05)", isMobile: false,
+        min, max,
+        valueName: "年化协方差", format: fmt,
+        mapDecimals, labelDecimals: mapDecimals,
+        colors: covDivergingColors(false),
+      },
+    );
+  }, [allIndices, allLabels, covFull]);
+  const fullHeight = Math.max(640, allIndices.length * 28 + 120);
+
   const toggle = (index: number) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -351,7 +394,7 @@ export function RiskMatrixSection({
   }
 
   return (
-    <Card>
+    <Card id="risk-matrix" className="scroll-mt-24">
       <CardHeader>
         <CardTitle>相关性与协方差矩阵</CardTitle>
         <CardDescription>
@@ -397,7 +440,18 @@ export function RiskMatrixSection({
           <>
             <div className="space-y-3">
               <div>
-                <h3 className="text-sm font-medium mb-1">相关性矩阵</h3>
+                <div className="flex items-center gap-2 mb-1">
+                  <h3 className="text-sm font-medium">相关性矩阵</h3>
+                  {fullCorrOption && (
+                    <ChartLightbox
+                      title="相关性矩阵（全量成分）"
+                      description="全部成分的两两相关系数热力图。全屏下可横向滚动查看完整矩阵，标签不再截断。"
+                      option={fullCorrOption}
+                      label="相关性矩阵"
+                      className="h-6 w-6"
+                    />
+                  )}
+                </div>
                 <p className="text-sm text-muted-foreground leading-relaxed mb-3">
                   相关系数 ∈ [-1, 1]，衡量两资产日收益同向或反向程度。接近 1 表示同涨同跌，接近 -1 表示对冲关系，接近 0 表示线性无关。
                   构建分散化组合时，宜降低高相关簇的权重叠加；但相关≠因果，危机时期相关常会同步上升。
@@ -414,7 +468,18 @@ export function RiskMatrixSection({
 
             <div className="space-y-3">
               <div>
-                <h3 className="text-sm font-medium mb-1">协方差矩阵（年化）</h3>
+                <div className="flex items-center gap-2 mb-1">
+                  <h3 className="text-sm font-medium">协方差矩阵（年化）</h3>
+                  {fullCovOption && (
+                    <ChartLightbox
+                      title="协方差矩阵（全量成分）"
+                      description="全部成分的年化协方差热力图。全屏下可横向滚动查看完整矩阵。"
+                      option={fullCovOption}
+                      label="协方差矩阵"
+                      className="h-6 w-6"
+                    />
+                  )}
+                </div>
                 <p className="text-sm text-muted-foreground leading-relaxed mb-3">
                   采用以 <strong className="text-foreground font-medium">0 为中心</strong> 的 RdBu 发散色标（量化热力图常用方案）：
                   负协方差偏蓝、正协方差偏红、接近 0 为中性灰白；色条范围对称 ±max(|值|)，两极对比清晰。
