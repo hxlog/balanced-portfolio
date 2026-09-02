@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import Script from "next/script";
 import "./globals.css";
 import "katex/dist/katex.min.css";
 import { Providers } from "./providers";
@@ -83,12 +82,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="zh-CN" suppressHydrationWarning>
       <body className="min-h-screen flex flex-col bg-background text-foreground font-sans antialiased selection:bg-cyan-100 dark:selection:bg-zinc-800">
         {ENABLE_UMAMI && (
-          <Script
-            defer
-            src={UMAMI_SRC}
-            data-website-id={UMAMI_WEBSITE_ID}
-            strategy="afterInteractive"
-          />
+          <script defer src={UMAMI_SRC} data-website-id={UMAMI_WEBSITE_ID} />
         )}
         <script
           type="application/ld+json"

@@ -276,9 +276,17 @@ def _fetch_cn_index_sina(symbol: str, start: date, end: date, extra: dict) -> pd
 
 def _fetch_cn_index_tx(symbol: str, start: date, end: date, extra: dict) -> pd.DataFrame:
     sym = _cn_index_prefix(symbol)
-    raw = ak.stock_zh_index_daily_tx(
-        symbol=sym, start_date=_fmt(start), end_date=_fmt(end)
-    )
+    # 腾讯/新浪对 930xxx 等中证系小众指数无等价代码, akshare 内部在「无数据/非法 symbol」时
+    # 会抛 `list indices must be integers or slices, not str`(把 data 当 dict 取 [symbol]);
+    # 这里兜底返回空表, 让降级链静默跳过, 而非把噪声当 WARNING 打出来。
+    try:
+        raw = ak.stock_zh_index_daily_tx(
+            symbol=sym, start_date=_fmt(start), end_date=_fmt(end)
+        )
+    except Exception:  # noqa: BLE001 - 非法/缺失 symbol, 视为无数据
+        return pd.DataFrame(columns=STANDARD_COLUMNS)
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=STANDARD_COLUMNS)
     # tx 返回 date,open,close,high,low,amount(单位手) -> 作为 volume
     df = _rename(raw, {"date": "trade_date", "amount": "volume"})
     return _finalize(df, start, end)
