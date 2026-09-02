@@ -272,6 +272,8 @@ export interface Asset {
   vendor?: string;   // 数据供应商中文短名(东财/新浪/腾讯/中金所/中债)
   adjust?: string;   // 复权: bfq/qfq/hfq(仅 ETF; 缺省视为不复权)
   logical_source?: string;  // 逻辑源分组(etf/cn_index/hk_index/global_index/...), 用于隐藏物理 vendor
+  last_clean_date?: string | null;  // 该资产最新清洗日
+  is_stale?: boolean;  // 是否落后于平台最新清洗日(断更/未到最新)
 }
 
 export interface NavPoint {
@@ -532,6 +534,7 @@ export interface AdminAsset {
   last_success_at?: string | null;
   last_error?: string | null;
   last_probe_ms?: number | null;
+  is_stale?: boolean;  // 落后于平台最新清洗日(断更/未到最新), 已排除删除/停用
 }
 
 const TOKEN_KEY = "bp_token";

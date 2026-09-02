@@ -179,15 +179,37 @@ def _asset_quadrants(assets: list[dict]) -> dict[str, list[str]]:
 # ---------------------------------------------------------------------
 # 资产清单
 # ---------------------------------------------------------------------
+def _stale_frontier(conn: psycopg.Connection) -> Optional[date]:
+    """平台行情「最新清洗日」: 非删除且在售资产中最大的 last_clean_date。
+
+    用于判断品种是否「未更新到最新日期」——某资产 last_clean_date < 该前沿日
+    (或为 NULL), 即落后于平台已推进到的最新交易日。以在售资产自身最大值作前沿,
+    避免依赖交易日历/收盘确认, 且自然覆盖「07-09 断更」这类明显落后。
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT MAX(st.last_clean_date)
+               FROM bp_asset_data_status st
+               JOIN bp_index_config c ON c.symbol = st.symbol AND c.source = st.source
+               WHERE c.is_deleted = 0 AND c.is_selectable = TRUE"""
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
 def list_assets(conn: psycopg.Connection) -> list[dict]:
+    frontier = _stale_frontier(conn)
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT c.symbol, c.source, c.category, c.name, s.asset_class,
                    s.vendor, c.extra_params->>'adjust' AS adjust,
-                   COALESCE(s.logical_source, c.source) AS logical_source
+                   COALESCE(s.logical_source, c.source) AS logical_source,
+                   st.last_clean_date
             FROM bp_index_config c
             JOIN bp_data_source s ON s.code = c.source
+            LEFT JOIN bp_asset_data_status st
+              ON st.symbol = c.symbol AND st.source = c.source
             WHERE c.is_deleted = 0 AND c.is_selectable = TRUE
             ORDER BY s.asset_class, c.symbol
             """
@@ -197,6 +219,11 @@ def list_assets(conn: psycopg.Connection) -> list[dict]:
                 "symbol": r[0], "source": r[1], "category": r[2], "name": r[3],
                 "asset_class": r[4], "vendor": r[5], "adjust": r[6],
                 "logical_source": r[7],
+                "last_clean_date": r[8],
+                "is_stale": (
+                    frontier is not None
+                    and (r[8] is None or r[8] < frontier)
+                ),
             }
             for r in cur.fetchall()
         ]
@@ -1263,6 +1290,7 @@ def list_data_sources(conn: psycopg.Connection) -> list[dict]:
 
 
 def list_admin_assets(conn: psycopg.Connection) -> list[dict]:
+    frontier = _stale_frontier(conn)
     with conn.cursor() as cur:
         cur.execute(
             """SELECT c.symbol, c.source, c.category, c.name, c.start_date, c.is_deleted,
@@ -1297,6 +1325,12 @@ def list_admin_assets(conn: psycopg.Connection) -> list[dict]:
                 "is_selectable": bool(r[15]),
                 "adjust": r[16],
                 "logical_source": r[17],
+                "is_stale": (
+                    r[5] == 0
+                    and r[15] is not False
+                    and frontier is not None
+                    and (r[9] is None or r[9] < frontier)
+                ),
             }
             for r in cur.fetchall()
         ]

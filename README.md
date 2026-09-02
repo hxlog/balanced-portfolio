@@ -267,6 +267,9 @@ python -m bp_ingest run
 # 行情调度只提取沪深300和恒生指数，不自动清洗数据
 python -m bp_ingest run --symbols 000300 HSI --no-clean
 
+# 部分数据走yahoo finance需要代理，国内云服务器无法访问，需要在开发环境连代理补数据
+python -m bp_ingest run --symbols BTC-USD
+
 # 清洗行情数据，将交易日标准化成A股交易日，再计算涨跌幅
 python -m bp_ingest clean
 

@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
-import { getCachedDemoResult } from "@/lib/cached-data";
+import { redirect } from "next/navigation";
+import { getCachedDemoResult, resolveDefaultPortfolioId } from "@/lib/cached-data";
 import DashboardClient from "./DashboardClient";
 
 export const metadata: Metadata = {
@@ -18,25 +19,32 @@ export const metadata: Metadata = {
 
 type SearchParams = Promise<{ id?: string }>;
 
-export default function DashboardPage({
+export default async function DashboardPage({
   searchParams,
 }: {
   searchParams: SearchParams;
 }) {
-  return (
-    <Suspense fallback={<div className="p-12 text-center text-muted-foreground">加载中...</div>}>
-      <DashboardLoader searchParams={searchParams} />
-    </Suspense>
-  );
-}
-
-async function DashboardLoader({ searchParams }: { searchParams: SearchParams }) {
   const { id } = await searchParams;
   const portfolioId = id ? Number(id) : null;
+
+  // 需求2 + 性能修复: 登录用户无 id 时, 在页面顶层(而非 Suspense 内)直接 307 重定向到其默认组合,
+  // 避免「先渲染 demo → 客户端再 router.replace」的二次请求与闪烁。
+  // 必须放在 Suspense 之外: redirect() 在 PPR 的 Suspense 边界内不会产生 3xx。
+  if (portfolioId == null || Number.isNaN(portfolioId)) {
+    const defaultId = await resolveDefaultPortfolioId();
+    if (defaultId != null) {
+      redirect(`/dashboard?id=${defaultId}`);
+    }
+  }
+
   const initialDemo =
     portfolioId == null || Number.isNaN(portfolioId)
       ? await getCachedDemoResult()
       : null;
 
-  return <DashboardClient initialDemo={initialDemo} />;
+  return (
+    <Suspense fallback={<div className="p-12 text-center text-muted-foreground">加载中...</div>}>
+      <DashboardClient initialDemo={initialDemo} />
+    </Suspense>
+  );
 }

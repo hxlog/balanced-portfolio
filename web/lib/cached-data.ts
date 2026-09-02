@@ -1,6 +1,6 @@
 import { cacheLife, cacheTag } from "next/cache";
 import type { Asset, BacktestResult, CryptoCorrelationResponse } from "./api";
-import { apiBase } from "./session-server";
+import { apiBase, readSessionToken } from "./session-server";
 
 async function serverFetch<T>(path: string): Promise<T> {
   const res = await fetch(`${apiBase()}${path}`);
@@ -63,4 +63,27 @@ export async function getCachedCryptoCorrelation(): Promise<CryptoCorrelationRes
   // 失败时 throw (不缓存 null): "use cache" 不缓存 throw 的结果,
   // 避免部署/重启时 FastAPI 未就绪致 stale null 缓存 1h (曾致 /crypto「获取数据失败」)。
   return await serverFetch<CryptoCorrelationResponse>("/api/crypto/correlation");
+}
+
+/** 解析登录用户在 /dashboard 无 id 时的默认组合 id(服务端重定向用)。
+ *
+ * 逻辑与客户端 DashboardClient 的自动选择一致: 取用户自建(非 demo)组合中排序第一的。
+ * 无 session / 无自建组合 / 接口失败时返回 null, 由调用方回退到 demo。
+ * 注意: 不加 "use cache"(结果随用户而异, 且依赖 httpOnly cookie)。
+ */
+export async function resolveDefaultPortfolioId(): Promise<number | null> {
+  const token = await readSessionToken();
+  if (!token) return null;
+  try {
+    const res = await fetch(`${apiBase()}/api/portfolios`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { portfolios?: Array<{ portfolio_id: number; is_demo: boolean }> };
+    const firstOwn = (data.portfolios || []).find((p) => !p.is_demo);
+    return firstOwn ? firstOwn.portfolio_id : null;
+  } catch {
+    return null;
+  }
 }

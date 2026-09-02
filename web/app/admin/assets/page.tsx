@@ -462,6 +462,7 @@ export default function AdminAssetsPage() {
                       <ArrowUpDown className={`w-3 h-3 ${rowsSortDesc === null ? "opacity-40" : "opacity-100"}`} />
                     </button>
                   </TableHead>
+                  <TableHead className="whitespace-nowrap">新鲜度</TableHead>
                   <TableHead className="min-w-[200px]">最近错误</TableHead>
                   <TableHead className="text-right whitespace-nowrap">操作</TableHead>
                 </TableRow>
@@ -506,6 +507,13 @@ export default function AdminAssetsPage() {
                       </TableCell>
                       <TableCell>{a.last_clean_date || "-"}</TableCell>
                       <TableCell className="font-mono">{a.clean_rows || 0}</TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        {a.is_stale ? (
+                          <Badge variant="outline" className="font-normal text-destructive border-destructive/40">停更</Badge>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
                       <TableCell className="max-w-[360px] truncate text-destructive text-sm">{a.last_error || "-"}</TableCell>
                       <TableCell className="text-right space-x-2 whitespace-nowrap">
                         <Button variant="outline" size="sm" onClick={() => probe(a)} disabled={busyKey === key}>

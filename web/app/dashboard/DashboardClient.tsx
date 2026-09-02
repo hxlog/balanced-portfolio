@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import { motion, AnimatePresence } from "motion/react";
-import { Trash2, Pencil, RefreshCw, Star, Copy, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import { Trash2, Pencil, RefreshCw, Star, Copy, ArrowUpDown, GripVertical } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -704,7 +704,10 @@ function DashboardView({
                   id="show-actual-holdings"
                   checked={showActual}
                   disabled={!hasActualHoldings}
-                  onCheckedChange={(v) => setShowActualHoldings(v === true)}
+                  onCheckedChange={(v) => {
+                    setShowActualHoldings(v === true);
+                    if (v === true) setShowOptimalHoldings(false);
+                  }}
                 />
                 显示当天实际持仓{actualAsOf ? ` ${actualAsOf}` : ""}
               </label>
@@ -713,7 +716,10 @@ function DashboardView({
                   id="show-optimal-holdings"
                   checked={showOptimalHoldings}
                   disabled={!hasOptimalHoldings}
-                  onCheckedChange={(v) => setShowOptimalHoldings(v === true)}
+                  onCheckedChange={(v) => {
+                    setShowOptimalHoldings(v === true);
+                    if (v === true) setShowActualHoldings(false);
+                  }}
                 />
                 显示最新优化持仓{optimalAsOf ? ` ${optimalAsOf}` : ""}
               </label>
@@ -1220,20 +1226,12 @@ function ReorderDialog({ portfolios, onSaved }: { portfolios: PortfolioInfo[]; o
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<PortfolioInfo[]>([]);
   const [busy, setBusy] = useState(false);
+  const [dragId, setDragId] = useState<number | null>(null);
+  const [overId, setOverId] = useState<number | null>(null);
 
   useEffect(() => {
     if (open) setItems(portfolios);
   }, [open, portfolios]);
-
-  const move = (i: number, dir: -1 | 1) => {
-    setItems((arr) => {
-      const j = i + dir;
-      if (j < 0 || j >= arr.length) return arr;
-      const next = arr.slice();
-      [next[i], next[j]] = [next[j], next[i]];
-      return next;
-    });
-  };
 
   const save = async () => {
     setBusy(true);
@@ -1248,6 +1246,20 @@ function ReorderDialog({ portfolios, onSaved }: { portfolios: PortfolioInfo[]; o
     }
   };
 
+  // 原生 HTML5 拖拽排序: 拖动项悬停在目标项上时插入目标位置。
+  const moveItem = (fromId: number, toId: number) => {
+    if (fromId === toId) return;
+    setItems((arr) => {
+      const next = arr.slice();
+      const from = next.findIndex((p) => p.portfolio_id === fromId);
+      const to = next.findIndex((p) => p.portfolio_id === toId);
+      if (from < 0 || to < 0) return arr;
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
+  };
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
@@ -1258,22 +1270,45 @@ function ReorderDialog({ portfolios, onSaved }: { portfolios: PortfolioInfo[]; o
       <DialogContent className="max-w-md">
         <DialogHeader><DialogTitle>调整组合顺序</DialogTitle></DialogHeader>
         <p className="text-xs text-muted-foreground">
-          第一个组合将作为默认显示。示例组合顺序为全局展示顺序（需管理员身份调整，对所有访客生效）；自建组合顺序仅影响你自己的下拉顺序。
+          第一个组合将作为默认显示。拖拽调整顺序后点「保存顺序」。示例组合顺序为全局展示顺序（需管理员身份调整，对所有访客生效）；自建组合顺序仅影响你自己的下拉顺序。
         </p>
         <div className="max-h-[50vh] overflow-auto space-y-1.5 pr-1">
-          {items.map((p, i) => (
-            <div key={p.portfolio_id} className="flex items-center gap-2 rounded-md border border-border px-3 py-2">
+          {items.map((p) => (
+            <div
+              key={p.portfolio_id}
+              draggable
+              onDragStart={(e) => {
+                setDragId(p.portfolio_id);
+                e.dataTransfer.effectAllowed = "move";
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+                if (overId !== p.portfolio_id) setOverId(p.portfolio_id);
+              }}
+              onDragLeave={() => {
+                if (overId === p.portfolio_id) setOverId(null);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (dragId != null) moveItem(dragId, p.portfolio_id);
+                setDragId(null);
+                setOverId(null);
+              }}
+              onDragEnd={() => {
+                setDragId(null);
+                setOverId(null);
+              }}
+              className={`flex items-center gap-2 rounded-md border px-3 py-2 transition-colors cursor-grab active:cursor-grabbing ${
+                dragId === p.portfolio_id ? "opacity-40 border-primary" : ""
+              } ${overId === p.portfolio_id && dragId !== p.portfolio_id ? "border-primary bg-primary/5" : "border-border"}`}
+            >
+              <GripVertical className="w-4 h-4 text-muted-foreground shrink-0" />
               <span className="flex-1 truncate text-sm">
                 {p.is_demo && <Badge variant="secondary" className="mr-1.5 font-normal">Demo</Badge>}
                 {p.name}
                 {!p.is_demo && <span className="text-muted-foreground"> #{p.portfolio_id}</span>}
               </span>
-              <Button variant="ghost" size="icon" className="h-7 w-7" disabled={i === 0} onClick={() => move(i, -1)}>
-                <ArrowUp className="w-4 h-4" />
-              </Button>
-              <Button variant="ghost" size="icon" className="h-7 w-7" disabled={i === items.length - 1} onClick={() => move(i, 1)}>
-                <ArrowDown className="w-4 h-4" />
-              </Button>
             </div>
           ))}
         </div>

@@ -85,6 +85,15 @@ function shortLabel(name: string, mobile: boolean): string {
   return base.length > 8 ? `${base.slice(0, 7)}…` : base;
 }
 
+/** 将较长品种名按字符数折行, 供 axisLabel.formatter 用; 灯箱(宽屏)场景避免标签截断。
+    CJK 与数字混排下约每 6 字符一换行, 与 ECharts 自带 width+overflow 配合。 */
+function wrapLabel(name: string, max = 6): string {
+  if (name.length <= max) return name;
+  const parts: string[] = [];
+  for (let i = 0; i < name.length; i += max) parts.push(name.slice(i, i + max));
+  return parts.join("\n");
+}
+
 function subMatrix(matrix: number[][], indices: number[]): number[][] {
   return indices.map((i) => indices.map((j) => matrix[i]?.[j] ?? 0));
 }
@@ -137,49 +146,52 @@ function buildHeatmapOption(
     colors: string[];
     mapDecimals?: number;
     labelDecimals?: number;
+    /** 灯箱全屏模式: 标签换行展示完整品种名, 不加挤。 */
+    wide?: boolean;
   },
 ) {
   const displayLabels = labels.map((l) => shortLabel(l, opts.isMobile));
   const height = opts.isMobile ? Math.max(320, labels.length * 28) : Math.max(360, labels.length * 22);
   const mapDecimals = opts.mapDecimals ?? 2;
   const labelDecimals = opts.labelDecimals ?? (opts.valueName === "相关系数" ? 2 : 4);
+  // 灯箱(宽屏): 标签换行, 纵向不旋转(横坐标旋转45°), 避免居中留白过大
+  const xLabel = opts.wide
+    ? { color: opts.textCol, rotate: 45, fontSize: 11, interval: 0, width: 96, overflow: "break", formatter: (s: string) => wrapLabel(s) }
+    : { color: opts.textCol, rotate: 45, fontSize: opts.isMobile ? 8 : 10, width: opts.isMobile ? 36 : 80, overflow: "truncate" };
+  const yLabel = opts.wide
+    ? { color: opts.textCol, fontSize: 11, width: 110, overflow: "break", formatter: (s: string) => wrapLabel(s, 7) }
+    : { color: opts.textCol, fontSize: opts.isMobile ? 8 : 10, width: opts.isMobile ? 36 : 92, overflow: "break" };
   return {
     height,
     option: {
       tooltip: {
         position: "top",
+        appendToBody: true,
+        confine: true,
         backgroundColor: opts.cardBg,
+        borderColor: opts.isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.08)",
         textStyle: { color: opts.fg },
+        extraCssText: "z-index: 99999; box-shadow: 0 4px 16px rgba(0,0,0,0.18);",
         formatter: (p: { value: [number, number, number] }) =>
           `${labels[p.value[1]]} × ${labels[p.value[0]]}<br/>${opts.valueName}: ${opts.format(p.value[2])}`,
       },
       grid: {
         top: 10,
         bottom: opts.isMobile ? 72 : 90,
-        left: opts.isMobile ? 48 : 90,
-        right: opts.isMobile ? 8 : 20,
+        left: opts.isMobile ? 48 : opts.wide ? 8 : 90,
+        right: opts.isMobile ? 8 : opts.wide ? 8 : 20,
+        containLabel: true,
       },
       xAxis: {
         type: "category",
         data: displayLabels,
-        axisLabel: {
-          color: opts.textCol,
-          rotate: 45,
-          fontSize: opts.isMobile ? 8 : 10,
-          width: opts.isMobile ? 36 : 80,
-          overflow: "truncate",
-        },
+        axisLabel: xLabel,
         splitArea: { show: true },
       },
       yAxis: {
         type: "category",
         data: displayLabels,
-        axisLabel: {
-          color: opts.textCol,
-          fontSize: opts.isMobile ? 8 : 10,
-          width: opts.isMobile ? 36 : 92,
-          overflow: "truncate",
-        },
+        axisLabel: yLabel,
         splitArea: { show: true },
       },
       visualMap: {
@@ -341,15 +353,15 @@ export function RiskMatrixSection({
       allLabels,
       subMatrix(corr.matrix, allIndices),
       {
-        isDark: false, cardBg: "#ffffff", fg: "#171717", textCol: "#666666",
-        axisLineCol: "rgba(0,0,0,0.1)", splitLineCol: "rgba(0,0,0,0.05)", isMobile: false,
+        isDark, cardBg, fg, textCol, axisLineCol, splitLineCol, isMobile: false,
         min: -1, max: 1,
         valueName: "相关系数", format: (v) => v.toFixed(2),
         mapDecimals: 1, labelDecimals: 2,
-        colors: ["#30A46C", "#f4f4f5", "#E5484D"],
+        colors: ["#30A46C", isDark ? "#161616" : "#f4f4f5", "#E5484D"],
+        wide: true,
       },
-    );
-  }, [allIndices, allLabels, corr.matrix]);
+    ).option;
+  }, [allIndices, allLabels, corr.matrix, isDark, cardBg, fg, textCol, axisLineCol, splitLineCol]);
   const fullCovOption = useMemo(() => {
     if (allIndices.length < 2 || !covFull.length) return null;
     const full = subMatrix(covFull, allIndices);
@@ -360,15 +372,15 @@ export function RiskMatrixSection({
       allLabels,
       full,
       {
-        isDark: false, cardBg: "#ffffff", fg: "#171717", textCol: "#666666",
-        axisLineCol: "rgba(0,0,0,0.1)", splitLineCol: "rgba(0,0,0,0.05)", isMobile: false,
+        isDark, cardBg, fg, textCol, axisLineCol, splitLineCol, isMobile: false,
         min, max,
         valueName: "年化协方差", format: fmt,
         mapDecimals, labelDecimals: mapDecimals,
-        colors: covDivergingColors(false),
+        colors: covDivergingColors(isDark),
+        wide: true,
       },
-    );
-  }, [allIndices, allLabels, covFull]);
+    ).option;
+  }, [allIndices, allLabels, covFull, isDark, cardBg, fg, textCol, axisLineCol, splitLineCol]);
   const fullHeight = Math.max(640, allIndices.length * 28 + 120);
 
   const toggle = (index: number) => {

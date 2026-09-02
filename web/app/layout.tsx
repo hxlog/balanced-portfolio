@@ -6,6 +6,7 @@ import "katex/dist/katex.min.css";
 import { Providers } from "./providers";
 import { AuthProvider } from "@/lib/auth";
 import { Navbar } from "@/components/Navbar";
+import { BackToTop } from "@/components/BackToTop";
 
 const SITE_URL = process.env.BP_SITE_URL || "http://localhost:3000";
 const SITE_NAME = "Balanced Portfolio";
@@ -80,7 +81,7 @@ const jsonLd = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="zh-CN" suppressHydrationWarning>
-      <body className="min-h-screen flex flex-col bg-background text-foreground font-sans antialiased">
+      <body className="min-h-screen flex flex-col bg-background text-foreground font-sans antialiased selection:bg-cyan-100 dark:selection:bg-zinc-800">
         {ENABLE_UMAMI && (
           <Script
             defer
@@ -98,6 +99,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <AuthProvider>
               <Navbar />
               <main className="flex-1 flex flex-col min-w-0">{children}</main>
+              <BackToTop />
             </AuthProvider>
           </Suspense>
           <footer className="border-t border-border py-8 text-center text-sm text-muted-foreground mt-auto">
@@ -115,7 +117,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 GitHub 源代码
               </a>
               <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs">
-                <span>© 2026 Balanced Portfolio contributors</span>
+                <span>© 2026 Balanced Portfolio</span>
                 <span aria-hidden="true" className="text-border">
                   |
                 </span>

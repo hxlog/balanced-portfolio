@@ -622,13 +622,23 @@ function AssetPicker({
     [assets],
   );
 
-  const filtered = assets.filter(
-    (a) =>
-      !usedSet.has(keyOf(a)) &&
-      (category === "all" || a.category === category) &&
-      (vendor === "all" || a.vendor === vendor) &&
-      (q === "" || (a.name || "").includes(q) || a.symbol.toLowerCase().includes(q.toLowerCase()))
-  );
+  const filtered = useMemo(() => {
+    const list = assets.filter(
+      (a) =>
+        !usedSet.has(keyOf(a)) &&
+        (category === "all" || a.category === category) &&
+        (vendor === "all" || a.vendor === vendor) &&
+        (q === "" || (a.name || "").includes(q) || a.symbol.toLowerCase().includes(q.toLowerCase()))
+    );
+    // 排序优先级: 后复权(hfq) ETF 最前; 停更与 前复权(qfq) ETF 沉底; 其余保持稳定。
+    const rank = (a: Asset): number => {
+      if (a.logical_source === "etf" && a.adjust === "hfq") return 0; // 后复权最前
+      if (a.is_stale) return 2; // 停更沉底
+      if (a.logical_source === "etf" && a.adjust === "qfq") return 1; // 前复权靠后
+      return 1; // 指数/商品/债券等夹在中间
+    };
+    return list.slice().sort((a, b) => rank(a) - rank(b));
+  }, [assets, usedSet, category, vendor, q]);
 
   // 推荐分组: 命中资产池(且未被本象限选中)的推荐 ETF
   const recommended = RECOMMENDED_GROUPS.map((g) => ({
@@ -681,105 +691,126 @@ function AssetPicker({
           <Plus className="w-4 h-4 mr-1" /> 添加资产
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-4xl">
         <DialogHeader>
           <DialogTitle>添加资产到「{quadrantLabel}」</DialogTitle>
         </DialogHeader>
-        <div className="flex gap-2 mb-3">
-          <Input placeholder="搜索名称或代码..." value={q} onChange={(e) => setQ(e.target.value)} className="flex-1" />
-          <Select value={vendor} onValueChange={setVendor}>
-            <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">全部数据源</SelectItem>
-              {vendors.map((v) => (
-                <SelectItem key={v} value={v}>{v}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={category} onValueChange={setCategory}>
-            <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">全部类别</SelectItem>
-              {ASSET_CATEGORY_OPTIONS.map((c) => (
-                <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        {recommended.length > 0 && category === "all" && vendor === "all" && q === "" && (
-          <div className="mb-3 space-y-2">
-            <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">推荐 ETF（点击整组多选）</div>
-            {recommended.map((g) => {
-              const ks = g.assets.map((a) => keyOf(a));
-              const allChecked = ks.every((k) => pending.has(k));
-              return (
-                <div key={g.label} className="flex items-center gap-2">
-                  <Badge
-                    variant={allChecked ? "default" : "secondary"}
-                    className="shrink-0 font-normal cursor-pointer select-none"
-                    onClick={() => toggleRecommended(g)}
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_300px] gap-4">
+          {/* 左: 搜索 + 勾选明细 */}
+          <div className="min-w-0">
+            <div className="flex gap-2 mb-3">
+              <Input placeholder="搜索名称或代码..." value={q} onChange={(e) => setQ(e.target.value)} className="flex-1" />
+              <Select value={vendor} onValueChange={setVendor}>
+                <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部数据源</SelectItem>
+                  {vendors.map((v) => (
+                    <SelectItem key={v} value={v}>{v}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={category} onValueChange={setCategory}>
+                <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部类别</SelectItem>
+                  {ASSET_CATEGORY_OPTIONS.map((c) => (
+                    <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="max-h-[60vh] overflow-auto space-y-1 pr-1">
+              {filtered.map((a) => {
+                const k = keyOf(a);
+                const checked = pending.has(k);
+                return (
+                  <div
+                    key={k}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => toggle(a)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        toggle(a);
+                      }
+                    }}
+                    className={`w-full text-left px-3 py-2 rounded-md hover:bg-accent flex items-center gap-3 cursor-pointer ${checked ? "bg-accent/60" : ""}`}
                   >
-                    {g.label}（{g.assets.length}）
-                  </Badge>
-                  <div className="flex flex-wrap gap-1 min-w-0">
-                    {g.assets.map((a) => (
-                      <span
-                        key={keyOf(a)}
-                        onClick={() => toggle(a)}
-                        className={`inline-flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded border cursor-pointer select-none ${
-                          pending.has(keyOf(a)) ? "border-primary text-primary bg-primary/10" : "border-border text-muted-foreground hover:text-foreground"
-                        }`}
-                        title={`${a.name} (${a.symbol})`}
-                      >
-                        {a.symbol}
-                      </span>
-                    ))}
+                    <div
+                      className={`size-4 shrink-0 rounded-[4px] border flex items-center justify-center ${
+                        checked ? "bg-primary border-primary text-primary-foreground" : "border-border bg-input-background"
+                      }`}
+                    >
+                      {checked && <Check className="w-3 h-3" />}
+                    </div>
+                    <span className="text-sm flex-1">{a.name || a.symbol}</span>
+                    {a.is_stale && (
+                      <Badge variant="outline" className="font-normal h-5 px-1.5 text-[10px] text-destructive border-destructive/40">
+                        停更
+                      </Badge>
+                    )}
+                    {a.logical_source === "etf" ? (
+                      <Badge variant="secondary" className="font-normal h-5 px-1.5 text-[10px]">ETF{typeof a.adjust === "string" && a.adjust ? ` · ${ADJUST_LABEL[a.adjust] ?? a.adjust}` : ""}</Badge>
+                    ) : a.logical_source === "cn_index" ? (
+                      <Badge variant="secondary" className="font-normal h-5 px-1.5 text-[10px]">指数</Badge>
+                    ) : a.vendor ? (
+                      <Badge variant="secondary" className="font-normal h-5 px-1.5 text-[10px]">{a.vendor}</Badge>
+                    ) : null}
+                    <span className="text-xs text-muted-foreground font-mono">
+                      {a.symbol}{a.adjust && a.logical_source !== "etf" ? ` · ${ADJUST_LABEL[a.adjust] ?? a.adjust}` : ""}{a.category ? ` · ${a.category}` : ""}
+                    </span>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+              {filtered.length === 0 && <p className="text-sm text-muted-foreground px-3 py-4">无可选资产</p>}
+            </div>
           </div>
-        )}
-        <div className="max-h-80 overflow-auto space-y-1">
-          {filtered.map((a) => {
-            const k = keyOf(a);
-            const checked = pending.has(k);
-            return (
-              <div
-                key={k}
-                role="button"
-                tabIndex={0}
-                onClick={() => toggle(a)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    toggle(a);
-                  }
-                }}
-                className={`w-full text-left px-3 py-2 rounded-md hover:bg-accent flex items-center gap-3 cursor-pointer ${checked ? "bg-accent/60" : ""}`}
-              >
-                <div
-                  className={`size-4 shrink-0 rounded-[4px] border flex items-center justify-center ${
-                    checked ? "bg-primary border-primary text-primary-foreground" : "border-border bg-input-background"
-                  }`}
-                >
-                  {checked && <Check className="w-3 h-3" />}
-                </div>
-                <span className="text-sm flex-1">{a.name || a.symbol}</span>
-                {a.logical_source === "etf" ? (
-                  <Badge variant="secondary" className="font-normal h-5 px-1.5 text-[10px]">ETF{typeof a.adjust === "string" && a.adjust ? ` · ${ADJUST_LABEL[a.adjust] ?? a.adjust}` : ""}</Badge>
-                ) : a.logical_source === "cn_index" ? (
-                  <Badge variant="secondary" className="font-normal h-5 px-1.5 text-[10px]">指数</Badge>
-                ) : a.vendor ? (
-                  <Badge variant="secondary" className="font-normal h-5 px-1.5 text-[10px]">{a.vendor}</Badge>
-                ) : null}
-                <span className="text-xs text-muted-foreground font-mono">
-                  {a.symbol}{a.adjust && a.logical_source !== "etf" ? ` · ${ADJUST_LABEL[a.adjust] ?? a.adjust}` : ""}{a.category ? ` · ${a.category}` : ""}
-                </span>
+
+          {/* 右: 推荐 ETF */}
+          <div className="min-w-0 border-l border-border md:pl-4">
+            <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">推荐 ETF（点击整组多选）</div>
+            {recommended.length > 0 ? (
+              <div className="space-y-3 max-h-[60vh] overflow-auto pr-1">
+                {recommended.map((g) => {
+                  const ks = g.assets.map((a) => keyOf(a));
+                  const allChecked = ks.every((k) => pending.has(k));
+                  return (
+                    <div key={g.label}>
+                      <Badge
+                        variant={allChecked ? "default" : "secondary"}
+                        className="font-normal cursor-pointer select-none mb-1.5"
+                        onClick={() => toggleRecommended(g)}
+                      >
+                        {g.label}（{g.assets.length}）
+                      </Badge>
+                      <div className="flex flex-col gap-1">
+                        {g.assets.map((a) => (
+                          <button
+                            key={keyOf(a)}
+                            type="button"
+                            onClick={() => toggle(a)}
+                            className={`text-left flex items-center gap-1.5 text-xs px-2 py-1 rounded border cursor-pointer select-none ${
+                              pending.has(keyOf(a)) ? "border-primary text-primary bg-primary/10" : "border-border text-muted-foreground hover:text-foreground"
+                            }`}
+                            title={`${a.name} (${a.symbol})`}
+                          >
+                            <span className="size-3 shrink-0 rounded-[3px] border flex items-center justify-center">
+                              {pending.has(keyOf(a)) && <Check className="w-2.5 h-2.5" />}
+                            </span>
+                            <span className="font-medium truncate">{a.name || a.symbol}</span>
+                            <span className="font-mono opacity-70 shrink-0">({a.symbol})</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            );
-          })}
-          {filtered.length === 0 && <p className="text-sm text-muted-foreground px-3 py-4">无可选资产</p>}
+            ) : (
+              <p className="text-sm text-muted-foreground">暂无推荐资产</p>
+            )}
+          </div>
         </div>
         <DialogFooter className="flex-row justify-between sm:justify-between items-center gap-2">
           <span className="text-sm text-muted-foreground">已选 {pending.size} 项</span>
