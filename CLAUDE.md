@@ -65,6 +65,7 @@ psql -h localhost -U postgres -d balanced_portfolio -f ddl/schema.sql
 - **无未来函数**：`backtest.py` 用前缀和(cum1/cum2)做滚动增量矩，把每日窗口预算从 O(window·n²) 降到 O(n²)；当日 NAV 用当日收益更新，次日才用新权重。`test_backtest.py` 固定约束：篡改某日之后的收益不得改变该日之前的净值/持仓。
 - 成分逐步纳入：不足 `min_window` 历史的品种权重为 0，不拖后整体 effective_start。
 - 再平衡：任一品种漂移偏离目标 > `rebalance_band`(绝对值，默认 5pp) → 整体回到当日最优目标。
+- 对比基准注册表在 `repositories.BENCHMARKS`：bond6040 / HSI / 000300 / 000510 / 000905 + 三只人民币计价 QDII ETF 基准 `sp500_etf`(513500) / `ndx100_etf`(513100) / `n225_etf`(513520)。回测内部基准按注册表全腿**按日再平衡合成**（与展示/归因同口径）；落库时预计算全部注册基准净值（`bp_backtest_benchmark`）与 method×benchmark 归因。前端 `web/lib/api.ts` 的 `BENCHMARK_OPTIONS/COMPOSITION` 必须与之同步。
 
 ## 任务模型（`bp_api/tasking.py` / `workers/` / `tasks.py`）
 
@@ -74,6 +75,9 @@ psql -h localhost -U postgres -d balanced_portfolio -f ddl/schema.sql
 - beat 每 20 分钟巡检排队就绪组合的 T-1 更新（`bp_api.enqueue_ready`），与 bp_ingest 的 6h 调度解耦；每周刷新交易日历。
 - worker 启动时硬化 HTTP 会话 + 预热 EM 代码映射（`worker_process_init`），否则 ingest 走 Celery 时 push2his 会被掐断。
 - 组合状态：`pending → running → done/error`；`running` 时编辑返回 409。结果按 `method`/`benchmark` 维度用 `cache.set_json` 缓存（带 result version 的 ETag）。
+- 免重算编辑：`PATCH /api/portfolios/{id}/meta` 接受完整参数（只落定义、不触发回测；running 且含回测字段变更→409，仅 name/description 任何状态可改）；回测成功时写参数快照 `bp_portfolio.last_run_params`，与当前参数不一致即 `params_stale`（前端提示待重算）。
+- `POST /api/admin/portfolios/recompute-all`（超管）：强制重算全部组合（含 demo）。
+- `bp_user.portfolio_limit`：NULL=无限（admin 恒无限；建用户/改上限接口支持显式 null）。
 
 ## API 层（`bp_api/`）
 
@@ -84,7 +88,7 @@ psql -h localhost -U postgres -d balanced_portfolio -f ddl/schema.sql
 - **NaN/Inf 必须清洗**：所有 `Json()` 实参走 `_json_safe`，权重走 `_round`——psycopg 拒绝 NaN/Infinity token。
 - `auth.py`：JWT + 管理员强制 TOTP。`require_user` / `require_super_admin` / `optional_user` 三个依赖。
 - `cache.py`：Redis 封装，缺失时全部降级为 miss（不影响功能）。
-- `settings.py`：`load_settings()` 在 `main.py` import 时执行一次；`BP_JWT_SECRET` 必填且 ≥32 字符，否则启动报错。组合级参数（risk_free/lookback/rebalance_band）存在组合上，环境变量仅作新建兜底。
+- `settings.py`：`load_settings()` 在 `main.py` import 时执行一次；`BP_JWT_SECRET` 必填且 ≥32 字符，否则启动报错。组合级参数（risk_free/lookback/rebalance_band）以组合行为唯一口径，无环境变量兜底（2026-09 已清理死配置）。
 
 ## 鉴权与前端 Session（容易踩坑）
 
@@ -104,6 +108,7 @@ psql -h localhost -U postgres -d balanced_portfolio -f ddl/schema.sql
 - `web/lib/api.ts` 是类型化 API 客户端，**也是方法/基准/OTC 产品的常量源**，改动需与后端注册表同步（`METHOD_OPTIONS`、`BENCHMARK_OPTIONS`、`OTC_PRODUCTS`、`OTC_ENGINES` 等）。
 - `web/lib/auth.tsx`（AuthProvider）、`web/lib/session-server.ts`（Cookie 读写）、`web/components/`（Navbar、RiskMatrixSection、MiniTradingCalendar 等）、`web/components/ui/`（shadcn 风格基础组件）。
 - 主要路由：`/dashboard`（回测）、`/builder`（组合构建）、`/cffex`、`/otc-pricing` & `/otc-derivatives-pricing`、`/admin`、`/methodology`、`/docs`。
+- 设计规范见 `docs/design-system.md`：sky 主色、绿涨红跌（`text-up`/`text-down` 仅限方向性涨跌）、success/warning 语义色、四象限色（过热=warning/滞胀=destructive/复苏=success/衰退=weak）；图表颜色一律经 `web/lib/chart-theme.ts`；反馈用 sonner toast、危险确认用 AlertDialog（禁止 window.alert/confirm）。
 
 ## 数据源与 ingest（`bp_ingest/`）
 

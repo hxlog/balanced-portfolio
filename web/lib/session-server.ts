@@ -29,6 +29,25 @@ export async function readSessionToken(): Promise<string | null> {
   return jar.get(SESSION_COOKIE)?.value ?? null;
 }
 
+/** 从 bp_session JWT 解出未验证 claims(sub/role)。
+ *
+ * 仅服务端用于默认组合分流等弱信任决策, 真实权限仍由 FastAPI 校验 token 签名;
+ * 解码失败/无 payload 时返回 null, 不抛错。
+ */
+export async function readSessionClaims(): Promise<{ sub?: string; role?: string } | null> {
+  const token = await readSessionToken();
+  if (!token) return null;
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return null;
+    const parsed: unknown = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (typeof parsed !== "object" || parsed === null) return null;
+    return parsed as { sub?: string; role?: string };
+  } catch {
+    return null;
+  }
+}
+
 export async function setSessionToken(token: string): Promise<void> {
   const jar = await cookies();
   jar.set(SESSION_COOKIE, token, sessionCookieOptions());

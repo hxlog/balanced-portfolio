@@ -1,8 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Activity, ArrowUpDown, Download, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { Activity, AlertTriangle, ArrowUpDown, CheckCircle2, Download, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
@@ -129,7 +134,7 @@ export default function AdminAssetsPage() {
 
   const save = async () => {
     if (!probeOk) {
-      window.alert("请先测试读取成功后再保存");
+      toast.error("请先测试读取成功后再保存");
       return;
     }
     await api.saveAdminAsset({
@@ -148,11 +153,15 @@ export default function AdminAssetsPage() {
     await api.revalidateAssets().catch(() => {});
   };
 
+  // 删除确认由行内 AlertDialog 承担; 此处只执行软删除。
   const remove = async (a: AdminAsset) => {
-    if (!window.confirm(`确认软删除 ${a.name || a.symbol}?`)) return;
-    await api.deleteAdminAsset(a.source, a.symbol);
-    await load();
-    await api.revalidateAssets().catch(() => {});
+    try {
+      await api.deleteAdminAsset(a.source, a.symbol);
+      await load();
+      await api.revalidateAssets().catch(() => {});
+    } catch (e) {
+      toast.error(String(e instanceof Error ? e.message : e));
+    }
   };
 
   const syncAll = async () => {
@@ -161,7 +170,7 @@ export default function AdminAssetsPage() {
       setSyncAllTaskId(res.task_id);
       setSyncAllOpen(true);
     } catch (e) {
-      window.alert(String(e instanceof Error ? e.message : e));
+      toast.error(String(e instanceof Error ? e.message : e));
     }
   };
 
@@ -169,10 +178,10 @@ export default function AdminAssetsPage() {
     setEnqueueBusy(true);
     try {
       const res = await api.enqueueReadyPortfolios();
-      window.alert(`已排队 ${res.queued} 个组合的 T-1 更新`);
+      toast.success(`已排队 ${res.queued} 个组合的 T-1 更新`);
       await load();
     } catch (e) {
-      window.alert(String(e instanceof Error ? e.message : e));
+      toast.error(String(e instanceof Error ? e.message : e));
     } finally {
       setEnqueueBusy(false);
     }
@@ -183,10 +192,10 @@ export default function AdminAssetsPage() {
     setBusyKey(key);
     try {
       const res = await api.probeAdminAsset(a.source, a.symbol);
-      window.alert(`读取成功: ${res.first_date} ~ ${res.last_date}, ${res.rows} 行, ${res.elapsed_ms}ms`);
+      toast.success(`读取成功: ${res.first_date} ~ ${res.last_date}, ${res.rows} 行, ${res.elapsed_ms}ms`);
       await load();
     } catch (e) {
-      window.alert(String(e instanceof Error ? e.message : e));
+      toast.error(String(e instanceof Error ? e.message : e));
       await load();
     } finally {
       setBusyKey(null);
@@ -198,10 +207,10 @@ export default function AdminAssetsPage() {
     setBusyKey(key);
     try {
       const res = await api.syncAdminAsset(a.source, a.symbol);
-      window.alert(`增量拉取完成: 写入 ${res.rows} 行（${res.detail || res.status}）`);
+      toast.success(`增量拉取完成: 写入 ${res.rows} 行（${res.detail || res.status}）`);
       await load();
     } catch (e) {
-      window.alert(String(e instanceof Error ? e.message : e));
+      toast.error(String(e instanceof Error ? e.message : e));
       await load();
     } finally {
       setBusyKey(null);
@@ -227,7 +236,7 @@ export default function AdminAssetsPage() {
       await api.setAssetSelectable(a.source, a.symbol, next);
       await api.revalidateAssets().catch(() => {});
     } catch (e) {
-      window.alert(String(e instanceof Error ? e.message : e));
+      toast.error(String(e instanceof Error ? e.message : e));
       await load();
     } finally {
       setBusyKey(null);
@@ -394,6 +403,39 @@ export default function AdminAssetsPage() {
                   刷新状态
                 </Button>
               )}
+              {isSuperAdmin && (
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="outline" size="sm">
+                      <RefreshCw className="w-4 h-4 mr-1" />强制重算全部组合
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>强制重算全部组合？</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        将对所有组合（含公共案例）重新执行 4 种方法的回测，单个组合约需 2–10 分钟，期间组合不可编辑。此操作不可撤销。
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>取消</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={async () => {
+                          try {
+                            const r = await api.recomputeAllPortfolios();
+                            toast.success(`已入队 ${r.enqueued} 个组合的重算任务`);
+                            await load();
+                          } catch (e) {
+                            toast.error(String(e instanceof Error ? e.message : e));
+                          }
+                        }}
+                      >
+                        确认重算
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              )}
             </div>
           </div>
           <CardDescription>
@@ -442,16 +484,13 @@ export default function AdminAssetsPage() {
           {loading ? (
             <div className="py-12 text-center text-muted-foreground">加载中...</div>
           ) : (
-            <Table className="min-w-[1160px]">
+            <Table className="min-w-[980px]">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="min-w-[140px]">名称</TableHead>
-                  <TableHead className="whitespace-nowrap">Symbol</TableHead>
-                  <TableHead className="whitespace-nowrap">Source</TableHead>
-                  <TableHead className="whitespace-nowrap">复权</TableHead>
-                  <TableHead className="whitespace-nowrap">状态</TableHead>
-                  <TableHead className="whitespace-nowrap">清洗截至</TableHead>
-                  <TableHead className="whitespace-nowrap">
+                  <TableHead className="min-w-[140px] max-w-[200px]">名称</TableHead>
+                  <TableHead>代码 / 源</TableHead>
+                  <TableHead className="whitespace-nowrap px-2">状态</TableHead>
+                  <TableHead className="whitespace-nowrap px-2 text-xs">
                     <button
                       type="button"
                       className="inline-flex items-center gap-1 hover:text-foreground"
@@ -462,8 +501,8 @@ export default function AdminAssetsPage() {
                       <ArrowUpDown className={`w-3 h-3 ${rowsSortDesc === null ? "opacity-40" : "opacity-100"}`} />
                     </button>
                   </TableHead>
-                  <TableHead className="whitespace-nowrap">新鲜度</TableHead>
-                  <TableHead className="min-w-[200px]">最近错误</TableHead>
+                  <TableHead className="whitespace-nowrap px-2">新鲜度</TableHead>
+                  <TableHead className="w-10 px-2 text-center text-xs whitespace-nowrap" title="最近错误">错误</TableHead>
                   <TableHead className="text-right whitespace-nowrap">操作</TableHead>
                 </TableRow>
               </TableHeader>
@@ -473,22 +512,20 @@ export default function AdminAssetsPage() {
                   const disabled = a.is_selectable === false;
                   return (
                     <TableRow key={key} className={a.is_deleted ? "opacity-50" : ""}>
-                      <TableCell className="font-medium">{a.name || a.symbol}</TableCell>
-                      <TableCell className="font-mono">{a.symbol}</TableCell>
-                      <TableCell className="whitespace-nowrap">
-                        {a.logical_source === "etf" || a.logical_source === "cn_index" ? (
-                          <Badge variant="secondary" className="mr-1.5 font-normal">
-                            {a.logical_source === "etf" ? "ETF(后复权)" : "指数(聚合)"}
-                          </Badge>
-                        ) : a.vendor ? (
-                          <Badge variant="secondary" className="mr-1.5 font-normal">{a.vendor}</Badge>
-                        ) : null}
-                        <span className="font-mono text-xs text-muted-foreground">{a.source}</span>
+                      <TableCell className="max-w-[200px]">
+                        <div className="truncate font-medium" title={a.name || a.symbol}>{a.name || a.symbol}</div>
                       </TableCell>
-                      <TableCell className="whitespace-nowrap text-xs">
-                        {a.adjust ? (ADJUST_LABEL[a.adjust] ?? a.adjust) : <span className="text-muted-foreground">—</span>}
+                      <TableCell>
+                        <div className="font-mono text-xs leading-relaxed">
+                          <div>{a.symbol}</div>
+                          <div className="text-muted-foreground" title={a.source}>
+                            {a.logical_source === "etf" || a.logical_source === "cn_index"
+                              ? `${a.logical_source === "etf" ? "ETF聚合" : "指数聚合"}${a.adjust ? ` · ${ADJUST_LABEL[a.adjust] ?? a.adjust}` : ""}`
+                              : `${a.source}${a.adjust ? ` · ${ADJUST_LABEL[a.adjust] ?? a.adjust}` : ""}`}
+                          </div>
+                        </div>
                       </TableCell>
-                      <TableCell className="whitespace-nowrap">
+                      <TableCell className="px-2">
                         {a.is_deleted ? (
                           <Badge variant="outline" className="text-muted-foreground">已删除</Badge>
                         ) : isSuperAdmin ? (
@@ -505,30 +542,61 @@ export default function AdminAssetsPage() {
                           <Badge variant="outline" className="font-normal">启用</Badge>
                         )}
                       </TableCell>
-                      <TableCell>{a.last_clean_date || "-"}</TableCell>
-                      <TableCell className="font-mono">{a.clean_rows || 0}</TableCell>
-                      <TableCell className="whitespace-nowrap">
-                        {a.is_stale ? (
-                          <Badge variant="outline" className="font-normal text-destructive border-destructive/40">停更</Badge>
+                      <TableCell className="px-2 font-mono text-xs tabular-nums">{a.clean_rows || 0}</TableCell>
+                      <TableCell className="px-2 text-xs">
+                        <div>
+                          {a.is_stale ? (
+                            <Badge variant="outline" className="font-normal text-destructive border-destructive/40">停更</Badge>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </div>
+                        <div className="text-muted-foreground">{a.last_clean_date || "-"}</div>
+                      </TableCell>
+                      <TableCell className="w-10 px-2 text-center" title={a.last_error ?? ""}>
+                        {a.last_error ? (
+                          <AlertTriangle className="h-4 w-4 text-warning" />
                         ) : (
-                          <span className="text-muted-foreground">—</span>
+                          <CheckCircle2 className="h-4 w-4 text-success" />
                         )}
                       </TableCell>
-                      <TableCell className="max-w-[360px] truncate text-destructive text-sm">{a.last_error || "-"}</TableCell>
-                      <TableCell className="text-right space-x-2 whitespace-nowrap">
-                        <Button variant="outline" size="sm" onClick={() => probe(a)} disabled={busyKey === key}>
-                          {busyKey === key ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Activity className="w-4 h-4" />}
-                          测试
-                        </Button>
-                        <Button variant="outline" size="sm" onClick={() => sync(a)} disabled={busyKey === key} title="立即拉取该投资品增量数据并入库">
-                          {busyKey === key ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                          拉取增量
-                        </Button>
-                        {isSuperAdmin && (
-                          <Button variant="outline" size="sm" onClick={() => remove(a)} className="text-destructive">
-                            <Trash2 className="w-4 h-4" /> 删除
+                      <TableCell className="text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button variant="ghost" size="sm" className="h-7 px-2 gap-1 text-xs" onClick={() => probe(a)} disabled={busyKey === key}>
+                            {busyKey === key ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Activity className="h-3.5 w-3.5" />}
+                            测试
                           </Button>
-                        )}
+                          <Button variant="ghost" size="sm" className="h-7 px-2 gap-1 text-xs" onClick={() => sync(a)} disabled={busyKey === key} title="立即拉取该投资品增量数据并入库">
+                            {busyKey === key ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                            增量
+                          </Button>
+                          {isSuperAdmin && (
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button variant="ghost" size="sm" className="h-7 px-2 gap-1 text-xs text-destructive hover:text-destructive">
+                                  <Trash2 className="h-3.5 w-3.5" /> 删除
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>确认软删除 {a.name || a.symbol}？</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    删除后停更、builder 不可选；历史行情数据保留。此操作可在数据库层面恢复，但界面上不可撤销。
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>取消</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                    onClick={() => void remove(a)}
+                                  >
+                                    确认删除
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   );

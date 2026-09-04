@@ -52,10 +52,10 @@ export const mdxComponents = {
 // QuadrantGrid: 达利欧四象限 2x2 彩色卡片
 // ---------------------------------------------------------------------
 const QUADRANTS: { key: string; label: string; assets: string; tone: string }[] = [
-  { key: "overheat", label: "过热（通胀↑ 增长↑）", assets: "国内宽基、商品", tone: "text-up" },
-  { key: "stagflation", label: "滞胀（通胀↑ 增长↓）", assets: "黄金、商品、海外宽基、红利", tone: "text-weak" },
-  { key: "recovery", label: "复苏（通胀↓ 增长↑）", assets: "国内宽基、商品、红利、债券", tone: "text-primary" },
-  { key: "recession", label: "衰退（通胀↓ 增长↓）", assets: "红利、债券、海外宽基、黄金", tone: "text-down" },
+  { key: "overheat", label: "过热（通胀↑ 增长↑）", assets: "国内宽基、商品", tone: "text-warning" },
+  { key: "stagflation", label: "滞胀（通胀↑ 增长↓）", assets: "黄金、商品、海外宽基、红利", tone: "text-destructive" },
+  { key: "recovery", label: "复苏（通胀↓ 增长↑）", assets: "国内宽基、商品、红利、债券", tone: "text-success" },
+  { key: "recession", label: "衰退（通胀↓ 增长↓）", assets: "红利、债券、海外宽基、黄金", tone: "text-weak" },
 ];
 
 export function QuadrantGrid() {

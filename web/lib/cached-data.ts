@@ -1,6 +1,6 @@
 import { cacheLife, cacheTag } from "next/cache";
 import type { Asset, BacktestResult, CryptoCorrelationResponse } from "./api";
-import { apiBase, readSessionToken } from "./session-server";
+import { apiBase, readSessionClaims, readSessionToken } from "./session-server";
 
 async function serverFetch<T>(path: string): Promise<T> {
   const res = await fetch(`${apiBase()}${path}`);
@@ -67,8 +67,9 @@ export async function getCachedCryptoCorrelation(): Promise<CryptoCorrelationRes
 
 /** 解析登录用户在 /dashboard 无 id 时的默认组合 id(服务端重定向用)。
  *
- * 逻辑与客户端 DashboardClient 的自动选择一致: 取用户自建(非 demo)组合中排序第一的。
- * 无 session / 无自建组合 / 接口失败时返回 null, 由调用方回退到 demo。
+ * 管理员(claims.role=admin) → 第一个公共案例(demo);
+ * 普通用户 → 第一个自建(非 demo)组合, 无自建则回退第一个 demo;
+ * 无 session / 接口失败时返回 null, 由调用方回退到 demo。
  * 注意: 不加 "use cache"(结果随用户而异, 且依赖 httpOnly cookie)。
  */
 export async function resolveDefaultPortfolioId(): Promise<number | null> {
@@ -81,8 +82,15 @@ export async function resolveDefaultPortfolioId(): Promise<number | null> {
     });
     if (!res.ok) return null;
     const data = (await res.json()) as { portfolios?: Array<{ portfolio_id: number; is_demo: boolean }> };
-    const firstOwn = (data.portfolios || []).find((p) => !p.is_demo);
-    return firstOwn ? firstOwn.portfolio_id : null;
+    const list = data?.portfolios ?? [];
+    const claims = await readSessionClaims();
+    const firstDemo = list.find((p) => p.is_demo);
+    if (claims?.role === "admin") {
+      return firstDemo ? firstDemo.portfolio_id : null; // 管理员默认公共案例第一
+    }
+    const firstOwn = list.find((p) => !p.is_demo);
+    if (firstOwn) return firstOwn.portfolio_id;
+    return firstDemo ? firstDemo.portfolio_id : null;
   } catch {
     return null;
   }

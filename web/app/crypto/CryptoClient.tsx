@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EChart } from "@/components/EChart";
+import { getChartTheme, withAlpha } from "@/lib/chart-theme";
 
 import type {
   CryptoCorrelationResponse as CorrelationResponse,
@@ -39,20 +40,6 @@ const LAG_OPTIONS = [
   { value: "9M", label: "9 个月" },
   { value: "12M", label: "12 个月" },
 ] as const;
-
-const CORR_COLORS_LIGHT: Record<string, string> = {
-  comex_gold: "#D97706",
-  au0_gold: "#F59E0B",
-  sp500: "#3B82F6",
-  nasdaq: "#10B981",
-};
-
-const CORR_COLORS_DARK: Record<string, string> = {
-  comex_gold: "#F59E0B",
-  au0_gold: "#FBBF24",
-  sp500: "#6C8EEF",
-  nasdaq: "#34D399",
-};
 
 const CHART1_DEFAULT_ACTIVE = new Set(["COMEX黄金", "纳斯达克100", "BTC 价格 (USD)"]);
 
@@ -106,12 +93,20 @@ export function CryptoClient({ data: initialData }: { data: CorrelationResponse 
   const [lagHorizon, setLagHorizon] = useState("3M");
 
   // --- Theme colors ---
-  const cardBg = isDark ? "rgba(22,22,22,0.9)" : "#fff";
-  const fg = isDark ? "#EDEDED" : "#171717";
-  const textCol = isDark ? "#A1A1A1" : "#666";
-  const axisLineCol = isDark ? "#333" : "#ddd";
-  const splitLineCol = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)";
-  const corrColors = isDark ? CORR_COLORS_DARK : CORR_COLORS_LIGHT;
+  const theme = getChartTheme(isDark);
+  const cardBg = theme.tooltipBg;
+  const fg = theme.text;
+  const textCol = theme.subtext;
+  const axisLineCol = theme.axisLine;
+  const splitLineCol = theme.splitLine;
+  // 主题只有单一 gold 槽: comex 用 gold, au0(沪金) 用同为琥珀色系的 crypto.btc 槽;
+  // BTC 价格线保持 palette[0] 蓝 (与既有视觉一致, 避免与 au0 撞色)。
+  const corrColors: Record<string, string> = {
+    comex_gold: theme.crypto.gold,
+    au0_gold: theme.crypto.btc,
+    sp500: theme.crypto.sp500,
+    nasdaq: theme.crypto.nasdaq,
+  };
 
   const currentRolling = useMemo(() => {
     if (!data) return null;
@@ -144,12 +139,13 @@ export function CryptoClient({ data: initialData }: { data: CorrelationResponse 
     const series: any[] = [];
     const legendData: string[] = [];
     const legendSelected: Record<string, boolean> = {};
-    const btcAreaColor = isDark ? "#6C8EEF" : "#3B82F6";
+    const btcAreaColor = theme.palette[0];
+    const btcFillColor = theme.fills.primaryFaint;
 
     // 相关性线 (左轴)
     for (const [key, pair] of pairs) {
       if (!pair.correlation?.length) continue;
-      const color = corrColors[key] ?? (isDark ? "#888" : "#666");
+      const color = corrColors[key] ?? theme.subtext;
       // dates 已全部对齐到 NYSE 日历, 直接用
       series.push({
         name: pair.label,
@@ -174,7 +170,7 @@ export function CryptoClient({ data: initialData }: { data: CorrelationResponse 
           color: {
             type: "linear", x: 0, y: 0, x2: 0, y2: 1,
             colorStops: [
-              { offset: 0, color: isDark ? "rgba(108,142,239,0.15)" : "rgba(59,130,246,0.12)" },
+              { offset: 0, color: btcFillColor },
               { offset: 1, color: "rgba(255,255,255,0)" },
             ],
           },
@@ -189,7 +185,7 @@ export function CryptoClient({ data: initialData }: { data: CorrelationResponse 
       backgroundColor: "transparent",
       tooltip: {
         trigger: "axis", backgroundColor: cardBg,
-        borderColor: isDark ? "#333" : "#e5e5e5",
+        borderColor: theme.tooltipBorder,
         textStyle: { color: fg, fontSize: 12 },
         formatter: (params: any) => {
           if (!Array.isArray(params)) return "";
@@ -244,14 +240,14 @@ export function CryptoClient({ data: initialData }: { data: CorrelationResponse 
   const chart2Option = useMemo(() => {
     if (!shiftedPrices || !shiftedPrices.dates.length) return {};
 
-    const btcColor = isDark ? "#6C8EEF" : "#3B82F6";
-    const dxyColor = isDark ? "#F59E0B" : "#D97706";
+    const btcColor = theme.palette[0];
+    const dxyColor = theme.crypto.dxy;
 
     return {
       backgroundColor: "transparent",
       tooltip: {
         trigger: "axis", backgroundColor: cardBg,
-        borderColor: isDark ? "#333" : "#e5e5e5",
+        borderColor: theme.tooltipBorder,
         textStyle: { color: fg, fontSize: 12 },
         formatter: (params: any) => {
           if (!Array.isArray(params)) return "";
@@ -305,8 +301,8 @@ export function CryptoClient({ data: initialData }: { data: CorrelationResponse 
             color: {
               type: "linear", x: 0, y: 0, x2: 0, y2: 1,
               colorStops: [
-                { offset: 0, color: isDark ? "rgba(108,142,239,0.15)" : "rgba(59,130,246,0.12)" },
-                { offset: 1, color: "rgba(255,255,255,0)" },
+                { offset: 0, color: theme.fills.primaryFaint },
+                { offset: 1, color: withAlpha(btcColor, 0) },
               ],
             },
           },

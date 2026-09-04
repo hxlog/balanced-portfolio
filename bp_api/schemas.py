@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -59,6 +60,19 @@ class PortfolioPayloadBase(BaseModel):
             raise ValueError("单资产最大权重须在 (0, 1] 之间")
         return v
 
+    @field_validator(
+        "max_weight", "rebalance_band", "risk_free_rate",
+        "fee_rate", "slippage_rate", "stamp_duty_rate",
+    )
+    @classmethod
+    def _round4(cls, v: Optional[float]) -> Optional[float]:
+        """数值统一 round4, 与 repositories._r4(Decimal HALF_UP, PG numeric round)同口径,
+        拦截前端 toFixed/百分号换算的浮点 epsilon(如 0.07000000000000001)。"""
+        if v is None:
+            return None
+        d = Decimal(str(float(v))).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+        return float(d)
+
     @field_validator("risk_free_rate")
     @classmethod
     def _risk_free_default(cls, v: Optional[float]) -> Optional[float]:
@@ -95,6 +109,8 @@ class ChangePasswordIn(BaseModel):
 class CreateUserIn(BaseModel):
     email: str
     password: str
+    portfolio_limit: Optional[int] = Field(default=3, ge=0)  # null = 无限
+    can_manage_assets: bool = False
 
 
 class UpdateUserIn(BaseModel):
@@ -105,11 +121,6 @@ class UpdateUserIn(BaseModel):
 
 class SetDemoIn(BaseModel):
     is_demo: bool
-
-
-class PortfolioMetaIn(BaseModel):
-    name: str
-    description: str
 
 
 class CopyPortfolioIn(BaseModel):

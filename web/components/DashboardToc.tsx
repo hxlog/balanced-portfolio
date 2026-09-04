@@ -40,7 +40,7 @@ export function DashboardToc({ items }: { items: TocItem[] }) {
   return (
     <nav
       aria-label="目录"
-      className="hidden xl:block sticky top-24 self-start w-56 shrink-0 text-sm"
+      className="hidden lg:block sticky top-24 self-start w-44 shrink-0 text-sm"
     >
       <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2 px-2">
         本页目录
@@ -53,10 +53,10 @@ export function DashboardToc({ items }: { items: TocItem[] }) {
               <button
                 type="button"
                 onClick={() => jump(it.id)}
-                className={`w-full text-left py-1.5 px-3 -ml-px border-l-2 transition-colors ${
+                className={`w-full text-left text-[13px] leading-6 py-1 px-3 rounded-md cursor-pointer transition-colors ${
                   isActive
-                    ? "border-primary text-primary font-medium"
-                    : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
+                    ? "text-primary font-medium"
+                    : "text-muted-foreground hover:text-foreground hover:bg-accent/60"
                 }`}
               >
                 {it.label}

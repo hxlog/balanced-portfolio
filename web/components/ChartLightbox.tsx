@@ -5,6 +5,7 @@ import { Maximize2, X } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
 import { EChart } from "@/components/EChart";
+import { getChartTheme } from "@/lib/chart-theme";
 
 /**
  * 图表放大灯箱: 点击「放大」将绑定图表以近乎全屏的浮层展示(类似图片灯箱),
@@ -30,6 +31,7 @@ export function ChartLightbox({
   const [open, setOpen] = useState(false);
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
+  const theme = getChartTheme(isDark);
 
   return (
     <>
@@ -66,7 +68,7 @@ export function ChartLightbox({
             }`}
           >
             <div className="min-w-0">
-              <h2 className={`text-sm font-medium truncate ${isDark ? "text-white" : "text-slate-800"}`}>
+              <h2 className="text-sm font-medium truncate" style={{ color: theme.text }}>
                 {title}
               </h2>
               {description && (
@@ -96,9 +98,8 @@ export function ChartLightbox({
           </div>
           <div className="flex-1 min-h-0 overflow-auto p-4 sm:p-6">
             <div
-              className={`rounded-xl p-4 min-w-[720px] ${
-                isDark ? "bg-[#161616]" : "bg-white"
-              }`}
+              className="rounded-xl p-4 min-w-[720px]"
+              style={{ backgroundColor: theme.tooltipBg }}
             >
               <EChart
                 option={option}

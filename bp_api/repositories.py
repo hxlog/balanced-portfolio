@@ -11,6 +11,8 @@ import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+from decimal import Decimal, ROUND_HALF_UP
+from types import SimpleNamespace
 from typing import Optional
 
 import pandas as pd
@@ -145,12 +147,68 @@ BENCHMARKS: dict[str, dict] = {
         "legs": [(0.6, "10Y", "bond_csi_treasury"), (0.4, "000300", "cn_index_em")],
         "note": "60% 中债国债财富指数(总收益,含票息再投资) + 40% 沪深300(价格指数,不含派息); 混合口径。",
     },
+    "sp500_etf": {
+        "name": "标普500ETF", "kind": "total_return",
+        "legs": [(1.0, "513500", "etf_em")],
+        "note": "人民币计价 QDII（博时513500），后复权含分红拆分，可与组合人民币收益直接比较；含汇率波动与场内折溢价噪声。",
+    },
+    "ndx100_etf": {
+        "name": "纳斯达克100ETF", "kind": "total_return",
+        "legs": [(1.0, "513100", "etf_em")],
+        "note": "人民币计价 QDII（国泰513100，跟踪纳斯达克100），后复权；含汇率波动与场内折溢价噪声。",
+    },
+    "n225_etf": {
+        "name": "日经225ETF", "kind": "total_return",
+        "legs": [(1.0, "513520", "etf_em")],
+        "note": "人民币计价 QDII（华夏513520），后复权；2019-06-25 上市，早于该日的回测不显示此基准；含汇率波动与场内折溢价噪声。",
+    },
 }
 DEFAULT_BENCHMARK_KEY = "bond6040"
 
 
 def asset_key(symbol: str, source: str) -> str:
     return f"{symbol}@{source}"
+
+
+def _r4(x):
+    """数值统一 round4 口径, 与迁移 39 回填(PG numeric round, half-away-from-zero)一致,
+    避免假阳性 stale。注意 Python 内建 round 是银行家舍入且受浮点表示影响:
+    round(0.00015, 4)=0.0001 而 PG round(0.00015::numeric,4)=0.0002。"""
+    if x is None:
+        return None
+    d = Decimal(str(float(x))).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+    return float(d)
+
+
+def canonical_params(pdef) -> dict:
+    """规范化回测参数快照, 用于对比 last_run_params 判定 stale。"""
+    return {
+        "method": pdef.method,
+        "ratio": pdef.ratio,
+        "lookback_days": int(pdef.lookback_days) if pdef.lookback_days is not None else None,
+        "start_date": pdef.start_date.isoformat() if pdef.start_date else None,
+        "benchmark_key": _resolve_benchmark_key(pdef.benchmark_key),
+        "max_weight": _r4(pdef.max_weight),
+        "rebalance_band": _r4(pdef.rebalance_band),
+        "risk_free_rate": _r4(pdef.risk_free_rate),
+        "fee_rate": _r4(pdef.fee_rate),
+        "slippage_rate": _r4(pdef.slippage_rate),
+        "stamp_duty_rate": _r4(pdef.stamp_duty_rate),
+        "assets": sorted([a["symbol"], a["source"], a["quadrant"]] for a in pdef.assets),
+    }
+
+
+def is_params_stale(current: dict, snapshot) -> bool:
+    """snapshot 为 None/空(从未回测或历史数据)视为 stale。
+
+    兼容迁移 39 回填快照的 assets 排序: PG ORDER BY 受 collation 影响
+    ('0-10Y' 与 '000688' 次序不同于 Python 码点排序), 快照侧重排后比较。"""
+    if not snapshot:
+        return True
+    snap = dict(snapshot)
+    if isinstance(snap.get("assets"), list):
+        snap["assets"] = sorted(snap["assets"])
+    return current != snap
 
 
 def _unique_asset_pairs(assets: list[dict]) -> list[tuple[str, str]]:
@@ -249,6 +307,29 @@ def _load_series(conn: psycopg.Connection, symbol: str, source: str) -> pd.Serie
     return pd.Series(vals, index=idx, name=asset_key(symbol, source))
 
 
+def _compose_benchmark_series(
+    legs: list[tuple[float, str, str]],
+    loader,  # callable(symbol, source) -> pd.Series(close)
+) -> pd.Series:
+    """多腿按日再平衡合成基准净值(起点=1.0)。任一腿无数据返回空序列。"""
+    series: list[tuple[float, pd.Series]] = []
+    for w, sym, src in legs:
+        s = loader(sym, src)
+        if s.empty:
+            return pd.Series(dtype=float)
+        series.append((w, s))
+    idx = series[0][1].index
+    for _, s in series[1:]:
+        idx = idx.intersection(s.index)
+    total = pd.Series(0.0, index=idx)
+    for w, s in series:
+        # ffill(左锚): interp 行的 NaN 由前值填充 → 缺口日收益=0、复牌日收益=真实缺口收益,
+        # 与回测引擎对基准的 ffill 口径一致; 不用 bfill 以免引入右锚(未来)。
+        total = total.add(s.reindex(idx).ffill().pct_change().fillna(0.0) * w, fill_value=0.0)
+    total.iloc[0] = 0.0
+    return (1.0 + total).cumprod()
+
+
 def load_price_panel(
     conn: psycopg.Connection, pairs: list[tuple[str, str]]
 ) -> pd.DataFrame:
@@ -303,6 +384,8 @@ class PortfolioDef:
     result_version: int
     data_as_of_date: Optional[date]
     assets: list[dict]  # {symbol, source, quadrant, display_name}
+    # 39: 最后一次成功回测时的参数快照(canonical_params 输出), None/空=从未回测
+    last_run_params: Optional[dict] = None
 
 
 def _read_def(conn: psycopg.Connection, pid: int) -> PortfolioDef:
@@ -311,7 +394,7 @@ def _read_def(conn: psycopg.Connection, pid: int) -> PortfolioDef:
             """SELECT portfolio_id, name, description, method, ratio, lookback_days, start_date,
                       benchmark_key, max_weight, rebalance_band, is_demo,
                       owner_user_id, risk_free_rate, fee_rate, slippage_rate, stamp_duty_rate,
-                      result_version, data_as_of_date
+                      result_version, data_as_of_date, last_run_params
                FROM bp_portfolio WHERE portfolio_id = %s""",
             (pid,),
         )
@@ -341,7 +424,13 @@ def _read_def(conn: psycopg.Connection, pid: int) -> PortfolioDef:
         result_version=int(r[16] or 1),
         data_as_of_date=r[17],
         assets=assets,
+        last_run_params=r[18] or None,
     )
+
+
+def read_def(conn: psycopg.Connection, pid: int) -> PortfolioDef:
+    """_read_def 公共别名(编辑免重算流程使用)。"""
+    return _read_def(conn, pid)
 
 
 def _resolve_benchmark_key(key: str) -> str:
@@ -383,23 +472,6 @@ def create_portfolio(conn: psycopg.Connection, data: CreatePortfolioIn, owner_us
     return pid
 
 
-def update_portfolio_meta(
-    conn: psycopg.Connection, pid: int, name: str, description: str,
-    updater_user_id: Optional[int] = None,
-) -> None:
-    """仅更新名称/描述, 不改动 assets/status, 不触发回测。"""
-    with conn.cursor() as cur:
-        cur.execute(
-            """UPDATE bp_portfolio SET
-                 name=%s, description=%s,
-                 updated_by=COALESCE(%s, updated_by), updated_at=now()
-               WHERE portfolio_id=%s""",
-            (name, description, updater_user_id, pid),
-        )
-        if cur.rowcount == 0:
-            raise KeyError(f"组合不存在: {pid}")
-
-
 def update_portfolio(
     conn: psycopg.Connection, pid: int, data: UpdatePortfolioIn, updater_user_id: Optional[int] = None
 ) -> None:
@@ -424,6 +496,79 @@ def update_portfolio(
         _insert_portfolio_assets(cur, pid, data.assets)
 
 
+META_ONLY_FIELDS = {"name", "description"}
+
+
+def diff_payload(pdef, payload) -> set[str]:
+    """对比当前定义与提交 payload, 返回变化字段名集合(含 name/description/assets)。
+
+    数值字段走 _r4 归一后比较(与 canonical_params 同口径),
+    浮点 epsilon(前端 toFixed 产物如 0.07000000000000001)不产生假阳性。"""
+    new = {
+        "method": payload.method,
+        "ratio": payload.ratio,
+        "lookback_days": int(payload.lookback_days) if payload.lookback_days is not None else None,
+        "start_date": payload.start_date.isoformat() if payload.start_date else None,
+        "benchmark_key": _resolve_benchmark_key(payload.benchmark_key),
+        "max_weight": _r4(payload.max_weight),
+        "rebalance_band": _r4(payload.rebalance_band),
+        "risk_free_rate": _r4(payload.risk_free_rate),
+        "fee_rate": _r4(payload.fee_rate),
+        "slippage_rate": _r4(payload.slippage_rate),
+        "stamp_duty_rate": _r4(payload.stamp_duty_rate),
+        "assets": sorted([a.symbol, a.source, a.quadrant] for a in payload.assets),
+    }
+    current = canonical_params(pdef)
+    changed = {k for k in new if current[k] != new[k]}
+    if payload.name != (pdef.name or ""):
+        changed.add("name")
+    if (payload.description or "") != (pdef.description or ""):
+        changed.add("description")
+    return changed
+
+
+def update_portfolio_def_only(
+    conn: psycopg.Connection, pid: int, payload, updater_user_id: Optional[int] = None,
+) -> None:
+    """只更新组合定义与资产, 不改 status、不触发回测。列集与 update_portfolio 对齐
+    (updated_by 同 COALESCE 审计口径, user_id 缺省时保留原值)。"""
+    with conn.cursor() as cur:
+        cur.execute(
+            """UPDATE bp_portfolio
+               SET name=%s, description=%s, method=%s, ratio=%s, lookback_days=%s,
+                   start_date=%s, benchmark_key=%s, max_weight=%s, rebalance_band=%s,
+                   risk_free_rate=%s, fee_rate=%s, slippage_rate=%s, stamp_duty_rate=%s,
+                   updated_by=COALESCE(%s, updated_by), updated_at=now()
+               WHERE portfolio_id=%s""",
+            (payload.name, payload.description, payload.method, payload.ratio,
+             payload.lookback_days, payload.start_date,
+             _resolve_benchmark_key(payload.benchmark_key),
+             payload.max_weight, payload.rebalance_band, payload.risk_free_rate,
+             payload.fee_rate, payload.slippage_rate, payload.stamp_duty_rate,
+             updater_user_id, pid),
+        )
+        cur.execute("DELETE FROM bp_portfolio_asset WHERE portfolio_id=%s", (pid,))
+        _insert_portfolio_assets(cur, pid, payload.assets)
+
+
+def is_portfolio_stale(conn: psycopg.Connection, pid: int) -> bool:
+    pdef = _read_def(conn, pid)
+    return is_params_stale(canonical_params(pdef), pdef.last_run_params)
+
+
+def list_recomputable_portfolio_ids(conn: psycopg.Connection) -> list[int]:
+    """非 running 且有资产的组合(含 demo), 按 id 升序。供 recompute-all 强制重算。"""
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT p.portfolio_id FROM bp_portfolio p
+               WHERE p.status <> 'running'
+                 AND EXISTS (SELECT 1 FROM bp_portfolio_asset a
+                             WHERE a.portfolio_id = p.portfolio_id)
+               ORDER BY p.portfolio_id"""
+        )
+        return [r[0] for r in cur.fetchall()]
+
+
 def list_portfolios(conn: psycopg.Connection, user_id: Optional[int] = None, is_admin: bool = False) -> list[dict]:
     # demo 按全局 display_order 排序(管理员调整, 访客/用户均生效);
     # 自建组合按当前用户 bp_user_portfolio_order 排序, 未排序的按 portfolio_id 降序兜底。
@@ -432,9 +577,17 @@ def list_portfolios(conn: psycopg.Connection, user_id: Optional[int] = None, is_
         "CASE WHEN p.is_demo THEN p.display_order ELSE NULL END ASC NULLS LAST, "
         "COALESCE(o.display_order, 2147483647) ASC, p.portfolio_id DESC"
     )
+    # params_stale 判定所需列: canonical_params 的全部键 + last_run_params 快照。
+    # 资产三元组用聚合子查询一次取齐(与迁移 39 回填口径一致), 避免 N+1。
     cols = (
         "p.portfolio_id, p.name, p.method, p.ratio, p.start_date, "
-        "p.effective_start_date, p.is_demo, p.status, p.owner_user_id"
+        "p.effective_start_date, p.is_demo, p.status, p.owner_user_id, "
+        "p.lookback_days, p.benchmark_key, p.max_weight, p.rebalance_band, "
+        "p.risk_free_rate, p.fee_rate, p.slippage_rate, p.stamp_duty_rate, "
+        "p.last_run_params, "
+        "(SELECT coalesce(jsonb_agg(jsonb_build_array(a.symbol, a.source, a.quadrant) "
+        "ORDER BY a.symbol, a.source, a.quadrant), '[]'::jsonb) "
+        "FROM bp_portfolio_asset a WHERE a.portfolio_id = p.portfolio_id) AS assets"
     )
     with conn.cursor() as cur:
         if is_admin:
@@ -457,19 +610,41 @@ def list_portfolios(conn: psycopg.Connection, user_id: Optional[int] = None, is_
                 (user_id, user_id),
             )
         else:
+            # 匿名: 仅 demo, 无个人排序表, 资产子查询直接锚定主表 portfolio_id
             cur.execute(
                 """SELECT portfolio_id, name, method, ratio, start_date,
-                          effective_start_date, is_demo, status, owner_user_id
+                          effective_start_date, is_demo, status, owner_user_id,
+                          lookback_days, benchmark_key, max_weight, rebalance_band,
+                          risk_free_rate, fee_rate, slippage_rate, stamp_duty_rate,
+                          last_run_params,
+                          (SELECT coalesce(jsonb_agg(jsonb_build_array(a.symbol, a.source, a.quadrant)
+                                                    ORDER BY a.symbol, a.source, a.quadrant), '[]'::jsonb)
+                           FROM bp_portfolio_asset a
+                           WHERE a.portfolio_id = bp_portfolio.portfolio_id) AS assets
                    FROM bp_portfolio
                    WHERE is_demo = TRUE
                    ORDER BY display_order NULLS LAST, portfolio_id DESC"""
             )
-        return [
-            {"portfolio_id": r[0], "name": r[1], "method": r[2], "ratio": r[3],
-             "start_date": r[4], "effective_start_date": r[5], "is_demo": r[6],
-             "status": r[7], "owner_user_id": r[8]}
-            for r in cur.fetchall()
-        ]
+        out = []
+        for r in cur.fetchall():
+            # 与 canonical_params 键集完全同构地组装后复用同一函数, 保证 stale 判定口径一致。
+            # assets 聚合子查询输出三元组数组, 转 dict 以对齐 pdef.assets 形态。
+            current_canonical = canonical_params(SimpleNamespace(
+                method=r[2], ratio=r[3], lookback_days=r[9],
+                start_date=r[4], benchmark_key=r[10],
+                max_weight=r[11], rebalance_band=r[12],
+                risk_free_rate=r[13], fee_rate=r[14],
+                slippage_rate=r[15], stamp_duty_rate=r[16],
+                assets=[{"symbol": t[0], "source": t[1], "quadrant": t[2]}
+                        for t in (r[18] or [])],
+            ))
+            out.append({
+                "portfolio_id": r[0], "name": r[1], "method": r[2], "ratio": r[3],
+                "start_date": r[4], "effective_start_date": r[5], "is_demo": r[6],
+                "status": r[7], "owner_user_id": r[8],
+                "params_stale": is_params_stale(current_canonical, r[17]),
+            })
+        return out
 
 
 def reorder_portfolios(
@@ -567,9 +742,11 @@ def run_and_save(
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE bp_portfolio SET status='done', error=NULL, effective_start_date=%s, "
-                "result_version=result_version+1, result_updated_at=now(), data_as_of_date=%s "
+                "result_version=result_version+1, result_updated_at=now(), data_as_of_date=%s, "
+                "last_run_params=%s "
                 "WHERE portfolio_id=%s",
-                (eff, dates[-1] if dates else eff, pid),
+                (eff, dates[-1] if dates else eff,
+                 Json(_json_safe(canonical_params(pdef))), pid),
             )
             cur.execute(
                 """INSERT INTO bp_portfolio_update_state
@@ -610,10 +787,10 @@ def _compute(
     keys = [asset_key(s, src) for s, src in pairs]
     prices = panel[keys]
 
-    # 回测内部基准使用组合配置的基准(不再硬编码沪深300)
+    # 回测内部基准 = 注册表全腿合成(多腿按日再平衡), 与展示/归因口径一致
     bkey = _resolve_benchmark_key(pdef.benchmark_key)
-    leg = BENCHMARKS[bkey]["legs"][0]
-    bench = _load_series(conn, leg[1], leg[2])
+    bench = _compose_benchmark_series(
+        BENCHMARKS[bkey]["legs"], lambda sym, src: _load_series(conn, sym, src))
     if bench.empty:
         raise ValueError(f"配置基准 {BENCHMARKS[bkey]['name']} 无清洗数据")
 
@@ -957,6 +1134,7 @@ def get_portfolio_dict(conn: psycopg.Connection, pid: int) -> dict:
         "result_version": pdef.result_version, "result_updated_at": result_updated_at,
         "data_as_of_date": pdef.data_as_of_date,
         "status": status, "error": error, "assets": pdef.assets,
+        "params_stale": is_params_stale(canonical_params(pdef), pdef.last_run_params),
     }
 
 
@@ -999,12 +1177,16 @@ def count_user_portfolios(conn: psycopg.Connection, user_id: int) -> int:
 
 
 def get_user_portfolio_limit(conn: psycopg.Connection, user_id: int) -> Optional[int]:
+    """None = 无限(admin 或显式无限); int = 上限。"""
     with conn.cursor() as cur:
         cur.execute("SELECT role, portfolio_limit FROM bp_user WHERE user_id=%s", (user_id,))
         row = cur.fetchone()
-    if not row or row[0] == "admin":
+    if not row:
+        return 3
+    role, limit = row
+    if role == "admin":
         return None
-    return int(row[1] if row[1] is not None else 3)
+    return limit
 
 
 def copy_portfolio(

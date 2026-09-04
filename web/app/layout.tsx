@@ -6,6 +6,7 @@ import { Providers } from "./providers";
 import { AuthProvider } from "@/lib/auth";
 import { Navbar } from "@/components/Navbar";
 import { BackToTop } from "@/components/BackToTop";
+import { Toaster } from "@/components/ui/sonner";
 
 const SITE_URL = process.env.BP_SITE_URL || "http://localhost:3000";
 const SITE_NAME = "Balanced Portfolio";
@@ -94,6 +95,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Navbar />
               <main className="flex-1 flex flex-col min-w-0">{children}</main>
               <BackToTop />
+              <Toaster />
             </AuthProvider>
           </Suspense>
           <footer className="border-t border-border py-8 text-center text-sm text-muted-foreground mt-auto">

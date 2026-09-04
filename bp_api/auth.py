@@ -320,7 +320,12 @@ def list_users() -> list[dict]:
     ]
 
 
-def create_user(email: str, password: str) -> None:
+def create_user(
+    email: str,
+    password: str,
+    portfolio_limit: Optional[int] = 3,
+    can_manage_assets: bool = False,
+) -> None:
     email = email.strip().lower()
     if not email or not password:
         raise HTTPException(400, "邮箱与密码不能为空")
@@ -330,9 +335,9 @@ def create_user(email: str, password: str) -> None:
         with conn.cursor() as cur:
             if _has_bp_user(conn):
                 cur.execute(
-                    """INSERT INTO bp_user (email, password_hash, role, status)
-                       VALUES (%s,%s,'user','active')""",
-                    (email, hash_password(password)),
+                    """INSERT INTO bp_user (email, password_hash, role, status, portfolio_limit, can_manage_assets)
+                       VALUES (%s,%s,'user','active',%s,%s)""",
+                    (email, hash_password(password), portfolio_limit, can_manage_assets),
                 )
             cur.execute(
                 "INSERT INTO bp_admin_user (email, password_hash) VALUES (%s, %s) ON CONFLICT DO NOTHING",
@@ -341,16 +346,24 @@ def create_user(email: str, password: str) -> None:
         conn.commit()
 
 
+# 哨兵: update_user 参数未传(不改)与显式 None(写入 NULL)的区分
+_UNSET = object()
+
+
 def update_user(
     email: str,
-    portfolio_limit: Optional[int] = None,
+    portfolio_limit: Optional[int] | object = _UNSET,
     status: Optional[str] = None,
     can_manage_assets: Optional[bool] = None,
 ) -> dict:
     email = email.strip().lower()
     if is_super_admin(email):
         raise HTTPException(400, "不能修改超级管理员限制")
-    if portfolio_limit is None and status is None and can_manage_assets is None:
+    if (
+        portfolio_limit is _UNSET
+        and status is None
+        and can_manage_assets is None
+    ):
         raise HTTPException(400, "未提供可更新字段")
     with db.get_conn() as conn:
         if not _has_bp_user(conn):
@@ -360,16 +373,18 @@ def update_user(
             row = cur.fetchone()
             if row is None:
                 raise HTTPException(404, "用户不存在")
-            current_limit = int(row[0])
-            if portfolio_limit is not None:
-                if portfolio_limit < 0:
+            current_limit = None if row[0] is None else int(row[0])
+            if portfolio_limit is not _UNSET:
+                # 显式 None = 无限(NULL); 数值 = 上限
+                if portfolio_limit is not None and portfolio_limit < 0:
                     raise HTTPException(400, "组合上限不能为负数")
                 cur.execute(
                     """UPDATE bp_user SET portfolio_limit=%s WHERE email=%s
                        RETURNING portfolio_limit""",
                     (portfolio_limit, email),
                 )
-                current_limit = int(cur.fetchone()[0])
+                new_limit = cur.fetchone()[0]
+                current_limit = None if new_limit is None else int(new_limit)
             if status is not None:
                 if status not in ("active", "disabled"):
                     raise HTTPException(400, "用户状态非法")
@@ -380,7 +395,12 @@ def update_user(
                     (can_manage_assets, email),
                 )
         conn.commit()
-    return {"email": email, "portfolio_limit": current_limit, "can_manage_assets": can_manage_assets}
+    return {
+        "email": email,
+        "portfolio_limit": current_limit,
+        # 未传时保持库中现值语义: None=无限
+        "can_manage_assets": can_manage_assets,
+    }
 
 
 def delete_user(email: str, actor_email: str) -> None:

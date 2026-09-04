@@ -26,11 +26,13 @@ const NAV_LINKS = [
 ] as const;
 
 function navLinkClass(pathname: string, href: string) {
-  return pathname === href
+  const active =
+    pathname === href
     || (href === "/dashboard" && pathname.startsWith("/dashboard"))
-    || (href === "/otc-derivatives-pricing" && (pathname === "/otc-derivatives-pricing" || pathname === "/otc-pricing"))
-    ? "text-foreground"
-    : "text-muted-foreground hover:text-foreground";
+    || (href === "/otc-derivatives-pricing" && (pathname === "/otc-derivatives-pricing" || pathname === "/otc-pricing"));
+  return active
+    ? "bg-accent text-foreground"
+    : "text-muted-foreground hover:text-foreground hover:bg-accent/60";
 }
 
 export function Navbar() {
@@ -65,7 +67,7 @@ export function Navbar() {
       <Setup2faDialog open onOpenChange={() => {}} onDone={refresh} forced />
     )}
     <header className="sticky top-0 z-50 w-full border-b border-border bg-background/80 backdrop-blur-md">
-      <div className="container mx-auto max-w-7xl xl:px-0 lg:px-0 md:px-4 sm:px-6 flex h-14 sm:h-16 items-center justify-between gap-3">
+      <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 flex h-14 sm:h-16 items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
           <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
             <SheetTrigger asChild>
@@ -82,7 +84,7 @@ export function Navbar() {
               <SheetHeader className="border-b border-border px-5 py-4 text-left">
                 <SheetTitle className="text-base font-semibold tracking-tight">Balanced Portfolio</SheetTitle>
               </SheetHeader>
-              <nav className="flex flex-col px-3 py-3 gap-0.5">
+              <nav className="flex flex-col p-3 gap-1">
                 {links.map(({ href, label }) => (
                   <SheetClose asChild key={href}>
                     <Link
@@ -102,12 +104,12 @@ export function Navbar() {
             <span className="hidden sm:inline whitespace-nowrap">Balanced Portfolio</span>
           </Link>
 
-          <nav className="hidden md:flex items-center gap-6 text-sm font-medium ml-4">
+          <nav className="hidden md:flex items-center gap-1 text-sm font-medium ml-4">
             {links.map(({ href, label }) => (
               <Link
                 key={href}
                 href={href}
-                className={`transition-colors ${navLinkClass(pathname, href)}`}
+                className={`rounded-md px-3 py-1.5 transition-colors ${navLinkClass(pathname, href)}`}
               >
                 {label}
               </Link>

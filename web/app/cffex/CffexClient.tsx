@@ -19,6 +19,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { EChart } from "@/components/EChart";
+import { getChartTheme } from "@/lib/chart-theme";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -230,18 +231,14 @@ export function CffexClient() {
   };
 
   // --- ECharts theme colors ---
-  const cardBg = isDark ? "rgba(22,22,22,0.9)" : "#fff";
-  const fg = isDark ? "#EDEDED" : "#171717";
-  const textCol = isDark ? "#A1A1A1" : "#666";
-  const axisLineCol = isDark ? "#333" : "#ddd";
-  const splitLineCol = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)";
+  const theme = getChartTheme(isDark);
+  const cardBg = theme.tooltipBg;
+  const fg = theme.text;
+  const textCol = theme.subtext;
+  const axisLineCol = theme.axisLine;
+  const splitLineCol = theme.splitLine;
 
-  const chartColors: Record<string, string> = {
-    IF: isDark ? "#6C8EEF" : "#3B82F6",
-    IH: isDark ? "#F59E0B" : "#D97706",
-    IC: isDark ? "#EF4444" : "#E5484D",
-    IM: isDark ? "#10B981" : "#059669",
-  };
+  const chartColors: Record<string, string> = theme.cffex;
 
   // --- Chart option ---
   const chartOption = useMemo(() => {
@@ -273,7 +270,7 @@ export function CffexClient() {
         smooth: true,
         yAxisIndex: 1,
         symbol: "none",
-        lineStyle: { width: 1, type: "dashed", color: isDark ? "#888" : "#999" },
+        lineStyle: { width: 1, type: "dashed", color: theme.subtext },
         data: historyData.series[idxVar]?.index_prices ?? [],
       });
     }
@@ -288,7 +285,7 @@ export function CffexClient() {
       tooltip: {
         trigger: "axis",
         backgroundColor: cardBg,
-        borderColor: isDark ? "#333" : "#e5e5e5",
+        borderColor: theme.tooltipBorder,
         textStyle: { color: fg, fontSize: 12 },
         formatter: (params: any) => {
           if (!Array.isArray(params)) return "";
@@ -351,7 +348,7 @@ export function CffexClient() {
       ],
       series,
     };
-  }, [historyData, selectedIndices, indexSeries, isDark, cardBg, fg, textCol, axisLineCol, splitLineCol, chartColors]);
+  }, [historyData, selectedIndices, indexSeries, theme, cardBg, fg, textCol, axisLineCol, splitLineCol, chartColors]);
 
   // --- Trading status: 仅展示已确认收盘的同日对齐 data_date ---
   const dataDate = spotData?.data_date
@@ -591,17 +588,17 @@ export function CffexClient() {
                         {c.days_to_expiry} 天
                       </TableCell>
                       <TableCell className="text-right font-mono tabular-nums">
-                        <span className={c.basis != null && c.basis > 0 ? "text-down" : c.basis != null && c.basis < 0 ? "text-up" : ""}>
+                        <span className={c.basis != null && c.basis > 0 ? "text-success" : c.basis != null && c.basis < 0 ? "text-destructive" : ""}>
                           {c.basis != null ? c.basis.toFixed(2) : "--"}
                         </span>
                       </TableCell>
                       <TableCell className="text-right font-mono tabular-nums">
-                        <span className={c.premium_rate != null && c.premium_rate > 0 ? "text-up" : c.premium_rate != null && c.premium_rate < 0 ? "text-down" : ""}>
+                        <span className={c.premium_rate != null && c.premium_rate > 0 ? "text-success" : c.premium_rate != null && c.premium_rate < 0 ? "text-destructive" : ""}>
                           {c.premium_rate != null ? `${c.premium_rate.toFixed(2)}%` : "--"}
                         </span>
                       </TableCell>
                       <TableCell className="text-right font-mono tabular-nums font-semibold">
-                        <span className={c.ann_premium_rate != null && c.ann_premium_rate > 0 ? "text-up" : c.ann_premium_rate != null && c.ann_premium_rate < 0 ? "text-down" : ""}>
+                        <span className={c.ann_premium_rate != null && c.ann_premium_rate > 0 ? "text-success" : c.ann_premium_rate != null && c.ann_premium_rate < 0 ? "text-destructive" : ""}>
                           {c.ann_premium_rate != null ? `${c.ann_premium_rate.toFixed(2)}%` : "--"}
                         </span>
                       </TableCell>
@@ -714,12 +711,12 @@ export function CffexClient() {
                           const isLowPct = normalizedPct < 0.5;
                           return (
                             <span className="inline-flex items-center gap-1.5">
-                              <span className={isLowPct ? "text-down" : "text-up"}>
+                              <span className={isLowPct ? "text-warning" : "text-muted-foreground"}>
                                 {(normalizedPct * 100).toFixed(0)}%
                               </span>
                               <span className="w-12 h-2 rounded-full bg-muted/30 overflow-hidden" dir="ltr">
                                 <span
-                                  className={`block h-full rounded-full ${isLowPct ? "bg-down" : "bg-up"}`}
+                                  className={`block h-full rounded-full ${isLowPct ? "bg-warning" : "bg-muted-foreground"}`}
                                   style={{ width: `${Math.max(2, normalizedPct * 100)}%`, minWidth: 2 }}
                                 />
                               </span>

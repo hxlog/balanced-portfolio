@@ -127,32 +127,32 @@ export default async function Home() {
               </p>
 
               <div className="grid grid-cols-2 gap-px bg-border rounded-xl overflow-hidden shadow-sm">
-                <div className="bg-card p-6 aspect-square flex flex-col justify-between">
-                  <div className="text-sm font-medium text-up">
+                <div className="bg-card p-4 sm:p-6 aspect-square flex flex-col justify-between">
+                  <div className="text-sm font-medium text-warning">
                     过热 (通胀↑ 增长↑)
                   </div>
                   <div className="text-sm text-muted-foreground">
                     国内宽基 / 商品
                   </div>
                 </div>
-                <div className="bg-card p-6 aspect-square flex flex-col justify-between">
-                  <div className="text-sm font-medium text-weak">
+                <div className="bg-card p-4 sm:p-6 aspect-square flex flex-col justify-between">
+                  <div className="text-sm font-medium text-destructive">
                     滞胀 (通胀↑ 增长↓)
                   </div>
                   <div className="text-sm text-muted-foreground">
                     黄金 / 海外宽基
                   </div>
                 </div>
-                <div className="bg-card p-6 aspect-square flex flex-col justify-between">
-                  <div className="text-sm font-medium text-primary">
+                <div className="bg-card p-4 sm:p-6 aspect-square flex flex-col justify-between">
+                  <div className="text-sm font-medium text-success">
                     复苏 (通胀↓ 增长↑)
                   </div>
                   <div className="text-sm text-muted-foreground">
                     红利 / 债券
                   </div>
                 </div>
-                <div className="bg-card p-6 aspect-square flex flex-col justify-between">
-                  <div className="text-sm font-medium text-down">
+                <div className="bg-card p-4 sm:p-6 aspect-square flex flex-col justify-between">
+                  <div className="text-sm font-medium text-weak">
                     衰退 (通胀↓ 增长↓)
                   </div>
                   <div className="text-sm text-muted-foreground">

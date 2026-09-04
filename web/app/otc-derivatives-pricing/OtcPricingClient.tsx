@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTheme } from "next-themes";
+import { toast } from "sonner";
 import {
   Activity, Bookmark, Calculator, HelpCircle, LineChart, Loader2, RefreshCw, Search, Star, Trash2, TrendingUp, Lock,
   Check, ChevronsUpDown, ArrowUpDown, ArrowUp, ArrowDown, CalendarIcon,
@@ -36,6 +37,7 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import { cn } from "@/components/ui/utils";
+import { getChartTheme } from "@/lib/chart-theme";
 
 const INPUT_BG = "bg-background";
 
@@ -106,7 +108,7 @@ function fmtMoney2(x: number | null | undefined): string {
 
 function statusBadgeClass(status: string | null): string {
   switch (status) {
-    case "knocked_out": return "bg-down/10 text-down border-down/20";
+    case "knocked_out": return "bg-destructive/10 text-destructive border-destructive/20";
     case "knocked_in": return "bg-up/10 text-up border-up/20";
     case "expired": return "bg-muted text-muted-foreground border-border";
     default: return "bg-primary/10 text-primary border-primary/20";
@@ -520,13 +522,14 @@ export function OtcPricingClient() {
   }, [loadDeals]);
 
   // -------------------- 图表配色 --------------------
+  const theme = useMemo(() => getChartTheme(isDark), [isDark]);
   const chartColors = useMemo(() => ({
-    text: isDark ? "#A1A1A1" : "#666666",
-    axis: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)",
-    split: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)",
-    cardBg: isDark ? "#161616" : "#ffffff",
-    fg: isDark ? "#EDEDED" : "#171717",
-  }), [isDark]);
+    text: theme.subtext,
+    axis: theme.axisLine,
+    split: theme.splitLine,
+    cardBg: theme.tooltipBg,
+    fg: theme.text,
+  }), [theme]);
 
   // -------------------- 示意图 option --------------------
   const pathOption = useMemo(() => {
@@ -574,7 +577,7 @@ export function OtcPricingClient() {
     if (c.baseline_line?.length) {
       markLineData.push({
         yAxis: c.s0, name: "100%基准",
-        lineStyle: { type: "solid", color: "#94a3b8", width: 1 },
+        lineStyle: { type: "solid", color: theme.otc.neutral, width: 1 },
         label: { ...labelStyle(chartColors.text), formatter: `100% · ${fmtLvlInt(c.s0)}` },
       });
     }
@@ -582,8 +585,8 @@ export function OtcPricingClient() {
     if (c.ki_line != null) {
       markLineData.push({
         yAxis: c.ki_line, name: "敲入线",
-        lineStyle: { type: "dashed", color: "#ef4444", width: 1.5 },
-        label: { ...labelStyle("#ef4444"), formatter: barrierLabel("敲入", c.ki_line) },
+        lineStyle: { type: "dashed", color: theme.otc.ki, width: 1.5 },
+        label: { ...labelStyle(theme.otc.ki), formatter: barrierLabel("敲入", c.ki_line) },
       });
     }
     // 敲出线: 锁定期后水平线段 (观察日之间上穿不算敲出)
@@ -591,9 +594,9 @@ export function OtcPricingClient() {
       markLineData.push([
         {
           coord: [koStart, c.ko_line],
-          lineStyle: { type: "dashed", color: "#10b981", width: 1.5 },
+          lineStyle: { type: "dashed", color: theme.otc.ko, width: 1.5 },
           label: {
-            ...labelStyle("#10b981"),
+            ...labelStyle(theme.otc.ko),
             formatter: barrierLabel("敲出", c.ko_line),
             position: "end",
           },
@@ -611,11 +614,11 @@ export function OtcPricingClient() {
         name: isTerm ? "观察日·敲出" : "月观察日",
         lineStyle: {
           type: "dotted",
-          color: isTerm ? "#10b981" : (isDark ? "rgba(148,163,184,0.45)" : "rgba(148,163,184,0.55)"),
+          color: isTerm ? theme.otc.ko : theme.otc.obsDotted,
           width: isTerm ? 3 : 2.5,
         },
         label: isTerm
-          ? { formatter: "观察日·敲出", color: "#10b981", fontSize: 9, position: "insideEndTop" }
+          ? { formatter: "观察日·敲出", color: theme.otc.ko, fontSize: 9, position: "insideEndTop" }
           : { show: false },
       });
     }
@@ -633,7 +636,7 @@ export function OtcPricingClient() {
           symbol: "pin",
           symbolSize: 38,
           symbolOffset: isIn ? [0, 8] : [0, -8],
-          itemStyle: { color: isIn ? "#ef4444" : isExpired ? "#94a3b8" : "#10b981" },
+          itemStyle: { color: isIn ? theme.otc.ki : isExpired ? theme.otc.expire : theme.otc.ko },
           label: { show: true, color: "#fff", fontSize: 9, formatter: label },
         };
       });
@@ -652,11 +655,11 @@ export function OtcPricingClient() {
       {
         name: "挂钩指数(存续)", type: "line", yAxisIndex: 0, data: indexDisplay,
         showSymbol: false, smooth: true, connectNulls: false,
-        itemStyle: { color: "#3B82F6" },
-        lineStyle: { width: 2, color: "#3B82F6" },
+        itemStyle: { color: theme.palette[0] },
+        lineStyle: { width: 2, color: theme.palette[0] },
         markLine: { symbol: "none", data: markLineData },
         markArea: c.lock_area ? {
-          itemStyle: { color: isDark ? "rgba(234,179,8,0.12)" : "rgba(234,179,8,0.14)" },
+          itemStyle: { color: theme.otc.lockFill },
           label: { show: true, color: chartColors.text, fontSize: 10, position: "top", formatter: "锁定期" },
           data: [[{ xAxis: c.lock_area[0] }, { xAxis: c.lock_area[1] }]],
         } : undefined,
@@ -667,12 +670,12 @@ export function OtcPricingClient() {
       series.push({
         name: "盈亏", type: "line", yAxisIndex: 1, data: pnlData,
         showSymbol: false, smooth: true, connectNulls: true,
-        itemStyle: { color: "#f59e0b" },
-        lineStyle: { width: 2, color: "#f59e0b" },
+        itemStyle: { color: theme.otc.pnl },
+        lineStyle: { width: 2, color: theme.otc.pnl },
       });
     }
     return {
-      color: ["#3B82F6", "#f59e0b"],
+      color: [theme.palette[0], theme.otc.pnl],
       tooltip: {
         trigger: "axis", backgroundColor: chartColors.cardBg, borderColor: chartColors.axis,
         textStyle: { color: chartColors.fg, fontFamily: "monospace" }, axisPointer: { type: "cross" },
@@ -728,7 +731,7 @@ export function OtcPricingClient() {
       ],
       series,
     };
-  }, [result, chartColors, isDark]);
+  }, [result, chartColors, theme]);
 
   // -------------------- 波动率 --------------------
   const [volSymbols, setVolSymbols] = useState<string[]>(["000905", "000852"]);
@@ -766,7 +769,7 @@ export function OtcPricingClient() {
       dates = dates.filter((d) => d >= cutIso);
     }
     const idx = new Map(dates.map((d, i) => [d, i]));
-    const palette = ["#3B82F6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16"];
+    const palette = theme.palette;
     const series = symbols.map((sym, i) => {
       const arr: (number | null)[] = new Array(dates.length).fill(null);
       for (const p of volData[sym].windows[String(volWindow)] || []) {
@@ -798,7 +801,7 @@ export function OtcPricingClient() {
       dataZoom: [{ type: "inside" }, { type: "slider", height: 16, bottom: 10 }],
       series,
     };
-  }, [volData, volWindow, volRangeYears, chartColors]);
+  }, [volData, volWindow, volRangeYears, chartColors, theme]);
 
   const indexUnderlyings = underlyings;
 
@@ -1506,7 +1509,7 @@ function DealReorderDialog({ deals, onSaved }: { deals: OtcDeal[]; onSaved: () =
       onSaved();
       setOpen(false);
     } catch (e) {
-      window.alert(String(e instanceof Error ? e.message : e));
+      toast.error(String(e instanceof Error ? e.message : e));
     } finally {
       setBusy(false);
     }

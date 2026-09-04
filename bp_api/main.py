@@ -24,7 +24,6 @@ from .schemas import (
     CreateUserIn,
     DisableTotpIn,
     LoginIn,
-    PortfolioMetaIn,
     ReorderPortfoliosIn,
     SetDemoIn,
     SetupTotpIn,
@@ -195,7 +194,12 @@ def list_admin_users(_: auth.UserContext = Depends(auth.require_super_admin)) ->
 
 @app.post("/api/admin/users")
 def create_admin_user(payload: CreateUserIn, _: str = Depends(auth.require_super_admin)) -> dict:
-    auth.create_user(payload.email, payload.password)
+    auth.create_user(
+        payload.email,
+        payload.password,
+        portfolio_limit=payload.portfolio_limit,
+        can_manage_assets=payload.can_manage_assets,
+    )
     return {"ok": True}
 
 
@@ -207,7 +211,15 @@ def delete_admin_user(email: str, actor: auth.UserContext = Depends(auth.require
 
 @app.patch("/api/admin/users/{email}")
 def update_admin_user(email: str, payload: UpdateUserIn, _: auth.UserContext = Depends(auth.require_super_admin)) -> dict:
-    updated = auth.update_user(email, payload.portfolio_limit, payload.status, payload.can_manage_assets)
+    # model_fields_set 区分「未传」(不改)与「显式 null」(清为 NULL=无限)
+    kwargs: dict = {}
+    if "portfolio_limit" in payload.model_fields_set:
+        kwargs["portfolio_limit"] = payload.portfolio_limit
+    if "status" in payload.model_fields_set:
+        kwargs["status"] = payload.status
+    if "can_manage_assets" in payload.model_fields_set:
+        kwargs["can_manage_assets"] = payload.can_manage_assets
+    updated = auth.update_user(email, **kwargs)
     return {"ok": True, **updated}
 
 
@@ -292,29 +304,36 @@ def update_portfolio(
 @app.patch("/api/portfolios/{portfolio_id}/meta")
 def update_portfolio_meta(
     portfolio_id: int,
-    payload: PortfolioMetaIn,
+    payload: UpdatePortfolioIn,
     user: auth.UserContext = Depends(auth.require_user),
 ) -> dict:
-    """仅更新名称/描述, 不触发回测。"""
-    name = payload.name.strip()
-    if not name:
-        raise HTTPException(400, "组合名称不能为空")
+    """免重算保存: 全字段接受, 仅落定义不触发回测。
+
+    - name/description 任何状态可改;
+    - 其余字段有变化时更新定义与资产, 不改 status、不派发回测;
+    - 组合 running 且有回测字段变化 → 409。
+    """
+    _validate_portfolio_payload(payload)
     with db.get_conn() as conn:
         try:
-            repo.get_portfolio_status(conn, portfolio_id)
+            st = repo.get_portfolio_status(conn, portfolio_id)
         except KeyError:
             raise HTTPException(404, "组合不存在")
         if not repo.can_edit_portfolio(conn, portfolio_id, user.user_id, user.is_admin):
             raise HTTPException(403, "无权编辑该组合")
-        try:
-            repo.update_portfolio_meta(
-                conn, portfolio_id, name, payload.description.strip(), user.user_id
-            )
-        except KeyError:
-            raise HTTPException(404, "组合不存在")
+        pdef = repo.read_def(conn, portfolio_id)
+        changed = repo.diff_payload(pdef, payload)
+        non_meta = changed - repo.META_ONLY_FIELDS
+        if st["status"] == "running" and non_meta:
+            raise HTTPException(409, "回测进行中, 请稍后再编辑")
+        if not payload.name or not str(payload.name).strip():
+            raise HTTPException(400, "组合名称不能为空")
+        if changed:
+            repo.update_portfolio_def_only(conn, portfolio_id, payload, user.user_id)
         conn.commit()
+        stale = repo.is_portfolio_stale(conn, portfolio_id)
     cache.delete_pattern(f"portfolio_result:{portfolio_id}:*")
-    return {"portfolio_id": portfolio_id}
+    return {"portfolio_id": portfolio_id, "params_stale": stale}
 
 
 @app.get("/api/portfolios/demo")
@@ -328,7 +347,7 @@ def get_demo(
         if pid is None:
             if portfolio_id is not None:
                 raise HTTPException(404, "该组合不是示例组合或不存在")
-            raise HTTPException(404, "未配置 demo 组合, 请先执行 04_seed_demo_portfolio.sql")
+            raise HTTPException(404, "未配置 demo 组合, 请先执行 schema.sql 的 demo seed")
         info = repo.get_portfolio_dict(conn, pid)
         if info["status"] == "running":
             raise HTTPException(409, "回测进行中, 请稍后再试")
@@ -558,6 +577,38 @@ def enqueue_ready_portfolios_endpoint(
         queued = enqueue_ready_portfolios(conn)
         conn.commit()
     return {"queued": len(queued), "portfolios": queued}
+
+
+@app.post("/api/admin/portfolios/recompute-all")
+def recompute_all_portfolios(
+    background_tasks: BackgroundTasks,
+    user: auth.UserContext = Depends(auth.require_super_admin),
+) -> dict:
+    """强制重算全部组合(含 demo)。逐个走单组合 recompute 的标准回测任务管线。
+
+    跳过 running 与无资产的组合; task_type 沿用 'backtest'
+    (bp_task.ck_bp_task_type 约束不含 'recompute_all', 且派发目标就是 bp_api.backtest)。
+    单个组合入队失败记日志跳过, 不阻断其余组合。
+    """
+    pending: list[tuple[int, str]] = []
+    with db.get_conn() as conn:
+        pids = repo.list_recomputable_portfolio_ids(conn)
+        for pid in pids:
+            try:
+                # 与单组合 recompute 端点相同的入队方式: 幂等(已有活动任务则复用), 置 running
+                task_id = _enqueue_backtest(conn, pid, user.user_id)
+                conn.commit()
+            except Exception:  # noqa: BLE001
+                logger.exception("recompute-all 入队失败 portfolio_id=%s", pid)
+                try:
+                    conn.rollback()
+                except Exception:  # noqa: BLE001
+                    pass
+                continue
+            pending.append((pid, task_id))
+    for pid, task_id in pending:
+        _dispatch_backtest(task_id, pid, background_tasks)
+    return {"enqueued": len(pending)}
 
 
 @app.post("/api/admin/assets")

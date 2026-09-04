@@ -1,7 +1,8 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -21,14 +22,34 @@ import {
 import { useAuth } from "@/lib/auth";
 import { ConfirmRecomputeDialog } from "@/components/ConfirmRecomputeDialog";
 import { BacktestProgressDialog } from "@/components/BacktestProgressDialog";
+import { ChangeDiffDialog, type DiffRow } from "@/components/ChangeDiffDialog";
 
 const QUADRANT_ORDER: Quadrant[] = ["overheat", "stagflation", "recovery", "recession"];
 const QUADRANT_COLOR: Record<Quadrant, string> = {
-  overheat: "text-up",
-  stagflation: "text-weak",
-  recovery: "text-primary",
-  recession: "text-down",
+  overheat: "text-warning",        // 过热=通胀上行, 琥珀
+  stagflation: "text-destructive", // 滞胀=最差象限, 红
+  recovery: "text-success",        // 复苏, 绿
+  recession: "text-weak",          // 衰退, 灰
 };
+// 象限中文短名(QUADRANT_LABELS 带括号说明, diff 摘要用短名)
+const QUADRANT_SHORT: Record<Quadrant, string> = {
+  overheat: "过热", stagflation: "滞胀", recovery: "复苏", recession: "衰退",
+};
+
+// diff 弹窗用的格式化工具与方法/基准名称映射
+const fmtRatePct = (v: number) => `${+(v * 100).toFixed(2)}%`;      // 0.0005 → 0.05%
+const fmtBandPct = (v: number) => `${+v.toFixed(2)}%`;               // band 已是百分数
+const METHOD_NAME = Object.fromEntries(METHOD_OPTIONS.map((m) => [m.value, m.title]));
+const BENCH_NAME = Object.fromEntries(BENCHMARK_OPTIONS.map((b) => [b.key, b.name]));
+
+// 编辑预填完成时锁定的原始表单快照, 用于 diff 展示
+interface OrigSnapshot {
+  name: string; description: string; method: string; benchmarkKey: string;
+  ratio: string; lookback: number; band: number; maxWeightPct: number;
+  riskFreePct: number; feePct: number; slippagePct: number; stampDutyPct: number;
+  startDate: string | null;
+  assets: { key: string; label: string; quadrant: string }[];
+}
 
 type Selected = Record<Quadrant, Asset[]>;
 const emptySelection: Selected = { overheat: [], stagflation: [], recovery: [], recession: [] };
@@ -92,6 +113,8 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
   const [loadingEdit, setLoadingEdit] = useState(isEditMode || isCopyMode);
   const [error, setError] = useState<string | null>(null);
   const [origSig, setOrigSig] = useState<string | null>(null);
+  const origSnapRef = useRef<OrigSnapshot | null>(null);
+  const [diffOpen, setDiffOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [savingMeta, setSavingMeta] = useState(false);
@@ -123,7 +146,7 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
           setRatio(p.ratio as "sharpe" | "sortino");
           setLookback(p.lookback_days ?? 156);
           setBenchmarkKey(p.benchmark_key || DEFAULT_BENCHMARK_KEY);
-          setBand((p.rebalance_band ?? 0.05) * 100);
+          setBand(+((p.rebalance_band ?? 0.05) * 100).toFixed(2));
           setMaxWeightPct(
             p.max_weight != null ? +(p.max_weight * 100).toFixed(2) : DEFAULT_MAX_WEIGHT_PCT
           );
@@ -194,15 +217,35 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
     });
   }, [method, ratio, lookback, startDate, benchmarkKey, maxWeightPct, band, riskFreePct, feePct, slippagePct, stampDutyPct, selected]);
 
-  const backtestParamsChanged = origSig === null || origSig !== backtestSig;
-  // 仅元数据(名称/描述)可直接保存的条件: 编辑模式(非复制)且回测参数未变
-  const canMetaOnlySave = isEditMode && !isCopyMode && !backtestParamsChanged;
-
-  // 编辑数据加载完成后, 锁定初始回测签名(用于变更检测); 复制模式不锁定(总是新建)。
+  // 编辑数据加载完成后, 锁定初始回测签名与原始表单快照(用于变更检测与 diff 展示);
+  // 复制模式不锁定(总是新建)。
   useEffect(() => {
     if (isEditMode && !isCopyMode && !loadingEdit && origSig === null) {
       setOrigSig(backtestSig);
+      origSnapRef.current = {
+        name: portfolioName,
+        description: portfolioDescription,
+        method,
+        benchmarkKey,
+        ratio,
+        lookback,
+        band,
+        maxWeightPct,
+        riskFreePct,
+        feePct,
+        slippagePct,
+        stampDutyPct,
+        startDate,
+        assets: QUADRANT_ORDER.flatMap((q) =>
+          selected[q].map((a) => ({
+            key: keyOf(a),
+            label: a.name || a.symbol,
+            quadrant: QUADRANT_SHORT[q],
+          }))
+        ),
+      };
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditMode, isCopyMode, loadingEdit, origSig, backtestSig]);
 
   const buildPayload = (): CreatePortfolioInput => ({
@@ -214,7 +257,7 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
     start_date: startDate,
     benchmark_key: benchmarkKey,
     max_weight: maxWeightPct / 100,
-    rebalance_band: band / 100,
+    rebalance_band: Math.round(band * 100) / 10000,
     risk_free_rate: riskFreePct / 100,
     fee_rate: feePct / 100,
     slippage_rate: slippagePct / 100,
@@ -229,28 +272,40 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
     ),
   });
 
-  // 仅保存名称/描述, 不重算
+  // 仅元数据保存也走全量 payload(后端 PATCH /meta 接受完整 UpdatePortfolioIn,
+  // 只落定义不触发回测)。由 ChangeDiffDialog 的「仅保存」触发。
   const handleMetaSave = async () => {
     if (editId == null) return;
     setError(null);
     setSavingMeta(true);
     try {
-      await api.updatePortfolioMeta(editId, {
-        name: portfolioName,
-        description: portfolioDescription.trim() || DEFAULT_DESCRIPTION,
-      });
+      const res = await api.updatePortfolioMeta(editId, buildPayload());
+      setDiffOpen(false);
+      toast.success(
+        res.params_stale
+          ? "已保存。回测参数有变更，结果将在重算后生效。"
+          : "已保存。",
+      );
       router.push(`/dashboard?id=${editId}`);
     } catch (e) {
-      setError(String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      toast.error(msg);
+      setDiffOpen(false);
+    } finally {
       setSavingMeta(false);
     }
   };
 
-  // 需重算: 校验后打开确认框
-  const handleSubmitClick = () => {
+  // 需重算: 校验后打开确认框; skipConfirm 用于 ChangeDiffDialog 已承担确认职责的场景
+  const handleSubmitClick = (skipConfirm = false) => {
     setError(null);
     if (ratio === "sharpe" && (riskFreePct === null || Number.isNaN(riskFreePct))) {
       setError("选择夏普比率时必须填写无风险利率");
+      return;
+    }
+    if (skipConfirm) {
+      startBacktest();
       return;
     }
     setConfirmOpen(true);
@@ -279,6 +334,51 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
       setSubmitting(false);
     }
   };
+
+  // 编辑模式: 计算相对原始快照的变更清单(供 ChangeDiffDialog 展示与底栏按钮判定)
+  const diffs = useMemo(() => {
+    const o = origSnapRef.current;
+    if (!o) return { rows: [], assetSummary: null, hasBacktestChange: false };
+    const rows: DiffRow[] = [];
+    const add = (label: string, b: string | number, a: string | number) => {
+      if (String(b) !== String(a)) rows.push({ label, before: String(b), after: String(a) });
+    };
+    add("组合名称", o.name, portfolioName);
+    add("组合描述", o.description || "—", portfolioDescription || "—");
+    add("默认优化方法", METHOD_NAME[o.method] ?? o.method, METHOD_NAME[method] ?? method);
+    add("对比基准", BENCH_NAME[o.benchmarkKey] ?? o.benchmarkKey, BENCH_NAME[benchmarkKey] ?? benchmarkKey);
+    add("回看窗口", `${o.lookback} 天`, `${lookback} 天`);
+    if (o.startDate || startDate) add("起始日期", o.startDate ?? "自动", startDate ?? "自动");
+    add("单资产上限", `${+o.maxWeightPct.toFixed(2)}%`, `${+maxWeightPct.toFixed(2)}%`);
+    add("再平衡偏离带", fmtBandPct(o.band), fmtBandPct(band));
+    add("无风险利率", fmtRatePct(o.riskFreePct / 100), fmtRatePct(riskFreePct / 100));
+    add("佣金费率", fmtRatePct(o.feePct / 100), fmtRatePct(feePct / 100));
+    add("滑点", fmtRatePct(o.slippagePct / 100), fmtRatePct(slippagePct / 100));
+    add("印花税（卖出）", fmtRatePct(o.stampDutyPct / 100), fmtRatePct(stampDutyPct / 100));
+    // 资产构成聚合: 新增/移除/换象限
+    const cur = QUADRANT_ORDER.flatMap((q) =>
+      selected[q].map((a) => ({ key: keyOf(a), label: a.name || a.symbol, quadrant: QUADRANT_SHORT[q] }))
+    );
+    const oMap = new Map(o.assets.map((a) => [a.key, a]));
+    const cMap = new Map(cur.map((a) => [a.key, a]));
+    const added = cur.filter((a) => !oMap.has(a.key)).map((a) => a.label);
+    const removed = o.assets.filter((a) => !cMap.has(a.key)).map((a) => a.label);
+    const moved = cur
+      .filter((a) => oMap.has(a.key) && oMap.get(a.key)!.quadrant !== a.quadrant)
+      .map((a) => `${a.label}（${oMap.get(a.key)!.quadrant}→${a.quadrant}）`);
+    const assetSummary = added.length || removed.length || moved.length
+      ? [
+          added.length ? `新增：${added.join("、")}` : "",
+          removed.length ? `移除：${removed.join("、")}` : "",
+          moved.length ? `调整：${moved.join("、")}` : "",
+        ].filter(Boolean).join("；")
+      : null;
+    const metaOnlyLabels = new Set(["组合名称", "组合描述", "默认优化方法", "对比基准"]);
+    const hasBacktestChange = rows.some((r) => !metaOnlyLabels.has(r.label)) || assetSummary !== null;
+    return { rows, assetSummary, hasBacktestChange };
+    // origSnapRef 为 ref 不参与依赖; 其余为全部参与对比的表单状态
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [portfolioName, portfolioDescription, method, benchmarkKey, lookback, startDate, maxWeightPct, band, riskFreePct, feePct, slippagePct, stampDutyPct, selected]);
 
   if (!ready) {
     return <div className="p-12 text-center text-muted-foreground">加载中...</div>;
@@ -348,7 +448,7 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
                 已配置 {totalPlacements} 项 · {uniqueCount} 个品种。
               </p>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 min-h-[500px]">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:min-h-[500px]">
               {QUADRANT_ORDER.map((q) => (
                 <Card key={q} className="flex flex-col">
                   <CardContent className="p-4 flex-1 flex flex-col">
@@ -384,7 +484,7 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
         {step === 2 && (
           <div className="space-y-6">
             <div className="text-center mb-8">
-              <h2 className="text-xl font-medium">选择优化方法</h2>
+              <h2 className="text-xl font-medium">选择默认的优化方法</h2>
               <p className="text-muted-foreground mt-2">不同的最优化目标会产生不同的权重分配方案。</p>
             </div>
             <div className="space-y-4">
@@ -561,6 +661,19 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
         confirmLabel={isEditMode ? "保存并重算" : "生成组合"}
         busy={submitting}
       />
+      <ChangeDiffDialog
+        open={diffOpen}
+        onOpenChange={setDiffOpen}
+        diffs={diffs.rows}
+        assetSummary={diffs.assetSummary}
+        canRecompute={diffs.hasBacktestChange}
+        busy={savingMeta || submitting}
+        onMetaSave={handleMetaSave}
+        onRecompute={() => {
+          setDiffOpen(false);
+          handleSubmitClick(true);
+        }}
+      />
       <BacktestProgressDialog
         taskId={taskId}
         portfolioId={resultPid}
@@ -574,7 +687,7 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
       />
 
       <div className="fixed bottom-0 left-0 w-full bg-background border-t border-border p-4 z-40">
-        <div className="max-w-4xl mx-auto flex justify-between items-center">
+        <div className="max-w-4xl mx-auto flex flex-wrap justify-between items-center gap-2">
           <Button variant="ghost" onClick={() => setStep((s) => Math.max(1, s - 1))} disabled={step === 1 || submitting || savingMeta}>
             上一步
           </Button>
@@ -583,13 +696,33 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
               下一步 <ChevronRight className="w-4 h-4 ml-1" />
             </Button>
           ) : isWhitelisted ? (
-            canMetaOnlySave ? (
-              <Button onClick={handleMetaSave} disabled={savingMeta || uniqueCount === 0}>
-                {savingMeta ? "保存中..." : "保存"}
-              </Button>
+            isEditMode && !isCopyMode ? (
+              (diffs.rows.length === 0 && diffs.assetSummary === null) ? (
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-muted-foreground">无待保存变更</span>
+                  <Button variant="outline" disabled>保存</Button>
+                  <Button disabled>保存并重算</Button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <Button
+                    variant="outline"
+                    onClick={() => setDiffOpen(true)}
+                    disabled={savingMeta || submitting || uniqueCount === 0}
+                  >
+                    {savingMeta ? "保存中..." : "保存"}
+                  </Button>
+                  <Button
+                    onClick={() => setDiffOpen(true)}
+                    disabled={savingMeta || submitting || uniqueCount === 0}
+                  >
+                    保存并重算
+                  </Button>
+                </div>
+              )
             ) : (
-              <Button onClick={handleSubmitClick} disabled={submitting || uniqueCount === 0}>
-                {isEditMode ? "保存并重算" : "生成组合"}
+              <Button onClick={() => handleSubmitClick(false)} disabled={submitting || uniqueCount === 0}>
+                生成组合
               </Button>
             )
           ) : (
@@ -691,14 +824,14 @@ function AssetPicker({
           <Plus className="w-4 h-4 mr-1" /> 添加资产
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-4xl">
+      <DialogContent className="sm:max-w-4xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>添加资产到「{quadrantLabel}」</DialogTitle>
         </DialogHeader>
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_300px] gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_260px] gap-4">
           {/* 左: 搜索 + 勾选明细 */}
           <div className="min-w-0">
-            <div className="flex gap-2 mb-3">
+            <div className="flex flex-wrap gap-2 mb-3">
               <Input placeholder="搜索名称或代码..." value={q} onChange={(e) => setQ(e.target.value)} className="flex-1" />
               <Select value={vendor} onValueChange={setVendor}>
                 <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>

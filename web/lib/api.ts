@@ -52,6 +52,9 @@ export const BENCHMARK_OPTIONS = [
   { key: "000510", name: "中证A500", kind: "price_return" as const },
   { key: "000905", name: "中证500", kind: "price_return" as const },
   { key: "HSI", name: "恒生指数", kind: "price_return" as const },
+  { key: "sp500_etf", name: "标普500ETF", kind: "total_return" as const },
+  { key: "ndx100_etf", name: "纳斯达克100ETF", kind: "total_return" as const },
+  { key: "n225_etf", name: "日经225ETF", kind: "total_return" as const },
 ];
 
 /** 各基准的构成与收益口径说明(与后端 BENCHMARKS 注册表一致) */
@@ -78,6 +81,18 @@ export const BENCHMARK_COMPOSITION: Record<string, { legs: { weight: number; nam
   HSI: {
     legs: [{ weight: 1, name: "恒生指数" }],
     note: "价格指数,不含派息。",
+  },
+  sp500_etf: {
+    legs: [{ weight: 1, name: "博时标普500ETF (513500)" }],
+    note: "人民币计价 QDII(后复权含分红拆分), 可与组合收益直接比较; 含汇率波动与场内折溢价噪声。",
+  },
+  ndx100_etf: {
+    legs: [{ weight: 1, name: "国泰纳斯达克100ETF (513100)" }],
+    note: "人民币计价 QDII(后复权含分红拆分), 可与组合收益直接比较; 含汇率波动与场内折溢价噪声。",
+  },
+  n225_etf: {
+    legs: [{ weight: 1, name: "华夏日经225ETF (513520)" }],
+    note: "2019-06-25 上市, 早于该日的回测不显示此基准; 人民币计价, 含汇率波动与折溢价噪声。",
   },
 };
 
@@ -358,6 +373,8 @@ export interface PortfolioInfo {
   result_version?: number;
   result_updated_at?: string | null;
   data_as_of_date?: string | null;
+  /** 回测参数与最近一次结果快照不一致(后端 params_stale), 提示需重算 */
+  params_stale?: boolean;
   status: string;
   error?: string | null;
   assets?: Array<{ symbol: string; source: string; quadrant: Quadrant; display_name?: string }>;
@@ -671,8 +688,9 @@ export const api = {
     req<CreatePortfolioResponse>("/api/portfolios", { method: "POST", body: JSON.stringify(input) }),
   updatePortfolio: (id: number, input: CreatePortfolioInput) =>
     req<CreatePortfolioResponse>(`/api/portfolios/${id}`, { method: "PUT", body: JSON.stringify(input) }),
-  updatePortfolioMeta: (id: number, input: { name: string; description: string }) =>
-    req<{ portfolio_id: number }>(`/api/portfolios/${id}/meta`, {
+  /** 免重算保存: PATCH /meta 接受完整 UpdatePortfolioIn payload(后端全字段校验), 返回 params_stale 提示 */
+  updatePortfolioMeta: (id: number, input: CreatePortfolioInput) =>
+    req<{ portfolio_id: number; params_stale: boolean }>(`/api/portfolios/${id}/meta`, {
       method: "PATCH", body: JSON.stringify(input),
     }),
   /** 轮询直到回测 done; error 时抛错 */
@@ -732,6 +750,9 @@ export const api = {
     }),
   recomputePortfolio: (id: number) =>
     req<CreatePortfolioResponse>(`/api/portfolios/${id}/recompute`, { method: "POST" }),
+  /** 超管: 强制重算全部组合(含 demo), 返回入队数量 */
+  recomputeAllPortfolios: () =>
+    req<{ enqueued: number }>("/api/admin/portfolios/recompute-all", { method: "POST" }),
   copyPortfolio: (id: number, name?: string) =>
     req<CreatePortfolioResponse>(`/api/portfolios/${id}/copy`, {
       method: "POST", body: JSON.stringify({ name: name ?? null }),
@@ -806,14 +827,15 @@ export const api = {
 
   me: () => req<AuthProfile>("/api/auth/me"),
   listUsers: () => req<{ users: AdminUser[] }>("/api/admin/users"),
-  createUser: (email: string, password: string) =>
+  createUser: (email: string, password: string,
+              opts?: { portfolio_limit?: number | null; can_manage_assets?: boolean }) =>
     req<{ ok: boolean }>("/api/admin/users", {
-      method: "POST", body: JSON.stringify({ email, password }),
+      method: "POST", body: JSON.stringify({ email, password, ...(opts ?? {}) }),
     }),
   deleteUser: (email: string) =>
     req<{ ok: boolean }>(`/api/admin/users/${encodeURIComponent(email)}`, { method: "DELETE" }),
   updateUser: (email: string, input: { portfolio_limit?: number | null; status?: string; can_manage_assets?: boolean }) =>
-    req<{ ok: boolean; email: string; portfolio_limit: number }>(
+    req<{ ok: boolean; email: string; portfolio_limit: number | null }>(
       `/api/admin/users/${encodeURIComponent(email)}`,
       {
         method: "PATCH",

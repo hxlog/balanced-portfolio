@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { EChart } from "@/components/EChart";
 import { ChartLightbox } from "@/components/ChartLightbox";
 import { useIsMobile } from "@/components/ui/use-mobile";
+import { type ChartTheme } from "@/lib/chart-theme";
 
 type MatrixAsset = { index: number; label: string; category: string };
 
@@ -115,12 +116,10 @@ function decimalsForMagnitude(absMax: number): number {
   return 5;
 }
 
-/** 协方差矩阵：5 阶 RdBu 发散色，0 为中性灰，负蓝 / 正红 */
-function covDivergingColors(isDark: boolean): string[] {
-  if (isDark) {
-    return ["#2166AC", "#67A9CF", "#3a3a3a", "#EF8A62", "#B2182B"];
-  }
-  return ["#2166AC", "#92C5DE", "#F7F7F7", "#F4A582", "#B2182B"];
+/** 协方差矩阵：5 阶 RdBu 发散色，0 为中性灰，负蓝 / 正红（取自主题 9 阶 rdBu 的 0/2/4/6/8） */
+function covDivergingColors(theme: ChartTheme): string[] {
+  const r = theme.rdBu;
+  return [r[0], r[2], r[4], r[6], r[8]];
 }
 
 function formatMapLabel(v: number, decimals: number): string {
@@ -132,12 +131,7 @@ function buildHeatmapOption(
   labels: string[],
   matrix: number[][],
   opts: {
-    isDark: boolean;
-    cardBg: string;
-    fg: string;
-    textCol: string;
-    axisLineCol: string;
-    splitLineCol: string;
+    theme: ChartTheme;
     isMobile: boolean;
     min: number;
     max: number;
@@ -150,17 +144,18 @@ function buildHeatmapOption(
     wide?: boolean;
   },
 ) {
+  const { theme } = opts;
   const displayLabels = labels.map((l) => shortLabel(l, opts.isMobile));
   const height = opts.isMobile ? Math.max(320, labels.length * 28) : Math.max(360, labels.length * 22);
   const mapDecimals = opts.mapDecimals ?? 2;
   const labelDecimals = opts.labelDecimals ?? (opts.valueName === "相关系数" ? 2 : 4);
   // 灯箱(宽屏): 标签换行, 纵向不旋转(横坐标旋转45°), 避免居中留白过大
   const xLabel = opts.wide
-    ? { color: opts.textCol, rotate: 45, fontSize: 11, interval: 0, width: 96, overflow: "break", formatter: (s: string) => wrapLabel(s) }
-    : { color: opts.textCol, rotate: 45, fontSize: opts.isMobile ? 8 : 10, width: opts.isMobile ? 36 : 80, overflow: "truncate" };
+    ? { color: theme.subtext, rotate: 45, fontSize: 11, interval: 0, width: 96, overflow: "break", formatter: (s: string) => wrapLabel(s) }
+    : { color: theme.subtext, rotate: 45, fontSize: opts.isMobile ? 8 : 10, width: opts.isMobile ? 36 : 80, overflow: "truncate" };
   const yLabel = opts.wide
-    ? { color: opts.textCol, fontSize: 11, width: 110, overflow: "break", formatter: (s: string) => wrapLabel(s, 7) }
-    : { color: opts.textCol, fontSize: opts.isMobile ? 8 : 10, width: opts.isMobile ? 36 : 92, overflow: "break" };
+    ? { color: theme.subtext, fontSize: 11, width: 110, overflow: "break", formatter: (s: string) => wrapLabel(s, 7) }
+    : { color: theme.subtext, fontSize: opts.isMobile ? 8 : 10, width: opts.isMobile ? 36 : 92, overflow: "break" };
   return {
     height,
     option: {
@@ -168,9 +163,9 @@ function buildHeatmapOption(
         position: "top",
         appendToBody: true,
         confine: true,
-        backgroundColor: opts.cardBg,
-        borderColor: opts.isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.08)",
-        textStyle: { color: opts.fg },
+        backgroundColor: theme.tooltipBg,
+        borderColor: theme.tooltipBorder,
+        textStyle: { color: theme.text },
         extraCssText: "z-index: 99999; box-shadow: 0 4px 16px rgba(0,0,0,0.18);",
         formatter: (p: { value: [number, number, number] }) =>
           `${labels[p.value[1]]} × ${labels[p.value[0]]}<br/>${opts.valueName}: ${opts.format(p.value[2])}`,
@@ -203,7 +198,7 @@ function buildHeatmapOption(
         left: "center",
         bottom: 0,
         inRange: { color: opts.colors },
-        textStyle: { color: opts.textCol },
+        textStyle: { color: theme.subtext },
         formatter: (v: number) => formatMapLabel(v, mapDecimals),
       },
       series: [{
@@ -213,7 +208,7 @@ function buildHeatmapOption(
         ),
         label: {
           show: !opts.isMobile && labels.length <= 8,
-          color: opts.fg,
+          color: theme.text,
           fontSize: 9,
           formatter: (p: { value: [number, number, number] }) => {
             const val = p.value[2];
@@ -235,24 +230,14 @@ export function RiskMatrixSection({
   portfolioAssets,
   holdings,
   lookbackDays,
-  isDark,
-  cardBg,
-  fg,
-  textCol,
-  axisLineCol,
-  splitLineCol,
+  theme,
 }: {
   corr: { labels: string[]; matrix: number[][]; cov?: number[][] };
   portfolioId: number;
   portfolioAssets?: Array<{ symbol: string; source: string; display_name?: string }>;
   holdings?: Array<{ key?: string; name?: string; weight: number }>;
   lookbackDays: number;
-  isDark: boolean;
-  cardBg: string;
-  fg: string;
-  textCol: string;
-  axisLineCol: string;
-  splitLineCol: string;
+  theme: ChartTheme;
 }) {
   const isMobile = useIsMobile();
 
@@ -315,15 +300,15 @@ export function RiskMatrixSection({
   const corrChart = useMemo(() => {
     if (selectedIndices.length < 2) return null;
     return buildHeatmapOption(selectedLabels, corrSub, {
-      isDark, cardBg, fg, textCol, axisLineCol, splitLineCol, isMobile,
+      theme, isMobile,
       min: -1, max: 1,
       valueName: "相关系数",
       format: (v) => v.toFixed(2),
       mapDecimals: 1,
       labelDecimals: 2,
-      colors: ["#30A46C", isDark ? "#161616" : "#f4f4f5", "#E5484D"],
+      colors: [theme.up, theme.rdBu[4], theme.down],
     });
-  }, [selectedLabels, corrSub, selectedIndices.length, isDark, cardBg, fg, textCol, axisLineCol, splitLineCol, isMobile]);
+  }, [selectedLabels, corrSub, selectedIndices.length, theme, isMobile]);
 
   const covChart = useMemo(() => {
     if (selectedIndices.length < 2 || !covSub.length) return null;
@@ -331,15 +316,15 @@ export function RiskMatrixSection({
     const mapDecimals = decimalsForMagnitude(absMax);
     const fmt = (v: number) => v.toFixed(mapDecimals);
     return buildHeatmapOption(selectedLabels, covSub, {
-      isDark, cardBg, fg, textCol, axisLineCol, splitLineCol, isMobile,
+      theme, isMobile,
       min, max,
       valueName: "年化协方差",
       format: fmt,
       mapDecimals,
       labelDecimals: mapDecimals,
-      colors: covDivergingColors(isDark),
+      colors: covDivergingColors(theme),
     });
-  }, [selectedLabels, covSub, selectedIndices.length, isDark, cardBg, fg, textCol, axisLineCol, splitLineCol, isMobile]);
+  }, [selectedLabels, covSub, selectedIndices.length, theme, isMobile]);
 
   // 灯箱展示用「全量」矩阵(所有成分), 放大按钮看清全貌(与已选子集无关)。
   const allIndices = useMemo(
@@ -353,15 +338,15 @@ export function RiskMatrixSection({
       allLabels,
       subMatrix(corr.matrix, allIndices),
       {
-        isDark, cardBg, fg, textCol, axisLineCol, splitLineCol, isMobile: false,
+        theme, isMobile: false,
         min: -1, max: 1,
         valueName: "相关系数", format: (v) => v.toFixed(2),
         mapDecimals: 1, labelDecimals: 2,
-        colors: ["#30A46C", isDark ? "#161616" : "#f4f4f5", "#E5484D"],
+        colors: [theme.up, theme.rdBu[4], theme.down],
         wide: true,
       },
     ).option;
-  }, [allIndices, allLabels, corr.matrix, isDark, cardBg, fg, textCol, axisLineCol, splitLineCol]);
+  }, [allIndices, allLabels, corr.matrix, theme]);
   const fullCovOption = useMemo(() => {
     if (allIndices.length < 2 || !covFull.length) return null;
     const full = subMatrix(covFull, allIndices);
@@ -372,15 +357,15 @@ export function RiskMatrixSection({
       allLabels,
       full,
       {
-        isDark, cardBg, fg, textCol, axisLineCol, splitLineCol, isMobile: false,
+        theme, isMobile: false,
         min, max,
         valueName: "年化协方差", format: fmt,
         mapDecimals, labelDecimals: mapDecimals,
-        colors: covDivergingColors(isDark),
+        colors: covDivergingColors(theme),
         wide: true,
       },
     ).option;
-  }, [allIndices, allLabels, covFull, isDark, cardBg, fg, textCol, axisLineCol, splitLineCol]);
+  }, [allIndices, allLabels, covFull, theme]);
   const fullHeight = Math.max(640, allIndices.length * 28 + 120);
 
   const toggle = (index: number) => {
