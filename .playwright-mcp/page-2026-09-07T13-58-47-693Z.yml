@@ -1,0 +1,260 @@
+- generic [active] [ref=f7e1]:
+  - banner [ref=f7e2]:
+    - generic [ref=f7e3]:
+      - generic [ref=f7e4]:
+        - link "BP Balanced Portfolio" [ref=f7e5] [cursor=pointer]:
+          - /url: /
+          - generic [ref=f7e6]: BP
+          - generic [ref=f7e7]: Balanced Portfolio
+        - navigation [ref=f7e8]:
+          - link "风险平价回测" [ref=f7e9] [cursor=pointer]:
+            - /url: /dashboard
+          - link "股指期货看板" [ref=f7e10] [cursor=pointer]:
+            - /url: /cffex
+          - link "加密货币看板" [ref=f7e11] [cursor=pointer]:
+            - /url: /crypto
+          - link "场外衍生品定价 · Experiment" [ref=f7e12] [cursor=pointer]:
+            - /url: /otc-derivatives-pricing
+          - link "方法论" [ref=f7e13] [cursor=pointer]:
+            - /url: /methodology
+      - generic [ref=f7e14]:
+        - link "在 GitHub 查看 Balanced Portfolio 源代码" [ref=f7e15] [cursor=pointer]:
+          - /url: https://github.com/hxlog/balanced-portfolio
+        - button "切换主题" [ref=f7e19]
+        - generic [ref=f7e22]:
+          - button "注册" [ref=f7e23]
+          - button "登录" [ref=f7e24]
+  - main [ref=f7e25]:
+    - generic [ref=f7e26]:
+      - generic [ref=f7e27]:
+        - generic [ref=f7e28]:
+          - generic [ref=f7e29]:
+            - heading "场外衍生品定价 · Experiment" [level=1] [ref=f7e33]
+            - generic [ref=f7e34]: Monte Carlo 方法解析求PV和Greeks
+          - paragraph [ref=f7e35]: 雪球 / 凤凰 / 气囊 / 障碍 场外结构化产品定价与簿记。品种与算法参考 pricelib， 蒙特卡洛严格按 A股交易日历做日度敲入 / 月度敲出观测，红利票息按 ACT/365 计息、Bus/252 折现。
+          - generic [ref=f7e36]:
+            - button "雪球 Snowball" [ref=f7e37]
+            - button "凤凰 Phoenix" [ref=f7e38]
+            - button "气囊 Airbag" [ref=f7e39]
+            - button "障碍 Barrier" [ref=f7e40]
+          - paragraph [ref=f7e41]: 含敲入敲出的自动赎回结构; 敲出得票息, 敲入承担下行, 未触碰得红利票息。
+        - generic [ref=f7e42]:
+          - generic [ref=f7e43]:
+            - generic [ref=f7e44]: A股交易日历
+            - generic [ref=f7e48]:
+              - combobox [ref=f7e49]
+              - combobox [aria-hidden] [ref=f7e50]
+              - button [ref=f7e51]
+              - generic [ref=f7e54]: 3月
+              - button [ref=f7e55]
+          - generic [ref=f7e58]:
+            - generic [ref=f7e59]: 一
+            - generic [ref=f7e60]: 二
+            - generic [ref=f7e61]: 三
+            - generic [ref=f7e62]: 四
+            - generic [ref=f7e63]: 五
+            - generic [ref=f7e64]: 六
+            - generic [ref=f7e65]: 日
+            - generic "非交易日" [ref=f7e67]: "1"
+            - generic "非交易日" [ref=f7e68]: "2"
+            - generic "非交易日" [ref=f7e69]: "3"
+            - generic "非交易日" [ref=f7e70]: "4"
+            - generic "周末" [ref=f7e71]: "5"
+            - generic "周末" [ref=f7e72]: "6"
+            - generic "非交易日" [ref=f7e73]: "7"
+            - generic "非交易日" [ref=f7e74]: "8"
+            - generic "非交易日" [ref=f7e75]: "9"
+            - generic "非交易日" [ref=f7e76]: "10"
+            - generic "非交易日" [ref=f7e77]: "11"
+            - generic "周末" [ref=f7e78]: "12"
+            - generic "周末" [ref=f7e79]: "13"
+            - generic "非交易日" [ref=f7e80]: "14"
+            - generic "非交易日 · 到期观察日" [ref=f7e81]:
+              - text: "15"
+              - generic [ref=f7e82]: 到
+            - generic "非交易日" [ref=f7e83]: "16"
+            - generic "非交易日" [ref=f7e84]: "17"
+            - generic "非交易日" [ref=f7e85]: "18"
+            - generic "周末" [ref=f7e86]: "19"
+            - generic "周末" [ref=f7e87]: "20"
+            - generic "非交易日" [ref=f7e88]: "21"
+            - generic "非交易日" [ref=f7e89]: "22"
+            - generic "非交易日" [ref=f7e90]: "23"
+            - generic "非交易日" [ref=f7e91]: "24"
+            - generic "非交易日" [ref=f7e92]: "25"
+            - generic "周末" [ref=f7e93]: "26"
+            - generic "周末" [ref=f7e94]: "27"
+            - generic "非交易日" [ref=f7e95]: "28"
+            - generic "非交易日" [ref=f7e96]: "29"
+            - generic "非交易日" [ref=f7e97]: "30"
+            - generic "非交易日" [ref=f7e98]: "31"
+          - generic [ref=f7e99]:
+            - generic [ref=f7e100]: 交易日
+            - generic [ref=f7e102]: 节假日
+            - generic [ref=f7e104]: 存续期
+            - generic [ref=f7e106]:
+              - generic [ref=f7e107]: 起
+              - text: 期初
+            - generic [ref=f7e108]:
+              - generic [ref=f7e109]: 到
+              - text: 到期
+      - generic [ref=f7e110]:
+        - generic [ref=f7e111]:
+          - heading "参数设置 登录后可定价与簿记" [level=3] [ref=f7e112]:
+            - text: 参数设置
+            - generic [ref=f7e115]: 登录后可定价与簿记
+          - generic [ref=f7e116]:
+            - button "生成定价" [disabled]
+        - generic:
+          - generic:
+            - generic:
+              - text: 交易方向
+              - combobox
+              - combobox [aria-hidden]
+            - generic:
+              - text: 算法
+              - combobox
+              - combobox [aria-hidden]
+            - generic:
+              - text: 挂钩标的(指数)
+              - combobox:
+                - generic: "000852"
+            - generic:
+              - text: 名义本金 (元)
+              - textbox: 10,000,000
+            - generic:
+              - text: 初始观察日
+              - generic:
+                - textbox "YYYY/MM/DD": 2021/03/15
+                - button "选择日期"
+            - generic:
+              - text: 初始观察日点位
+              - textbox: "6000"
+              - paragraph: 自动读取起始日收盘
+            - generic:
+              - text: 到期观察日
+              - generic:
+                - textbox "YYYY/MM/DD": 2022/03/15
+                - button "选择日期"
+            - generic:
+              - text: 估值日
+              - generic:
+                - textbox "YYYY/MM/DD": 2022/03/15
+                - button "选择日期"
+            - generic:
+              - text: 无风险利率
+              - generic:
+                - spinbutton: "2"
+                - generic: "%"
+              - paragraph: 年化 %
+            - generic:
+              - text: 分红率 / 贴水
+              - generic:
+                - spinbutton: "0.5"
+                - generic: "%"
+              - paragraph: 年化 %
+            - generic:
+              - text: 成交波动率
+              - generic:
+                - spinbutton: "35"
+                - generic: "%"
+              - paragraph: 默认近90交易日历史波动率, 可调
+            - generic:
+              - text: 计息规则
+              - generic:
+                - combobox
+                - combobox [aria-hidden]
+                - button
+              - paragraph: 自然日/365 — 票息计息默认
+          - generic:
+            - generic:
+              - text: 敲出障碍
+              - generic:
+                - spinbutton: "103"
+                - generic: "%"
+              - paragraph: "% of 初始"
+            - generic:
+              - text: 敲出线
+              - textbox: 6,180
+              - paragraph: 初始点位 × 敲出障碍
+            - generic:
+              - text: 敲入障碍
+              - generic:
+                - spinbutton: "75"
+                - generic: "%"
+              - paragraph: "% of 初始"
+            - generic:
+              - text: 敲入线
+              - textbox: 4,500
+              - paragraph: 初始点位 × 敲入障碍
+            - generic:
+              - text: 锁定期
+              - generic:
+                - spinbutton: "0"
+              - paragraph: 月, 期内不观敲出
+            - generic:
+              - text: 敲出票息
+              - generic:
+                - spinbutton: "20"
+                - generic: "%"
+              - paragraph: 年化 %
+            - generic:
+              - text: 红利/期末票息
+              - generic:
+                - spinbutton: "10"
+                - generic: "%"
+              - paragraph: 未敲出未敲入到期, 年化 %
+            - generic:
+              - text: 敲入行权
+              - generic:
+                - spinbutton: "80"
+                - generic: "%"
+              - paragraph: "% of 初始"
+            - generic:
+              - generic: 是否已敲入
+              - switch
+              - checkbox [aria-hidden]
+            - generic:
+              - text: MC 路径数
+              - textbox: 500,000
+      - generic [ref=f7e117]:
+        - heading "已簿记场外期权 0/0" [level=3] [ref=f7e120]:
+          - text: 已簿记场外期权
+          - generic [ref=f7e123]: 0/0
+        - generic [ref=f7e124]: 暂无示例簿记。登录后可簿记自己的场外期权。
+      - generic [ref=f7e126]:
+        - generic [ref=f7e127]:
+          - heading "挂钩指数历史波动率" [level=3] [ref=f7e128]
+          - generic [ref=f7e132]:
+            - generic [ref=f7e133]:
+              - button "90日" [ref=f7e134]
+              - button "120日" [ref=f7e135]
+              - button "180日" [ref=f7e136]
+              - button "365日" [ref=f7e137]
+            - generic [ref=f7e138]:
+              - button "近3年" [ref=f7e139]
+              - button "近5年" [ref=f7e140]
+            - generic [ref=f7e141]: "常用指数:"
+            - generic [ref=f7e142]:
+              - button "中证1000" [ref=f7e143]
+              - button "中证500" [ref=f7e144]
+              - button "沪深300" [ref=f7e145]
+              - button "上证50" [ref=f7e146]
+              - button "恒生指数" [ref=f7e147]
+            - button "搜索指数" [ref=f7e148]
+        - generic [ref=f7e152]: 选择一个或多个指数以查看 90 日滚动年化波动率
+      - paragraph [ref=f7e154]: 定价结果仅供研究参考，不构成投资建议。蒙特卡洛与真实交易系统存在模型/约定差异。
+  - region "Notifications alt+T"
+  - contentinfo [ref=f7e155]:
+    - generic [ref=f7e156]:
+      - paragraph [ref=f7e157]: Balanced Portfolio 是开源的风险平价组合管理与回测项目。本工具仅供研究，不构成投资建议。
+      - link "在 GitHub 查看 Balanced Portfolio 源代码" [ref=f7e158] [cursor=pointer]:
+        - /url: https://github.com/hxlog/balanced-portfolio
+        - text: GitHub 源代码
+      - generic [ref=f7e159]:
+        - generic [ref=f7e160]: © 2026 Balanced Portfolio
+        - generic [aria-hidden] [ref=f7e161]: "|"
+        - link "粤ICP备2024174552号-2" [ref=f7e162] [cursor=pointer]:
+          - /url: https://beian.miit.gov.cn/
+  - button "Open Next.js Dev Tools" [ref=f7e168] [cursor=pointer]
+  - alert [ref=f7e172]

@@ -96,6 +96,10 @@ class SyncResult:
     status: str  # ok / skip / error
     rows: int = 0
     detail: str = ""
+    # 本次拉取是否推进了库中原始表最新日(fetch_max > 库中 last_trade_date, 新品种首拉视为推进)。
+    # 仅供 run() 收尾决定是否对该资产做 with_count=True 行数重算(Task 4 COUNT 分级);
+    # 纯修订重拉(收盘覆盖/回看窗口重叠)不推进 → False, 不付 COUNT 代价。
+    advanced: bool = False
 
 
 def _to_decimal(value) -> Optional[Decimal]:
@@ -234,6 +238,9 @@ def _sync_one(
 
     # —— 陈旧探测: 让 yfinance 等源的静默陈旧可见 (不改变 upsert 行为, 照常写入 fetch 到的行) ——
     fetch_max = df["trade_date"].max()
+    # 是否推进原始表最新日: 新品种首拉(last_date 为空)或 fetch 超越库中最新日。
+    # 用于 run() 收尾的 with_count=True 行数重算门控(每天每资产最多一轮, 代价可接受)。
+    advanced = last_date is None or fetch_max > last_date
     stale = False
     stale_note = ""
     if last_date is not None and fetch_max <= last_date:
@@ -262,7 +269,9 @@ def _sync_one(
         detail = f"收盘重拉 {detail}"
     if stale:
         detail = f"[STALE] {stale_note} | {detail}"
-    return SyncResult(cfg.symbol, cfg.source, "stale" if stale else "ok", n, detail)
+    return SyncResult(
+        cfg.symbol, cfg.source, "stale" if stale else "ok", n, detail, advanced
+    )
 
 
 def run(
@@ -423,6 +432,24 @@ def run(
                         except Exception as exc:  # noqa: BLE001
                             conn.rollback()
                             logger.warning("crypto 相关性重算失败: %s", exc)
+
+        # Task 4 COUNT 分级: 仅对「本次拉数推进了原始表最新日」的资产重算 raw_rows/clean_rows。
+        # COUNT(*) 扫 hypertable 分区, 逐资产全量校准只在数据真实前进时发生(每天每资产最多一轮);
+        # 未推进(纯修订重拉/收盘覆盖/skip)不付该代价, 其状态行由下方 refresh_all_asset_status
+        # 以 with_count=False 仅推进日期。refresh_clean=True 时位于 rebuild_clean 之后;
+        # False 时为 sync 收尾即时重算——计数均反映 clean 表当下真实状态;
+        # 单资产失败只回滚自身, 不阻断 ingest 整轮; bp_api 不可用时降级跳过(与清洗钩子同策略)。
+        for r in results:
+            if not r.advanced:
+                continue
+            try:
+                from bp_api.repositories import refresh_asset_status
+
+                refresh_asset_status(conn, r.symbol, r.source, with_count=True)
+                conn.commit()
+            except Exception as exc:  # noqa: BLE001
+                conn.rollback()
+                logger.warning("行数重算失败 %s@%s: %s", r.symbol, r.source, exc)
 
         if refresh_clean:
             try:

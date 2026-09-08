@@ -13,6 +13,10 @@ import {
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Check, ChevronRight, Plus, X, Lock } from "lucide-react";
 import {
   api, Asset, Quadrant, QUADRANT_LABELS, METHOD_OPTIONS, BENCHMARK_OPTIONS,
@@ -22,7 +26,7 @@ import {
 import { useAuth } from "@/lib/auth";
 import { ConfirmRecomputeDialog } from "@/components/ConfirmRecomputeDialog";
 import { BacktestProgressDialog } from "@/components/BacktestProgressDialog";
-import { ChangeDiffDialog, type DiffRow } from "@/components/ChangeDiffDialog";
+import { ChangeDiffDialog, type AssetDiff, type DiffRow } from "@/components/ChangeDiffDialog";
 
 const QUADRANT_ORDER: Quadrant[] = ["overheat", "stagflation", "recovery", "recession"];
 const QUADRANT_COLOR: Record<Quadrant, string> = {
@@ -48,7 +52,7 @@ interface OrigSnapshot {
   ratio: string; lookback: number; band: number; maxWeightPct: number;
   riskFreePct: number; feePct: number; slippagePct: number; stampDutyPct: number;
   startDate: string | null;
-  assets: { key: string; label: string; quadrant: string }[];
+  assets: { key: string; label: string; quadrant: Quadrant }[];
 }
 
 type Selected = Record<Quadrant, Asset[]>;
@@ -238,9 +242,9 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
         startDate,
         assets: QUADRANT_ORDER.flatMap((q) =>
           selected[q].map((a) => ({
-            key: keyOf(a),
+            key: keyOf(a),          // symbol@source (不变)
             label: a.name || a.symbol,
-            quadrant: QUADRANT_SHORT[q],
+            quadrant: q,            // 存象限 key(overheat/...), 显示层再转 QUADRANT_SHORT
           }))
         ),
       };
@@ -338,7 +342,7 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
   // 编辑模式: 计算相对原始快照的变更清单(供 ChangeDiffDialog 展示与底栏按钮判定)
   const diffs = useMemo(() => {
     const o = origSnapRef.current;
-    if (!o) return { rows: [], assetSummary: null, hasBacktestChange: false };
+    if (!o) return { rows: [], assetDiff: null, hasBacktestChange: false };
     const rows: DiffRow[] = [];
     const add = (label: string, b: string | number, a: string | number) => {
       if (String(b) !== String(a)) rows.push({ label, before: String(b), after: String(a) });
@@ -355,27 +359,41 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
     add("佣金费率", fmtRatePct(o.feePct / 100), fmtRatePct(feePct / 100));
     add("滑点", fmtRatePct(o.slippagePct / 100), fmtRatePct(slippagePct / 100));
     add("印花税（卖出）", fmtRatePct(o.stampDutyPct / 100), fmtRatePct(stampDutyPct / 100));
-    // 资产构成聚合: 新增/移除/换象限
+    // 资产构成: placement(symbol@source@quadrant) 级对比; 同 symbol 的 移除+新增 配对为「象限调整」
     const cur = QUADRANT_ORDER.flatMap((q) =>
-      selected[q].map((a) => ({ key: keyOf(a), label: a.name || a.symbol, quadrant: QUADRANT_SHORT[q] }))
-    );
-    const oMap = new Map(o.assets.map((a) => [a.key, a]));
-    const cMap = new Map(cur.map((a) => [a.key, a]));
-    const added = cur.filter((a) => !oMap.has(a.key)).map((a) => a.label);
-    const removed = o.assets.filter((a) => !cMap.has(a.key)).map((a) => a.label);
-    const moved = cur
-      .filter((a) => oMap.has(a.key) && oMap.get(a.key)!.quadrant !== a.quadrant)
-      .map((a) => `${a.label}（${oMap.get(a.key)!.quadrant}→${a.quadrant}）`);
-    const assetSummary = added.length || removed.length || moved.length
-      ? [
-          added.length ? `新增：${added.join("、")}` : "",
-          removed.length ? `移除：${removed.join("、")}` : "",
-          moved.length ? `调整：${moved.join("、")}` : "",
-        ].filter(Boolean).join("；")
-      : null;
+      selected[q].map((a) => ({ sym: keyOf(a), label: a.name || a.symbol, quadrant: q })));
+    const pkey = (p: { sym: string; quadrant: string }) => `${p.sym}@${p.quadrant}`;
+    const oSet = new Set(o.assets.map((a) => `${a.key}@${a.quadrant}`));
+    const cSet = new Set(cur.map(pkey));
+    const addedP = cur.filter((p) => !oSet.has(pkey(p)));
+    const removedP = o.assets
+      .filter((a) => !cSet.has(`${a.key}@${a.quadrant}`))
+      .map((a) => ({ sym: a.key, label: a.label, quadrant: a.quadrant }));
+    // 同 symbol 配对 → moved; 剩余落 added/removed
+    const remBySym = new Map<string, typeof removedP>();
+    for (const r of removedP) {
+      const arr = remBySym.get(r.sym) ?? [];
+      arr.push(r);
+      remBySym.set(r.sym, arr);
+    }
+    const moved: AssetDiff["moved"] = [];
+    const added: AssetDiff["added"] = [];
+    for (const a of addedP) {
+      const bucket = remBySym.get(a.sym);
+      if (bucket && bucket.length > 0) {
+        const r = bucket.shift()!;
+        moved.push({ label: a.label, from: QUADRANT_SHORT[r.quadrant], to: QUADRANT_SHORT[a.quadrant] });
+      } else {
+        added.push({ label: a.label, quadrant: QUADRANT_SHORT[a.quadrant] });
+      }
+    }
+    const removed = [...remBySym.values()].flat()
+      .map((r) => ({ label: r.label, quadrant: QUADRANT_SHORT[r.quadrant] }));
+    const assetDiff: AssetDiff | null =
+      added.length || removed.length || moved.length ? { added, removed, moved } : null;
     const metaOnlyLabels = new Set(["组合名称", "组合描述", "默认优化方法", "对比基准"]);
-    const hasBacktestChange = rows.some((r) => !metaOnlyLabels.has(r.label)) || assetSummary !== null;
-    return { rows, assetSummary, hasBacktestChange };
+    const hasBacktestChange = rows.some((r) => !metaOnlyLabels.has(r.label)) || assetDiff != null;
+    return { rows, assetDiff, hasBacktestChange };
     // origSnapRef 为 ref 不参与依赖; 其余为全部参与对比的表单状态
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [portfolioName, portfolioDescription, method, benchmarkKey, lookback, startDate, maxWeightPct, band, riskFreePct, feePct, slippagePct, stampDutyPct, selected]);
@@ -450,13 +468,13 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:min-h-[500px]">
               {QUADRANT_ORDER.map((q) => (
-                <Card key={q} className="flex flex-col">
+                <Card key={q} className="flex flex-col min-h-[240px]">
                   <CardContent className="p-4 flex-1 flex flex-col">
                     <div className="flex justify-between items-center mb-4">
                       <div className={`text-sm font-medium ${QUADRANT_COLOR[q]}`}>{QUADRANT_LABELS[q]}</div>
                       <Badge variant="secondary">已选 {selected[q].length}</Badge>
                     </div>
-                    <div className="flex flex-wrap gap-2 flex-1 content-start">
+                    <div className={`flex flex-wrap gap-2 flex-1 ${selected[q].length === 0 ? "items-center content-center" : "content-start"}`}>
                       {selected[q].map((a) => (
                         <Badge key={keyOf(a)} variant="outline" className="pr-1 bg-card border-border text-foreground">
                           {a.name || a.symbol}
@@ -465,7 +483,7 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
                         </Badge>
                       ))}
                       {selected[q].length === 0 && (
-                        <p className="text-sm text-muted-foreground">该象限为空。</p>
+                        <p className="text-sm text-muted-foreground w-full text-center">该象限为空。</p>
                       )}
                     </div>
                     <AssetPicker
@@ -516,7 +534,7 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
                 <div className="bg-bg-subtle p-1 rounded-md flex border border-border">
                   {(["sharpe", "sortino"] as const).map((r) => (
                     <div key={r} onClick={() => setRatio(r)}
-                      className={`px-4 py-1.5 text-sm font-medium rounded cursor-pointer ${ratio === r ? "bg-background shadow-sm border border-border" : "text-muted-foreground"}`}>
+                      className={`px-4 py-1.5 text-sm font-medium rounded cursor-pointer ${ratio === r ? "bg-background border border-border" : "text-muted-foreground"}`}>
                       {r === "sharpe" ? "夏普比率" : "Sortino 比率"}
                     </div>
                   ))}
@@ -665,7 +683,7 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
         open={diffOpen}
         onOpenChange={setDiffOpen}
         diffs={diffs.rows}
-        assetSummary={diffs.assetSummary}
+        assetDiff={diffs.assetDiff}
         canRecompute={diffs.hasBacktestChange}
         busy={savingMeta || submitting}
         onMetaSave={handleMetaSave}
@@ -697,7 +715,7 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
             </Button>
           ) : isWhitelisted ? (
             isEditMode && !isCopyMode ? (
-              (diffs.rows.length === 0 && diffs.assetSummary === null) ? (
+              (diffs.rows.length === 0 && diffs.assetDiff === null) ? (
                 <div className="flex items-center gap-3">
                   <span className="text-xs text-muted-foreground">无待保存变更</span>
                   <Button variant="outline" disabled>保存</Button>
@@ -749,6 +767,8 @@ function AssetPicker({
   const [category, setCategory] = useState<string>("all");
   const [vendor, setVendor] = useState<string>("all");
   const [pending, setPending] = useState<Set<string>>(new Set());
+  // 待确认的非 CNY 批次: null=无弹窗; 确认后整批(含 CNY 项)一起添加, 取消则整批不添加。
+  const [pendingNonCny, setPendingNonCny] = useState<Asset[] | null>(null);
   const usedSet = useMemo(() => new Set(usedInQuadrant), [usedInQuadrant]);
   const vendors = useMemo(
     () => Array.from(new Set(assets.map((a) => a.vendor).filter(Boolean))) as string[],
@@ -763,12 +783,13 @@ function AssetPicker({
         (vendor === "all" || a.vendor === vendor) &&
         (q === "" || (a.name || "").includes(q) || a.symbol.toLowerCase().includes(q.toLowerCase()))
     );
-    // 排序优先级: 后复权(hfq) ETF 最前; 停更与 前复权(qfq) ETF 沉底; 其余保持稳定。
+    // 排序优先级: 后复权(hfq) ETF 最前; 停更与 前复权(qfq) ETF 沉底; 非 CNY 计价(外币指数)一律排最后。
     const rank = (a: Asset): number => {
-      if (a.logical_source === "etf" && a.adjust === "hfq") return 0; // 后复权最前
-      if (a.is_stale) return 2; // 停更沉底
-      if (a.logical_source === "etf" && a.adjust === "qfq") return 1; // 前复权靠后
-      return 1; // 指数/商品/债券等夹在中间
+      const fx = (a.currency ?? "CNY") !== "CNY" ? 10 : 0;   // 外币计价: 无外汇数据, 回测口径受限
+      if (a.logical_source === "etf" && a.adjust === "hfq") return 0 + fx;
+      if (a.is_stale) return 2 + fx;
+      if (a.logical_source === "etf" && a.adjust === "qfq") return 1 + fx;
+      return 1 + fx;
     };
     return list.slice().sort((a, b) => rank(a) - rank(b));
   }, [assets, usedSet, category, vendor, q]);
@@ -799,12 +820,23 @@ function AssetPicker({
     });
   };
 
-  const confirm = () => {
-    const picked = assets.filter((a) => pending.has(keyOf(a)));
-    onPickMany(picked);
+  // 整批生效并关闭 picker(沿用原有收尾逻辑)
+  const proceedPick = (list: Asset[]) => {
+    onPickMany(list);
     setPending(new Set());
     setQ("");
     setOpen(false);
+  };
+
+  // 确认添加: 批次中含非 CNY 资产时先弹 AlertDialog 二次确认(整批确认/整批取消), 纯 CNY 直接生效。
+  const confirm = () => {
+    const picked = assets.filter((a) => pending.has(keyOf(a)));
+    const fx = picked.filter((a) => (a.currency ?? "CNY") !== "CNY");
+    if (fx.length > 0) {
+      setPendingNonCny(picked);   // 弹确认, 确认后 proceedPick(整批)
+      return;
+    }
+    proceedPick(picked);
   };
 
   const handleOpenChange = (v: boolean) => {
@@ -814,6 +846,7 @@ function AssetPicker({
       setQ("");
       setCategory("all");
       setVendor("all");
+      setPendingNonCny(null);   // 防御: picker 关闭即丢弃待确认的非 CNY 批次, 避免孤儿确认弹窗
     }
   };
 
@@ -878,6 +911,9 @@ function AssetPicker({
                       {checked && <Check className="w-3 h-3" />}
                     </div>
                     <span className="text-sm flex-1">{a.name || a.symbol}</span>
+                    {(a.currency ?? "CNY") !== "CNY" && (
+                      <Badge variant="outline" className="text-[10px] px-1 py-0 text-muted-foreground">{a.currency}</Badge>
+                    )}
                     {a.is_stale && (
                       <Badge variant="outline" className="font-normal h-5 px-1.5 text-[10px] text-destructive border-destructive/40">
                         停更
@@ -953,6 +989,36 @@ function AssetPicker({
           </div>
         </DialogFooter>
       </DialogContent>
+      {/* 非 CNY 资产二次确认: 外币计价无汇率数据, 回测不包含汇率变动 */}
+      <AlertDialog open={pendingNonCny != null} onOpenChange={(v) => { if (!v) setPendingNonCny(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>包含外币计价资产</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>
+                  以下资产以<strong>外币计价</strong>（非人民币）：
+                </p>
+                <ul className="text-sm list-disc pl-4">
+                  {(pendingNonCny ?? []).filter((a) => (a.currency ?? "CNY") !== "CNY").map((a) => (
+                    <li key={`${a.symbol}@${a.source}`}>{a.name || a.symbol}（{a.currency}）</li>
+                  ))}
+                </ul>
+                <p>
+                  当前系统没有外汇数据，无法把外币收益换算成人民币。回测将直接使用外币价格收益率，
+                  <strong>未包含汇率变动</strong>，可能影响回测效果。确定继续添加吗？
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { const l = pendingNonCny!; setPendingNonCny(null); proceedPick(l); }}>
+              仍要添加
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }

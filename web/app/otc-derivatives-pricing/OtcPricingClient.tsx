@@ -818,13 +818,15 @@ export function OtcPricingClient() {
     v == null || !Number.isFinite(v) ? "—" : v.toLocaleString("zh-CN");
 
   return (
-    <div className="flex-1 px-4 py-4 sm:p-6 max-w-7xl mx-auto w-full min-w-0 space-y-4 sm:space-y-6">
+    <div className="flex-1 px-4 py-4 sm:p-6 max-w-[1440px] mx-auto w-full min-w-0 space-y-4 sm:space-y-6">
       {/* 顶部标题 + 迷你日历 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 bg-card border border-border rounded-xl shadow-sm p-5 space-y-3">
+        <div className="lg:col-span-2 bg-card border border-border rounded-xl p-5 space-y-3">
           <div className="flex items-center gap-2">
             <TrendingUp className="w-5 h-5 text-primary" />
-            <h1 className="text-xl font-semibold tracking-tight">场外衍生品定价</h1>
+            <h1 className="text-xl font-semibold tracking-tight">
+              场外衍生品定价 <span className="text-muted-foreground font-normal">· Experiment</span>
+            </h1>
             <Badge variant="secondary" className="font-normal">Monte Carlo 方法解析求PV和Greeks</Badge>
           </div>
           <p className="text-sm text-muted-foreground leading-relaxed">
@@ -885,7 +887,7 @@ export function OtcPricingClient() {
             </Button>
           </div>
         </CardHeader>
-        <CardContent className={`p-5 space-y-5 ${!canPrice ? "opacity-60 pointer-events-none select-none" : ""}`}>
+        <CardContent className={`p-5 space-y-5 pt-0 sm:pt-0 ${!canPrice ? "opacity-60 pointer-events-none select-none" : ""}`}>
           {/* 通用 */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <FieldSelect label="交易方向" value={f.direction as string} onChange={(v) => set("direction", v)}
@@ -1036,7 +1038,7 @@ export function OtcPricingClient() {
               <LineChart className="w-4 h-4 text-primary" /> 定价结果
             </CardTitle>
           </CardHeader>
-          <CardContent className="p-5">
+          <CardContent className="p-5 pt-0 sm:pt-0">
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-5">
               <div className="space-y-1">
                 <div className="text-xs text-muted-foreground">公允价值 (PV)</div>
@@ -1105,7 +1107,7 @@ export function OtcPricingClient() {
               标记点仅表示已发生的敲入 / 敲出·终止; 橙线为累计盈亏。
             </p>
           </CardHeader>
-          <CardContent className="p-3 sm:p-5">
+          <CardContent className="p-3 sm:p-5 pt-0 sm:pt-0">
             <EChart option={pathOption} style={{ height: 420, width: "100%" }} />
           </CardContent>
         </Card>
@@ -1143,7 +1145,7 @@ export function OtcPricingClient() {
             </div>
           )}
         </CardHeader>
-        <CardContent className="p-0">
+        <CardContent className="p-0 pt-0 sm:pt-0">
           {deals.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">
               {isWhitelisted ? "暂无簿记, 定价后点击「存为簿记」保存。" : "暂无示例簿记。登录后可簿记自己的场外期权。"}
@@ -1335,7 +1337,7 @@ export function OtcPricingClient() {
             )} */}
           </div>
         </CardHeader>
-        <CardContent className="p-3 sm:p-5">
+        <CardContent className="p-3 sm:p-5 pt-0 sm:pt-0">
           {volLoading ? (
             <div className="h-[320px] flex items-center justify-center text-sm text-muted-foreground">
               <Loader2 className="w-4 h-4 mr-2 animate-spin" /> 计算中…

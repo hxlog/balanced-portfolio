@@ -104,7 +104,7 @@ export async function HomeCryptoSection() {
   if (!data) {
     return (
       <section className="py-24 px-6 border-t border-border">
-        <div className="container mx-auto max-w-6xl">
+        <div className="container mx-auto max-w-[1440px]">
           <div className="border border-border rounded-xl bg-card p-8 flex items-center justify-between">
             <div>
               <h2 className="text-2xl font-semibold tracking-tight">
@@ -140,7 +140,7 @@ export async function HomeCryptoSection() {
 
   return (
     <section className="py-24 px-6 border-t border-border">
-      <div className="container mx-auto max-w-6xl">
+      <div className="container mx-auto max-w-[1440px]">
         <div className="border border-border rounded-xl bg-card p-8">
           {/* Header */}
           <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-8">

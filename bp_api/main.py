@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import auth, cache, db, repositories as repo, tasking, tasks
 from .schemas import (
     AssetAdminIn,
+    AssetProbeIn,
     AssetSelectableIn,
     ChangePasswordIn,
     CopyPortfolioIn,
@@ -503,10 +504,11 @@ def list_admin_assets(_: auth.UserContext = Depends(auth.require_asset_editor)) 
 
 @app.post("/api/admin/assets/refresh-status")
 def refresh_admin_asset_status(_: auth.UserContext = Depends(auth.require_super_admin)) -> dict:
+    """管理端「刷新状态」按钮: with_count=True 重算行数(全表扫一次, 后台操作可接受)。"""
     from .daily_update import refresh_all_asset_status
 
     with db.get_conn() as conn:
-        refresh_all_asset_status(conn)
+        refresh_all_asset_status(conn, with_count=True)
         conn.commit()
     return {"ok": True}
 
@@ -659,10 +661,16 @@ def set_admin_asset_selectable(
 
 
 @app.post("/api/admin/assets/{source}/{symbol}/probe")
-def probe_admin_asset(source: str, symbol: str, _: auth.UserContext = Depends(auth.require_asset_editor)) -> dict:
+def probe_admin_asset(
+    source: str, symbol: str, payload: AssetProbeIn | None = None,
+    _: auth.UserContext = Depends(auth.require_asset_editor),
+) -> dict:
+    """测试该投资品近 1 年读取; body 可选 {"extra_params": {...}} 透传给数据源适配器
+    (如 ETF 的 adjust / 债券的 indicator), 缺省 extra={} —— 与保存落库的 extra_params 同口径。"""
     started = time.perf_counter()
     today = date.today()
     start = today - timedelta(days=365)
+    extra = dict(payload.extra_params) if payload else {}
     error = None
     rows = 0
     first_date = None
@@ -675,7 +683,7 @@ def probe_admin_asset(source: str, symbol: str, _: auth.UserContext = Depends(au
         last_exc: Exception | None = None
         for attempt in range(2):
             try:
-                df = fetch_with_fallback(source, symbol, start, today, {})
+                df = fetch_with_fallback(source, symbol, start, today, extra)
                 last_exc = None
                 break
             except Exception as exc:  # noqa: BLE001

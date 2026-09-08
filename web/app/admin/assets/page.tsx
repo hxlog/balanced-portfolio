@@ -78,6 +78,13 @@ export default function AdminAssetsPage() {
     [sources, form.source],
   );
 
+  // 可新增的数据源(is_addable=false 走独立 pipeline, 如 futures_cffex 由 CFFEX backfill 维护)。
+  // undefined 视为可添加, 兼容未透出该列的旧后端。
+  const addableSources = useMemo(
+    () => sources.filter((s) => s.is_addable !== false),
+    [sources],
+  );
+
   const vendors = useMemo(
     () => Array.from(new Set(sources.map((s) => s.vendor).filter(Boolean))) as string[],
     [sources],
@@ -113,6 +120,18 @@ export default function AdminAssetsPage() {
     setProbeError(null);
   };
 
+  /** 构造与保存落库口径一致的 extra_params(probe 透传用,「测试什么就保存什么」):
+   *  ETF 携带所选复权(落库为 extra_params.adjust), 中债国债固定财富口径(ingest 默认), 其余源为空。 */
+  const buildExtraParams = (
+    source: string,
+    category?: string | null,
+    adjust?: string | null,
+  ): { adjust?: string; indicator?: string } => {
+    if (category === "etf" && adjust) return { adjust };
+    if (source === "bond_csi_treasury") return { indicator: "财富" };
+    return {};
+  };
+
   const probeForm = async () => {
     const key = `${form.symbol}@${form.source}`;
     setBusyKey(key);
@@ -120,7 +139,9 @@ export default function AdminAssetsPage() {
     setProbeResult(null);
     setProbeError(null);
     try {
-      const res = await api.probeAdminAsset(form.source, form.symbol);
+      const res = await api.probeAdminAsset(
+        form.source, form.symbol, buildExtraParams(form.source, form.category, form.adjust),
+      );
       setProbeOk(true);
       setProbeResult(`读取成功：${res.first_date} ~ ${res.last_date}，${res.rows} 行，用时 ${res.elapsed_ms}ms`);
       await load();
@@ -137,11 +158,13 @@ export default function AdminAssetsPage() {
       toast.error("请先测试读取成功后再保存");
       return;
     }
+    // adjust 口径与 probe 一致(buildExtraParams 单一来源), 保证「测试口径 == 保存口径」。
+    const extra = buildExtraParams(form.source, form.category, form.adjust);
     await api.saveAdminAsset({
       ...form,
       category: form.category || null,
       start_date: form.start_date || null,
-      adjust: form.category === "etf" ? form.adjust : null,
+      adjust: extra.adjust ?? null,
       is_deleted: 0,
     });
     // 保留表单字段(数据源/分类/起始日/代码/名称)以便连续新增相似标的; 仅清探测状态。
@@ -191,7 +214,8 @@ export default function AdminAssetsPage() {
     const key = `${a.symbol}@${a.source}`;
     setBusyKey(key);
     try {
-      const res = await api.probeAdminAsset(a.source, a.symbol);
+      // 与落库 extra_params 同口径: ETF 用已保存的 adjust, 中债国债用财富口径, 其余为空。
+      const res = await api.probeAdminAsset(a.source, a.symbol, buildExtraParams(a.source, a.category, a.adjust));
       toast.success(`读取成功: ${res.first_date} ~ ${res.last_date}, ${res.rows} 行, ${res.elapsed_ms}ms`);
       await load();
     } catch (e) {
@@ -246,7 +270,7 @@ export default function AdminAssetsPage() {
   const probing = busyKey === `${form.symbol}@${form.source}`;
 
   return (
-    <div className="flex-1 p-6 max-w-7xl mx-auto w-full space-y-6">
+    <div className="flex-1 p-6 max-w-[1440px] mx-auto w-full space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">资产管理</h1>
         <p className="text-sm text-muted-foreground mt-1">
@@ -261,7 +285,7 @@ export default function AdminAssetsPage() {
             先选数据源 → 按提示填写该源的 symbol 格式 → 点「测试」确认能读取 → 保存。
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-5">
+        <CardContent className="space-y-5 pt-0 sm:pt-0">
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-4">
             {/* 数据源 */}
             <div className="space-y-1.5">
@@ -271,7 +295,7 @@ export default function AdminAssetsPage() {
                   <SelectValue placeholder="选择数据源" />
                 </SelectTrigger>
                 <SelectContent className="max-w-[min(32rem,90vw)]">
-                  {sources.map((s) => (
+                  {addableSources.map((s) => (
                     <SelectItem key={s.code} value={s.code}>
                       {s.vendor ? `${s.vendor} · ` : ""}{s.code} · {s.asset_class}
                     </SelectItem>
@@ -480,7 +504,7 @@ export default function AdminAssetsPage() {
             <span className="text-xs text-muted-foreground">共 {filteredAssets.length} 项</span>
           </div>
         </CardHeader>
-        <CardContent className="overflow-x-auto">
+        <CardContent className="overflow-x-auto pt-0 sm:pt-0">
           {loading ? (
             <div className="py-12 text-center text-muted-foreground">加载中...</div>
           ) : (

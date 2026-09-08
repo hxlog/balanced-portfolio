@@ -157,6 +157,11 @@ class AssetSelectableIn(BaseModel):
     selectable: bool
 
 
+class AssetProbeIn(BaseModel):
+    """probe 端点可选 body: 数据源适配器 extra 透传(如 ETF 的 adjust / 债券的 indicator)。"""
+    extra_params: dict = Field(default_factory=dict)
+
+
 class TaskOut(BaseModel):
     task_id: str
     task_type: str

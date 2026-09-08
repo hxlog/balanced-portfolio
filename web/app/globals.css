@@ -36,7 +36,7 @@
   --down: #DC2626;
   --success: #16A34A;
   --warning: #D97706;
-  --radius: 0.75rem;
+  --radius: 0.625rem;
 }
 
 .dark {
@@ -98,6 +98,9 @@
   --color-success: var(--success);
   --color-warning: var(--warning);
 
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -129,8 +132,8 @@
     overflow-x: auto;
   }
   h1:not(.prose *), h2:not(.prose *), h3:not(.prose *), h4:not(.prose *) { font-weight: var(--font-weight-medium); line-height: 1.5; }
-  h1:not(.prose *) { font-size: var(--text-2xl); }
-  h2:not(.prose *) { font-size: var(--text-xl); }
+  h1:not(.prose *) { font-size: var(--text-2xl); letter-spacing: -0.02em; }
+  h2:not(.prose *) { font-size: var(--text-xl); letter-spacing: -0.02em; }
   h3:not(.prose *) { font-size: var(--text-lg); }
   h4:not(.prose *) { font-size: var(--text-base); }
   label { font-size: var(--text-base); font-weight: var(--font-weight-medium); line-height: 1.5; }

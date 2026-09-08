@@ -63,7 +63,7 @@ export default async function Home() {
             </Button>
             <Button asChild size="lg" className="rounded-full px-8 text-base">
               <Link href="/otc-derivatives-pricing">
-                场外衍生品定价 <ArrowRight className="ml-2 w-4 h-4" />
+                场外衍生品定价 · Experiment <ArrowRight className="ml-2 w-4 h-4" />
               </Link>
             </Button>
             <Button
@@ -80,7 +80,7 @@ export default async function Home() {
 
       {/* Features */}
       <section className="py-24 px-6 bg-bg-subtle/50">
-        <div className="container mx-auto max-w-6xl">
+        <div className="container mx-auto max-w-[1440px]">
           <div className="grid md:grid-cols-3 gap-12">
             <div className="space-y-4">
               <div className="w-12 h-12 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
@@ -116,7 +116,7 @@ export default async function Home() {
 
       {/* Methodology preview & Demo card */}
       <section id="methodology" className="py-32 px-6">
-        <div className="container mx-auto max-w-6xl">
+        <div className="container mx-auto max-w-[1440px]">
           <div className="grid lg:grid-cols-2 gap-16 items-center">
             <div className="space-y-8">
               <h2 className="text-3xl md:text-4xl font-semibold tracking-tight">
@@ -126,7 +126,7 @@ export default async function Home() {
                 经济环境在繁荣-萧条与通胀-通缩之间循环。我们将大类资产划分至四个象限，利用它们之间的低相关性和收益分布独立性构建全天候组合。
               </p>
 
-              <div className="grid grid-cols-2 gap-px bg-border rounded-xl overflow-hidden shadow-sm">
+              <div className="grid grid-cols-2 gap-px bg-border rounded-xl overflow-hidden">
                 <div className="bg-card p-4 sm:p-6 aspect-square flex flex-col justify-between">
                   <div className="text-sm font-medium text-warning">
                     过热 (通胀↑ 增长↑)
@@ -162,7 +162,7 @@ export default async function Home() {
               </div>
             </div>
 
-            <div className="bg-card border border-border rounded-2xl p-8 shadow-sm">
+            <div className="bg-card border border-border rounded-2xl p-8">
               <div className="flex justify-between items-start mb-6">
                 <div>
                   <h3 className="text-xl font-medium mb-1">
@@ -210,7 +210,7 @@ export default async function Home() {
 
       {/* CFFEX Futures Dashboard */}
       <section className="py-24 px-6 bg-bg-subtle/50 border-t border-border">
-        <div className="container mx-auto max-w-6xl">
+        <div className="container mx-auto max-w-[1440px]">
           <div className="grid lg:grid-cols-2 gap-16 items-center">
             <div className="space-y-8">
               <h2 className="text-3xl md:text-4xl font-semibold tracking-tight">
@@ -279,7 +279,7 @@ export default async function Home() {
               </div>
             </div>
 
-            <div className="bg-card border border-border rounded-2xl p-8 shadow-sm">
+            <div className="bg-card border border-border rounded-2xl p-8">
               <div className="flex justify-between items-start mb-6">
                 <div>
                   <h3 className="text-xl font-medium mb-1">
@@ -368,7 +368,7 @@ export default async function Home() {
       <Suspense
         fallback={
           <section className="py-24 px-6 border-t border-border">
-            <div className="container mx-auto max-w-6xl">
+            <div className="container mx-auto max-w-[1440px]">
               <div className="border border-border rounded-xl bg-card p-8 h-48 animate-pulse" />
             </div>
           </section>
@@ -379,7 +379,7 @@ export default async function Home() {
 
       {/* OTC Derivatives Pricing */}
       <section className="py-24 px-6 border-t border-border">
-        <div className="container mx-auto max-w-6xl">
+        <div className="container mx-auto max-w-[1440px]">
           <div className="grid lg:grid-cols-2 gap-16 items-center">
             <div className="space-y-8">
               <h2 className="text-3xl md:text-4xl font-semibold tracking-tight">
@@ -449,7 +449,7 @@ export default async function Home() {
               </div>
             </div>
 
-            <div className="rounded-xl border border-border bg-card p-6 space-y-4 shadow-sm">
+            <div className="rounded-xl border border-border bg-card p-6 space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="font-medium">支持结构一览</h3>
                 <span className="text-xs text-muted-foreground">MC / 解析</span>

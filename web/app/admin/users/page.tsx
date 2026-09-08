@@ -158,7 +158,7 @@ export default function AdminUsersPage() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto w-full p-6 space-y-6">
+    <div className="max-w-[1440px] mx-auto w-full p-6 space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">用户管理</h1>
         <p className="text-sm text-muted-foreground mt-1">
@@ -182,7 +182,7 @@ export default function AdminUsersPage() {
           <CardTitle className="text-base">添加用户</CardTitle>
           <CardDescription>设置邮箱、初始密码、资产编辑权限与组合上限（上限可设为无限）</CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-col sm:flex-row gap-3">
+        <CardContent className="flex flex-col sm:flex-row gap-3 pt-0 sm:pt-0">
           <Input placeholder="邮箱" value={email} onChange={(e) => setEmail(e.target.value)} className="sm:flex-1" />
           <Input type="password" placeholder="密码" value={password} onChange={(e) => setPassword(e.target.value)} className="sm:flex-1" />
           <div className="flex items-center gap-2 text-sm">
@@ -218,7 +218,7 @@ export default function AdminUsersPage() {
         <CardHeader>
           <CardTitle className="text-base">白名单用户</CardTitle>
         </CardHeader>
-        <CardContent className="overflow-x-auto">
+        <CardContent className="overflow-x-auto pt-0 sm:pt-0">
           {loading ? (
             <p className="text-sm text-muted-foreground">加载中...</p>
           ) : (

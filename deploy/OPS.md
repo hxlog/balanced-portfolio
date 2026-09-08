@@ -264,3 +264,89 @@ BP_SKIP_PULL=1 bash deploy/deploy.sh
 - 日志和工单中不出现密码、token、Cookie、私有地址或客户数据。
 - 定期备份 PostgreSQL，并验证恢复流程。
 - 安全问题按 [SECURITY.md](../SECURITY.md) 私下报告。
+
+## real-DB 语义测试（BP_TEST_DSN）
+
+部分测试（如 `bp_api/tests/test_asset_status.py` 的 `test_with_count_semantics_real_db`）需要真实
+PostgreSQL 验证 upsert/COUNT 语义，CI 无数据库时自动跳过，本地可选择性开启：
+
+```bash
+cd /opt/balanced-portfolio
+source .venv/bin/activate
+BP_TEST_DSN="postgresql://user:pass@localhost:5432/bp_tmp_test" \
+  python -m pytest bp_api/tests/test_asset_status.py -q
+```
+
+注意：
+
+- DSN 内联在 URL 里时，密码中的 `@ : / # ?` 等特殊字符必须 URL 编码
+  （`python -c "from urllib.parse import quote; print(quote('p@ss:word', safe=''))"`），
+  或者改用 `PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE` 环境变量拼 libpq 连接。
+- 不要直接指向生产库：测试会读写 `bp_asset_data_status` 测试行。推荐 scratch-DB 模式——
+  建临时库、只建最小 schema、跑完即删。完整可复制流程（本节即按此流程验证过）：
+
+```bash
+set -a
+source /opt/balanced-portfolio/.env   # 取 PGHOST/PGPORT/PGUSER/PGPASSWORD
+set +a
+
+# 1) 建临时库（连接 postgres 维护库，绝不写入业务数据）
+psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres \
+  -c "CREATE DATABASE bp_tmp_test"
+
+# 2) 建最小 schema（utf-8 临时文件 + psql -f；含中文注释亦可）
+#    必须同时建 bp_index_quote_daily / bp_quote_clean 两张空普通表——
+#    refresh_asset_status 两个分支在 upsert 前都会对两张表跑 MAX(trade_date)[, COUNT(*)]。
+#    不需要 TimescaleDB 扩展/hypertable，scratch 库只验 COUNT/MAX 与 upsert 冲突子句语义。
+#    bp_asset_data_status 刻意不带指向 bp_data_source 的外键（生产 schema 有，见 ddl/schema.sql:387；
+#    scratch 不建 bp_data_source、不种源行，测试用的 __T4_TEST__@__t4__ 直接可插）。
+cat > /tmp/bp_tmp_test_schema.sql <<'SQL'
+CREATE TABLE bp_index_quote_daily (
+    trade_date    DATE          NOT NULL,
+    symbol        TEXT          NOT NULL,
+    source        TEXT          NOT NULL,
+    close         NUMERIC(20,6) NOT NULL,
+    CONSTRAINT pk_bp_index_quote_daily PRIMARY KEY (symbol, source, trade_date)
+);
+
+CREATE TABLE bp_quote_clean (
+    trade_date  DATE          NOT NULL,
+    symbol      TEXT          NOT NULL,
+    source      TEXT          NOT NULL,
+    close       NUMERIC(20,6) NOT NULL,
+    fill_flag   TEXT          NOT NULL DEFAULT 'real',
+    CONSTRAINT pk_bp_quote_clean PRIMARY KEY (symbol, source, trade_date)
+);
+
+CREATE TABLE bp_asset_data_status (
+    symbol          TEXT        NOT NULL,
+    source          TEXT        NOT NULL,
+    last_raw_date   DATE,
+    last_clean_date DATE,
+    raw_rows        BIGINT      NOT NULL DEFAULT 0,
+    clean_rows      BIGINT      NOT NULL DEFAULT 0,
+    last_success_at TIMESTAMPTZ,
+    last_error      TEXT,
+    last_probe_ms   INTEGER,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT pk_bp_asset_data_status PRIMARY KEY (symbol, source)
+);
+SQL
+psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d bp_tmp_test \
+  -v ON_ERROR_STOP=1 -f /tmp/bp_tmp_test_schema.sql
+
+# 3) 密码 URL 编码后拼 DSN（密码含 @ : / # ? 时直接内联会被解析成坏 host）
+BP_TEST_DSN="postgresql://$PGUSER:$(python -c \
+  "import os; from urllib.parse import quote; print(quote(os.environ['PGPASSWORD'], safe=''))")\
+@$PGHOST:$PGPORT/bp_tmp_test" \
+  python -m pytest bp_api/tests/test_asset_status.py -q
+# 预期: 全部通过, 且 real-DB 一项为执行而非 skip（测试数随用例增减, 勿写死数字）
+
+# 4) 跑完清理（DROP 临时库 + 删临时 SQL 文件）
+psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres \
+  -c "DROP DATABASE bp_tmp_test"
+rm -f /tmp/bp_tmp_test_schema.sql
+```
+
+- 未设置 `BP_TEST_DSN` 时这些测试一律 skip，`pytest -q` 与 CI 均不受影响
+  （无 env 时本文件为 `9 passed, 1 skipped`）。

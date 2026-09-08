@@ -11,12 +11,18 @@ from . import repositories as repo, tasking
 logger = logging.getLogger(__name__)
 
 
-def refresh_all_asset_status(conn: psycopg.Connection) -> None:
+def refresh_all_asset_status(conn: psycopg.Connection, *, with_count: bool = False) -> None:
+    """批量刷新全部非删除资产的状态行。
+
+    默认 with_count=False: 只做廉价的 MAX(trade_date) 刷新(巡检/ingest 收尾等热路径,
+    不触碰 raw_rows/clean_rows)。管理端「刷新状态」按钮等需要精确行数的调用方
+    显式传 with_count=True(全表 COUNT 扫描, 低频手动操作可接受)。
+    """
     with conn.cursor() as cur:
         cur.execute("SELECT symbol, source FROM bp_index_config WHERE is_deleted = 0")
         pairs = cur.fetchall()
     for symbol, source in pairs:
-        repo.refresh_asset_status(conn, symbol, source)
+        repo.refresh_asset_status(conn, symbol, source, with_count=with_count)
 
 
 def enqueue_ready_portfolios(conn: psycopg.Connection) -> list[dict]:

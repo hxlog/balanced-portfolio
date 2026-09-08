@@ -289,6 +289,7 @@ export interface Asset {
   logical_source?: string;  // 逻辑源分组(etf/cn_index/hk_index/global_index/...), 用于隐藏物理 vendor
   last_clean_date?: string | null;  // 该资产最新清洗日
   is_stale?: boolean;  // 是否落后于平台最新清洗日(断更/未到最新)
+  currency?: string;   // 计价币种(CNY/USD/HKD/JPY/...); 非 CNY 为外币计价资产, 无汇率数据, builder 沉底+添加前确认
 }
 
 export interface NavPoint {
@@ -530,6 +531,7 @@ export interface DataSource {
   vendor?: string | null;
   logical_source?: string | null;
   is_backup?: boolean;
+  is_addable?: boolean;  // 40: false=不可在 /admin/assets 添加(如 futures_cffex); undefined 视为可添加
 }
 
 export interface AdminAsset {
@@ -891,10 +893,10 @@ export const api = {
   }) => req<{ ok: boolean }>("/api/admin/assets", { method: "POST", body: JSON.stringify(input) }),
   deleteAdminAsset: (source: string, symbol: string) =>
     req<{ ok: boolean }>(`/api/admin/assets/${encodeURIComponent(source)}/${encodeURIComponent(symbol)}`, { method: "DELETE" }),
-  probeAdminAsset: (source: string, symbol: string) =>
+  probeAdminAsset: (source: string, symbol: string, extra?: Record<string, unknown>) =>
     req<{ ok: boolean; rows: number; first_date?: string; last_date?: string; elapsed_ms: number }>(
       `/api/admin/assets/${encodeURIComponent(source)}/${encodeURIComponent(symbol)}/probe`,
-      { method: "POST" },
+      { method: "POST", body: JSON.stringify({ extra_params: extra ?? {} }) },
     ),
   syncAdminAsset: (source: string, symbol: string) =>
     req<{ ok: boolean; status: string; rows: number; detail: string }>(

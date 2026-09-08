@@ -1,0 +1,88 @@
+- generic [active] [ref=f6e1]:
+  - banner [ref=f6e2]:
+    - generic [ref=f6e3]:
+      - generic [ref=f6e4]:
+        - button "打开菜单" [ref=f6e5]
+        - link "BP" [ref=f6e7] [cursor=pointer]:
+          - /url: /
+      - generic [ref=f6e9]:
+        - link "在 GitHub 查看 Balanced Portfolio 源代码" [ref=f6e10] [cursor=pointer]:
+          - /url: https://github.com/hxlog/balanced-portfolio
+        - button "切换主题" [ref=f6e14]
+        - generic [ref=f6e17]:
+          - button "注册" [ref=f6e18]
+          - button "登录" [ref=f6e19]
+  - main [ref=f6e20]:
+    - generic [ref=f6e21]:
+      - generic [ref=f6e24]:
+        - generic [ref=f6e25]:
+          - heading "股指期货看板" [level=1] [ref=f6e26]
+          - paragraph [ref=f6e27]: 中金所股指期货收盘数据监控与历史升贴水分析
+        - generic [ref=f6e28]: 已收盘
+      - generic [ref=f6e32]:
+        - generic [ref=f6e33]:
+          - generic [ref=f6e35]:
+            - heading "合约监控" [level=3] [ref=f6e39]
+            - generic [ref=f6e40]:
+              - button "IF" [ref=f6e43]
+              - button "IH" [ref=f6e44]
+              - button "IC" [ref=f6e45]
+              - button "IM" [ref=f6e46]
+          - table [ref=f6e49]:
+            - rowgroup [ref=f6e50]:
+              - row [ref=f6e51]:
+                - columnheader "品种" [ref=f6e52]
+                - columnheader "合约名" [ref=f6e53]
+                - columnheader "最新点位" [ref=f6e54]
+                - columnheader [ref=f6e55]:
+                  - button "基差" [ref=f6e56]
+                - columnheader [ref=f6e59]:
+                  - button "升贴水率" [ref=f6e60]
+                - columnheader [ref=f6e63]:
+                  - button "年化升贴水率" [ref=f6e64]
+            - rowgroup [ref=f6e67]:
+              - row [ref=f6e68]:
+                - cell "数据加载中..." [ref=f6e69]
+        - generic [ref=f6e70]:
+          - generic [ref=f6e72]:
+            - generic [ref=f6e73]:
+              - heading "年化升贴水率走势" [level=3] [ref=f6e77]
+              - generic [ref=f6e78]: 综合年化升贴水率计算公式 = 0.6 * 次月 + 0.4 * 当季
+            - generic [ref=f6e79]:
+              - generic [ref=f6e80]: "叠加指数:"
+              - combobox [ref=f6e81]
+              - combobox [aria-hidden] [ref=f6e82]
+          - generic [ref=f6e83]: 历史数据加载中...
+        - generic [ref=f6e85]:
+          - generic [ref=f6e87]:
+            - heading "历史升贴水统计分位" [level=3] [ref=f6e88]
+            - tablist [ref=f6e90]:
+              - tab "近三月" [ref=f6e91]
+              - tab "近半年" [ref=f6e92]
+              - tab "近一年" [ref=f6e93]
+              - tab "近三年" [selected] [ref=f6e94]
+              - tab "近五年" [ref=f6e95]
+          - table [ref=f6e98]:
+            - rowgroup [ref=f6e99]:
+              - row [ref=f6e100]:
+                - columnheader "品种" [ref=f6e101]
+                - columnheader "综合年化升贴水率" [ref=f6e102]
+                - columnheader "当前分位值" [ref=f6e103]
+                - columnheader "50%分位" [ref=f6e104]
+            - rowgroup [ref=f6e105]:
+              - row [ref=f6e106]:
+                - cell "统计数据加载中..." [ref=f6e107]
+  - region "Notifications alt+T"
+  - contentinfo [ref=f6e108]:
+    - generic [ref=f6e109]:
+      - paragraph [ref=f6e110]: Balanced Portfolio 是开源的风险平价组合管理与回测项目。本工具仅供研究，不构成投资建议。
+      - link "在 GitHub 查看 Balanced Portfolio 源代码" [ref=f6e111] [cursor=pointer]:
+        - /url: https://github.com/hxlog/balanced-portfolio
+        - text: GitHub 源代码
+      - generic [ref=f6e112]:
+        - generic [ref=f6e113]: © 2026 Balanced Portfolio
+        - generic [aria-hidden] [ref=f6e114]: "|"
+        - link "粤ICP备2024174552号-2" [ref=f6e115] [cursor=pointer]:
+          - /url: https://beian.miit.gov.cn/
+  - button "Open Next.js Dev Tools" [ref=f6e121] [cursor=pointer]
+  - alert [ref=f6e125]

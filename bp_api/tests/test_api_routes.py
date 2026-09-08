@@ -52,3 +52,16 @@ def test_recompute_all_route_registered():
     sig = inspect.signature(main.recompute_all_portfolios)
     dep = sig.parameters["user"].default
     assert getattr(dep, "dependency", None) is auth.require_super_admin
+
+
+def test_probe_admin_asset_route_accepts_optional_extra_body():
+    """Task 3: probe 端点接受可选 JSON body AssetProbeIn(extra_params), 缺省 {} 向后兼容。"""
+    import inspect
+
+    from bp_api.main import probe_admin_asset
+
+    assert "POST" in _route_methods("/api/admin/assets/{source}/{symbol}/probe")
+    sig = inspect.signature(probe_admin_asset)
+    param = sig.parameters["payload"]
+    assert param.default is None  # body 可缺省
+    assert "AssetProbeIn" in str(param.annotation)

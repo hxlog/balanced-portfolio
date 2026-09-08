@@ -417,7 +417,7 @@ export function CffexClient() {
     <div className="min-h-screen bg-background text-foreground pb-24">
       {/* Page Header */}
       <div className="border-b border-border/40 bg-card/30 backdrop-blur-sm">
-        <div className="container mx-auto max-w-7xl px-4 sm:px-6 py-6 sm:py-8">
+        <div className="container mx-auto max-w-[1440px] px-4 sm:px-6 py-6 sm:py-8">
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
             <div>
               <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mb-2">
@@ -434,7 +434,7 @@ export function CffexClient() {
         </div>
       </div>
 
-      <div className="container mx-auto max-w-7xl px-4 sm:px-6 py-6 sm:py-8 space-y-8">
+      <div className="container mx-auto max-w-[1440px] px-4 sm:px-6 py-6 sm:py-8 space-y-8">
         {/* Spot Error Banner */}
         {spotError && (
           <div className="bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-3 text-sm text-destructive">
@@ -447,7 +447,7 @@ export function CffexClient() {
           {filteredIndices.map(idx => (
             <Card
               key={idx.variety}
-              className="bg-card/50 shadow-none border-border/50 transition-all hover:bg-card/80"
+              className="bg-card/50 border-border/50 transition-all hover:bg-card/80"
             >
               <CardContent className="p-4 sm:p-5">
                 <div className="text-xs text-muted-foreground mb-1">
@@ -460,7 +460,7 @@ export function CffexClient() {
                     {idx.current_point != null ? idx.current_point.toFixed(2) : "--"}
                   </div>
                   <div
-                    className={`flex items-center text-sm font-medium pb-0.5 ${
+                    className={`flex items-center text-sm font-medium pb-0.5 max-sm:mr-px ${
                       idx.change_pct != null
                         ? (idx.change_pct >= 0 ? "text-up" : "text-down")
                         : "text-muted-foreground"
@@ -480,7 +480,7 @@ export function CffexClient() {
         </div>
 
         {/* Section 2: Live Contract Table */}
-        <Card className="border-border/50 shadow-sm bg-card/30 backdrop-blur-sm">
+        <Card className="border-border/50 bg-card/30 backdrop-blur-sm">
           <CardHeader className="border-b border-border/40 pb-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-2">
@@ -503,7 +503,7 @@ export function CffexClient() {
               </div>
             </div>
           </CardHeader>
-          <CardContent className="p-0 overflow-x-auto">
+          <CardContent className="p-0 overflow-x-auto pt-0 sm:pt-0">
             <Table>
               <TableHeader className="bg-muted/30">
                 <TableRow className="hover:bg-transparent">
@@ -611,7 +611,7 @@ export function CffexClient() {
         </Card>
 
         {/* Section 3: Historical Chart */}
-        <Card className="border-border/50 shadow-sm bg-card/30 backdrop-blur-sm">
+        <Card className="border-border/50 bg-card/30 backdrop-blur-sm">
           <CardHeader className="border-b border-border/40 pb-4">
             <div className="flex flex-col gap-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -639,7 +639,7 @@ export function CffexClient() {
               </div>
             </div>
           </CardHeader>
-          <CardContent className="pt-4 pb-2">
+          <CardContent className="pt-4 pb-2 sm:pt-0">
             {historyData ? (
               <EChart option={chartOption} style={{ height: 440, width: "100%" }} />
             ) : (
@@ -651,14 +651,14 @@ export function CffexClient() {
         </Card>
 
         {/* Section 4: Statistics Table */}
-        <Card className="border-border/50 shadow-sm bg-card/30 backdrop-blur-sm">
+        <Card className="border-border/50 bg-card/30 backdrop-blur-sm">
           <CardHeader className="border-b border-border/40 pb-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <CardTitle className="text-lg">历史升贴水统计分位</CardTitle>
               <Tabs value={statPeriod} onValueChange={setStatPeriod}>
-                <TabsList className="w-full grid grid-cols-3 sm:grid-cols-5">
+                <TabsList className="w-full grid grid-cols-5 gap-1">
                   {STAT_PERIODS.map(sp => (
-                    <TabsTrigger key={sp.value} value={sp.value} className="text-xs px-2 sm:px-3">
+                    <TabsTrigger key={sp.value} value={sp.value} className="text-[11px] sm:text-xs px-1.5 sm:px-3 whitespace-nowrap">
                       {sp.label}
                     </TabsTrigger>
                   ))}
@@ -666,23 +666,23 @@ export function CffexClient() {
               </Tabs>
             </div>
           </CardHeader>
-          <CardContent className="p-0 overflow-x-auto">
+          <CardContent className="p-0 overflow-x-auto pt-0 sm:pt-0">
             <Table>
               <TableHeader className="bg-muted/30">
                 <TableRow className="hover:bg-transparent">
-                  <TableHead className="w-[80px]">品种</TableHead>
-                  <TableHead className="text-center font-semibold">综合年化升贴水率</TableHead>
-                  <TableHead className="text-right">当前分位值</TableHead>
-                  <TableHead className="text-right hidden md:table-cell">10%分位</TableHead>
-                  <TableHead className="text-right hidden md:table-cell">30%分位</TableHead>
-                  <TableHead className="text-right font-semibold">50%分位</TableHead>
-                  <TableHead className="text-right hidden md:table-cell">70%分位</TableHead>
-                  <TableHead className="text-right hidden md:table-cell">90%分位</TableHead>
-                  <TableHead className="text-right hidden lg:table-cell">均值</TableHead>
-                  <TableHead className="text-right hidden lg:table-cell">+1σ</TableHead>
-                  <TableHead className="text-right hidden lg:table-cell">-1σ</TableHead>
-                  <TableHead className="text-right hidden lg:table-cell">+2σ</TableHead>
-                  <TableHead className="text-right hidden lg:table-cell">-2σ</TableHead>
+                  <TableHead className="w-[80px] p-2 sm:p-4 whitespace-nowrap sticky left-0 bg-card z-10">品种</TableHead>
+                  <TableHead className="text-center font-semibold p-2 sm:p-4 whitespace-nowrap">综合年化升贴水率</TableHead>
+                  <TableHead className="text-right p-2 sm:p-4 whitespace-nowrap">当前分位值</TableHead>
+                  <TableHead className="text-right hidden md:table-cell p-2 sm:p-4 whitespace-nowrap">10%分位</TableHead>
+                  <TableHead className="text-right hidden md:table-cell p-2 sm:p-4 whitespace-nowrap">30%分位</TableHead>
+                  <TableHead className="text-right font-semibold p-2 sm:p-4 whitespace-nowrap">50%分位</TableHead>
+                  <TableHead className="text-right hidden md:table-cell p-2 sm:p-4 whitespace-nowrap">70%分位</TableHead>
+                  <TableHead className="text-right hidden md:table-cell p-2 sm:p-4 whitespace-nowrap">90%分位</TableHead>
+                  <TableHead className="text-right hidden lg:table-cell p-2 sm:p-4 whitespace-nowrap">均值</TableHead>
+                  <TableHead className="text-right hidden lg:table-cell p-2 sm:p-4 whitespace-nowrap">+1σ</TableHead>
+                  <TableHead className="text-right hidden lg:table-cell p-2 sm:p-4 whitespace-nowrap">-1σ</TableHead>
+                  <TableHead className="text-right hidden lg:table-cell p-2 sm:p-4 whitespace-nowrap">+2σ</TableHead>
+                  <TableHead className="text-right hidden lg:table-cell p-2 sm:p-4 whitespace-nowrap">-2σ</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -690,13 +690,13 @@ export function CffexClient() {
                   .filter(s => selectedIndices.includes(s.variety))
                   .map(s => (
                     <TableRow key={s.variety} className="transition-colors hover:bg-muted/20">
-                      <TableCell className="font-medium">{s.variety}</TableCell>
-                      <TableCell className="text-right font-mono tabular-nums font-semibold">
+                      <TableCell className="font-medium p-2 sm:p-4 whitespace-nowrap sticky left-0 bg-card z-10">{s.variety}</TableCell>
+                      <TableCell className="text-right font-mono tabular-nums font-semibold p-2 sm:p-4 whitespace-nowrap">
                         {currentComposite[s.variety] != null
                           ? `${currentComposite[s.variety]!.toFixed(2)}%`
                           : "--"}
                       </TableCell>
-                      <TableCell className="text-right font-mono tabular-nums">
+                      <TableCell className="text-right font-mono tabular-nums p-2 sm:p-4 whitespace-nowrap">
                         {(() => {
                           const pct = currentPercentile(s.variety, []);
                           // Need actual values array; use stats API data approximation
@@ -714,7 +714,7 @@ export function CffexClient() {
                               <span className={isLowPct ? "text-warning" : "text-muted-foreground"}>
                                 {(normalizedPct * 100).toFixed(0)}%
                               </span>
-                              <span className="w-12 h-2 rounded-full bg-muted/30 overflow-hidden" dir="ltr">
+                              <span className="hidden sm:inline-block align-middle w-12 h-2 rounded-full bg-muted/30 overflow-hidden" dir="ltr">
                                 <span
                                   className={`block h-full rounded-full ${isLowPct ? "bg-warning" : "bg-muted-foreground"}`}
                                   style={{ width: `${Math.max(2, normalizedPct * 100)}%`, minWidth: 2 }}
@@ -724,24 +724,24 @@ export function CffexClient() {
                           );
                         })()}
                       </TableCell>
-                      <TableCell className="text-right font-mono tabular-nums hidden md:table-cell">{s.p10}%</TableCell>
-                      <TableCell className="text-right font-mono tabular-nums hidden md:table-cell">{s.p30}%</TableCell>
-                      <TableCell className="text-right font-mono tabular-nums font-semibold bg-muted/10">
+                      <TableCell className="text-right font-mono tabular-nums hidden md:table-cell p-2 sm:p-4 whitespace-nowrap">{s.p10}%</TableCell>
+                      <TableCell className="text-right font-mono tabular-nums hidden md:table-cell p-2 sm:p-4 whitespace-nowrap">{s.p30}%</TableCell>
+                      <TableCell className="text-right font-mono tabular-nums font-semibold bg-muted/10 p-2 sm:p-4 whitespace-nowrap">
                         {s.p50}%
                       </TableCell>
-                      <TableCell className="text-right font-mono tabular-nums hidden md:table-cell">{s.p70}%</TableCell>
-                      <TableCell className="text-right font-mono tabular-nums hidden md:table-cell">{s.p90}%</TableCell>
-                      <TableCell className="text-right font-mono tabular-nums hidden lg:table-cell">{s.mean}%</TableCell>
-                      <TableCell className="text-right font-mono tabular-nums text-up hidden lg:table-cell">
+                      <TableCell className="text-right font-mono tabular-nums hidden md:table-cell p-2 sm:p-4 whitespace-nowrap">{s.p70}%</TableCell>
+                      <TableCell className="text-right font-mono tabular-nums hidden md:table-cell p-2 sm:p-4 whitespace-nowrap">{s.p90}%</TableCell>
+                      <TableCell className="text-right font-mono tabular-nums hidden lg:table-cell p-2 sm:p-4 whitespace-nowrap">{s.mean}%</TableCell>
+                      <TableCell className="text-right font-mono tabular-nums text-up hidden lg:table-cell p-2 sm:p-4 whitespace-nowrap">
                         {(s.mean + s.std).toFixed(2)}%
                       </TableCell>
-                      <TableCell className="text-right font-mono tabular-nums text-down hidden lg:table-cell">
+                      <TableCell className="text-right font-mono tabular-nums text-down hidden lg:table-cell p-2 sm:p-4 whitespace-nowrap">
                         {(s.mean - s.std).toFixed(2)}%
                       </TableCell>
-                      <TableCell className="text-right font-mono tabular-nums text-up hidden lg:table-cell">
+                      <TableCell className="text-right font-mono tabular-nums text-up hidden lg:table-cell p-2 sm:p-4 whitespace-nowrap">
                         {(s.mean + 2 * s.std).toFixed(2)}%
                       </TableCell>
-                      <TableCell className="text-right font-mono tabular-nums text-down hidden lg:table-cell">
+                      <TableCell className="text-right font-mono tabular-nums text-down hidden lg:table-cell p-2 sm:p-4 whitespace-nowrap">
                         {(s.mean - 2 * s.std).toFixed(2)}%
                       </TableCell>
                     </TableRow>

@@ -44,15 +44,16 @@
 - 根字号 16px；UI 主文本 `text-sm`（14px）；正文/文档 `text-base leading-relaxed`；辅助说明 `text-xs`。
 - 行距：正文 1.6（`leading-6`/relaxed），标题 1.2，紧凑控件 1.25。
 - 页面标题 `text-2xl font-semibold tracking-tight`；区块标题 `text-base/lg font-medium`。
-- 数字一律 `font-mono tabular-nums`（表格、指标、输入）。
+- 标题紧排：`@layer base` 中 h1/h2 统一 `letter-spacing: -0.02em`（OpenAI/Next.js 风格；对中文视觉影响可忽略——letter-spacing 同样作用于汉字，-0.02em 在 16px 下约 0.3px）。页面标题带显式 `tracking-tight`（-0.025em）时，工具类优先级高于 base 层，实际生效 -0.025em（双层并存的现实口径）。
+- 西文字体栈：Geist（`--font-geist-sans`，`next/font/google`，layout.tsx 注入）+ 中文回落 PingFang SC / Microsoft YaHei；等宽 `Geist Mono` + 系统等宽回落（`--font-sans`/`--font-mono` 见 globals.css `@theme inline`）。数字一律 `font-mono tabular-nums`（表格、指标、输入）。
 - `@layer base` 不为裸元素设置字号（按钮等继承父级）；显式工具类控制各组件字号。
 
 ## 3. 间距与布局
 
 - 间距栅格 4px：卡片内容 `p-5 sm:p-6`；区块间 `space-y-6`；栅格 `gap-4`/`gap-6`。
-- 页面容器：内容型 `max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8`（dashboard）；表单型窄栏 `max-w-4xl`（builder）；管理页 `max-w-7xl`。
+- 页面容器：全站主容器 `max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8`（navbar/footer/dashboard/列表页/看板页统一）；表单型窄栏 `max-w-4xl`（builder）；首页 hero `max-w-5xl`、cta `max-w-4xl` 为内容宽度例外；文档阅读栏 `max-w-6xl`（/methodology prose+TOC 阅读宽度，刻意不参与 1440 统一）。
 - 圆角：卡片 `rounded-xl`、控件 `rounded-md`、徽章/胶囊 `rounded-full`、弹窗 `rounded-lg`。
-- 阴影：低阴影 `shadow-sm`，hover `shadow-md`；导航 `bg-background/80 backdrop-blur-md`。
+- 阴影：全站扁平（见 §7 扁平化规范）——卡片零投影靠 border 分隔，弹层保留层级阴影；导航 `bg-background/80 backdrop-blur-md`。
 - 按钮高度：默认 `h-9`，紧凑 `h-8`，大 `h-11`；可点目标 ≥32px。
 
 ## 4. 图表主题
@@ -78,7 +79,18 @@ shadcn 风格 17 件：badge, button, calendar, card, checkbox, command, dialog,
 - 1440（桌面）：内容容器上限。
 - 验收标准：三视口 × 明暗主题无内容截断、无意外横滚、文字不重叠（审计工具：chrome-devtools 三视口矩阵）。
 
-## 7. 维护规则
+## 7. 扁平化规范（2026-09 OpenAI/Next.js 风格打磨）
+
+- 卡片**零投影**：`Card` 基类 = `rounded-xl border border-border bg-card text-card-foreground`，靠 border 分隔；业务卡片/统计块上的 `shadow-sm` 一律不放（已全站清理）。
+- 弹层保留层级阴影（overlay 需要 elevation）：Dialog / AlertDialog / Sheet 内容 `shadow-lg`，Popover / Select 下拉 `shadow-md`，Toast 走 sonner 默认样式。
+- 悬浮控件例外：确实悬浮于页面之上的元素（BackToTop 固定按钮）允许 `shadow-sm`。
+- 控件选中态微抬升（tabs 激活页签等小控件内部 affordance）不在卡片扁平化范围内，保持原样。
+- 圆角 token：`--radius: 0.625rem`（10px）；派生 `--radius-sm/md/lg/xl` 由 `calc(var(--radius) ±)` 自动跟随，勿单独写死。
+- Geist 西文字体栈 + 中文回落（见 §2 排版），由 `next/font/google` 注入、`@theme inline` 的 `--font-sans`/`--font-mono` 接管。
+- 标题紧排 `letter-spacing: -0.02em`（base 层 h1/h2）。
+- **颜色方案不变**：sky 主色、涨跌/语义/象限色、`chart-theme.ts` 图表色一律未动；本次打磨只改字体/圆角/阴影/标题间距。
+
+## 8. 维护规则
 
 1. 新增颜色先进 `globals.css` token 再到 `@theme inline` 映射，组件只用语义类。
 2. 新增图表颜色进 `chart-theme.ts`。

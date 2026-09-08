@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
+import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import "katex/dist/katex.min.css";
 import { Providers } from "./providers";
@@ -7,6 +8,10 @@ import { AuthProvider } from "@/lib/auth";
 import { Navbar } from "@/components/Navbar";
 import { BackToTop } from "@/components/BackToTop";
 import { Toaster } from "@/components/ui/sonner";
+
+// Geist 西文栈(Next.js 官网同款): 中文自动回落 PingFang SC / Microsoft YaHei(见 globals.css --font-sans)
+const geistSans = Geist({ subsets: ["latin"], variable: "--font-geist-sans", display: "swap" });
+const geistMono = Geist_Mono({ subsets: ["latin"], variable: "--font-geist-mono", display: "swap" });
 
 const SITE_URL = process.env.BP_SITE_URL || "http://localhost:3000";
 const SITE_NAME = "Balanced Portfolio";
@@ -80,7 +85,7 @@ const jsonLd = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="zh-CN" suppressHydrationWarning>
+    <html lang="zh-CN" className={`${geistSans.variable} ${geistMono.variable}`} suppressHydrationWarning>
       <body className="min-h-screen flex flex-col bg-background text-foreground font-sans antialiased selection:bg-cyan-100 dark:selection:bg-zinc-800">
         {ENABLE_UMAMI && (
           <script defer src={UMAMI_SRC} data-website-id={UMAMI_WEBSITE_ID} />
@@ -99,7 +104,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </AuthProvider>
           </Suspense>
           <footer className="border-t border-border py-8 text-center text-sm text-muted-foreground mt-auto">
-            <div className="container mx-auto max-w-7xl md:px-4 sm:px-6 flex flex-col items-center gap-3">
+            <div className="container mx-auto max-w-[1440px] md:px-4 sm:px-6 flex flex-col items-center gap-3">
               <p className="leading-relaxed max-w-2xl">
                 Balanced Portfolio 是开源的风险平价组合管理与回测项目。本工具仅供研究，不构成投资建议。
               </p>

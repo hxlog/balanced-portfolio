@@ -263,7 +263,8 @@ def list_assets(conn: psycopg.Connection) -> list[dict]:
             SELECT c.symbol, c.source, c.category, c.name, s.asset_class,
                    s.vendor, c.extra_params->>'adjust' AS adjust,
                    COALESCE(s.logical_source, c.source) AS logical_source,
-                   st.last_clean_date
+                   st.last_clean_date,
+                   c.currency
             FROM bp_index_config c
             JOIN bp_data_source s ON s.code = c.source
             LEFT JOIN bp_asset_data_status st
@@ -278,6 +279,7 @@ def list_assets(conn: psycopg.Connection) -> list[dict]:
                 "asset_class": r[4], "vendor": r[5], "adjust": r[6],
                 "logical_source": r[7],
                 "last_clean_date": r[8],
+                "currency": r[9],
                 "is_stale": (
                     frontier is not None
                     and (r[8] is None or r[8] < frontier)
@@ -1451,7 +1453,8 @@ def list_data_sources(conn: psycopg.Connection) -> list[dict]:
             """SELECT code, description, asset_class, symbol_hint,
                       supports_date_range, is_enabled, vendor,
                       COALESCE(logical_source, code) AS logical_source,
-                      COALESCE(is_backup, false) AS is_backup
+                      COALESCE(is_backup, false) AS is_backup,
+                      is_addable
                FROM bp_data_source
                ORDER BY asset_class, code"""
         )
@@ -1466,6 +1469,7 @@ def list_data_sources(conn: psycopg.Connection) -> list[dict]:
                 "vendor": r[6],
                 "logical_source": r[7],
                 "is_backup": r[8],
+                "is_addable": bool(r[9]),
             }
             for r in cur.fetchall()
         ]
@@ -1480,7 +1484,8 @@ def list_admin_assets(conn: psycopg.Connection) -> list[dict]:
                       st.last_raw_date, st.last_clean_date, st.raw_rows, st.clean_rows,
                       st.last_success_at, st.last_error, st.last_probe_ms,
                       c.is_selectable, c.extra_params->>'adjust' AS adjust,
-                      COALESCE(s.logical_source, c.source) AS logical_source
+                      COALESCE(s.logical_source, c.source) AS logical_source,
+                      c.currency
                FROM bp_index_config c
                JOIN bp_data_source s ON s.code = c.source
                LEFT JOIN bp_asset_data_status st
@@ -1507,6 +1512,7 @@ def list_admin_assets(conn: psycopg.Connection) -> list[dict]:
                 "is_selectable": bool(r[15]),
                 "adjust": r[16],
                 "logical_source": r[17],
+                "currency": r[18],
                 "is_stale": (
                     r[5] == 0
                     and r[15] is not False
@@ -1582,35 +1588,80 @@ def set_asset_selectable(conn: psycopg.Connection, source: str, symbol: str, sel
             raise KeyError(f"资产不存在: {symbol}@{source}")
 
 
-def refresh_asset_status(conn: psycopg.Connection, symbol: str, source: str, error: Optional[str] = None, probe_ms: Optional[int] = None) -> None:
+def refresh_asset_status(
+    conn: psycopg.Connection,
+    symbol: str,
+    source: str,
+    error: Optional[str] = None,
+    probe_ms: Optional[int] = None,
+    *,
+    with_count: bool = False,
+) -> None:
+    """维护 bp_asset_data_status 单资产行。
+
+    COUNT(*) 对 hypertable 是分区扫描, 是 probe/保存/巡检热路径要避开的开销, 故分级:
+    - with_count=False(默认, 热路径): 只跑两条 MAX(trade_date)(hypertable 的 PK 是
+      per-chunk 索引, 无时间谓词的 MAX 需跨 chunk 聚合——比 COUNT 便宜, 但并非
+      index-cheap 的单索引点查);
+      upsert 的 INSERT 列表与 DO UPDATE SET 均不含 raw_rows/clean_rows ——
+      既有行保留库中上次校准值(如 999 不被清零), 新行靠 DEFAULT 0。
+    - with_count=True(数据推进后/管理端手动刷新): MAX+COUNT 一起查, 写回真实行数。
+    last_success_at 的 COALESCE 语义(失败刷新不清空上次成功时间)两条分支一致。
+    """
     with conn.cursor() as cur:
-        cur.execute(
-            "SELECT MAX(trade_date), COUNT(*) FROM bp_index_quote_daily WHERE symbol=%s AND source=%s",
-            (symbol, source),
-        )
-        raw_date, raw_rows = cur.fetchone()
-        cur.execute(
-            "SELECT MAX(trade_date), COUNT(*) FROM bp_quote_clean WHERE symbol=%s AND source=%s",
-            (symbol, source),
-        )
-        clean_date, clean_rows = cur.fetchone()
         success_at = datetime.now(timezone.utc) if error is None else None
-        cur.execute(
-            """INSERT INTO bp_asset_data_status
-                 (symbol, source, last_raw_date, last_clean_date, raw_rows, clean_rows,
-                  last_success_at, last_error, last_probe_ms)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-               ON CONFLICT (symbol, source) DO UPDATE SET
-                 last_raw_date=EXCLUDED.last_raw_date,
-                 last_clean_date=EXCLUDED.last_clean_date,
-                 raw_rows=EXCLUDED.raw_rows,
-                 clean_rows=EXCLUDED.clean_rows,
-                 last_success_at=COALESCE(EXCLUDED.last_success_at, bp_asset_data_status.last_success_at),
-                 last_error=EXCLUDED.last_error,
-                 last_probe_ms=EXCLUDED.last_probe_ms,
-                 updated_at=now()""",
-            (symbol, source, raw_date, clean_date, raw_rows or 0, clean_rows or 0, success_at, error, probe_ms),
-        )
+        if with_count:
+            cur.execute(
+                "SELECT MAX(trade_date), COUNT(*) FROM bp_index_quote_daily WHERE symbol=%s AND source=%s",
+                (symbol, source),
+            )
+            raw_date, raw_rows = cur.fetchone()
+            cur.execute(
+                "SELECT MAX(trade_date), COUNT(*) FROM bp_quote_clean WHERE symbol=%s AND source=%s",
+                (symbol, source),
+            )
+            clean_date, clean_rows = cur.fetchone()
+            cur.execute(
+                """INSERT INTO bp_asset_data_status
+                     (symbol, source, last_raw_date, last_clean_date, raw_rows, clean_rows,
+                      last_success_at, last_error, last_probe_ms)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   ON CONFLICT (symbol, source) DO UPDATE SET
+                     last_raw_date=EXCLUDED.last_raw_date,
+                     last_clean_date=EXCLUDED.last_clean_date,
+                     raw_rows=EXCLUDED.raw_rows,
+                     clean_rows=EXCLUDED.clean_rows,
+                     last_success_at=COALESCE(EXCLUDED.last_success_at, bp_asset_data_status.last_success_at),
+                     last_error=EXCLUDED.last_error,
+                     last_probe_ms=EXCLUDED.last_probe_ms,
+                     updated_at=now()""",
+                (symbol, source, raw_date, clean_date, raw_rows or 0, clean_rows or 0, success_at, error, probe_ms),
+            )
+        else:
+            cur.execute(
+                "SELECT MAX(trade_date) FROM bp_index_quote_daily WHERE symbol=%s AND source=%s",
+                (symbol, source),
+            )
+            raw_date = cur.fetchone()[0]
+            cur.execute(
+                "SELECT MAX(trade_date) FROM bp_quote_clean WHERE symbol=%s AND source=%s",
+                (symbol, source),
+            )
+            clean_date = cur.fetchone()[0]
+            cur.execute(
+                """INSERT INTO bp_asset_data_status
+                     (symbol, source, last_raw_date, last_clean_date,
+                      last_success_at, last_error, last_probe_ms)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s)
+                   ON CONFLICT (symbol, source) DO UPDATE SET
+                     last_raw_date=EXCLUDED.last_raw_date,
+                     last_clean_date=EXCLUDED.last_clean_date,
+                     last_success_at=COALESCE(EXCLUDED.last_success_at, bp_asset_data_status.last_success_at),
+                     last_error=EXCLUDED.last_error,
+                     last_probe_ms=EXCLUDED.last_probe_ms,
+                     updated_at=now()""",
+                (symbol, source, raw_date, clean_date, success_at, error, probe_ms),
+            )
 
 
 def delete_portfolio(conn: psycopg.Connection, pid: int) -> None:

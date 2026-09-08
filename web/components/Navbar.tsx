@@ -21,7 +21,7 @@ const NAV_LINKS = [
   { href: "/dashboard", label: "风险平价回测" },
   { href: "/cffex", label: "股指期货看板" },
   { href: "/crypto", label: "加密货币看板" },
-  { href: "/otc-derivatives-pricing", label: "场外衍生品定价" },
+  { href: "/otc-derivatives-pricing", label: "场外衍生品定价 · Experiment" },
   { href: "/methodology", label: "方法论" },
 ] as const;
 
@@ -67,7 +67,7 @@ export function Navbar() {
       <Setup2faDialog open onOpenChange={() => {}} onDone={refresh} forced />
     )}
     <header className="sticky top-0 z-50 w-full border-b border-border bg-background/80 backdrop-blur-md">
-      <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 flex h-14 sm:h-16 items-center justify-between gap-3">
+      <div className="container mx-auto max-w-[1440px] px-4 sm:px-6 lg:px-8 flex h-14 sm:h-16 items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
           <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
             <SheetTrigger asChild>
@@ -104,12 +104,12 @@ export function Navbar() {
             <span className="hidden sm:inline whitespace-nowrap">Balanced Portfolio</span>
           </Link>
 
-          <nav className="hidden md:flex items-center gap-1 text-sm font-medium ml-4">
+          <nav className="hidden md:flex items-center gap-1 text-sm font-medium ml-4 whitespace-nowrap min-w-0 overflow-x-auto overscroll-x-contain">
             {links.map(({ href, label }) => (
               <Link
                 key={href}
                 href={href}
-                className={`rounded-md px-3 py-1.5 transition-colors ${navLinkClass(pathname, href)}`}
+                className={`whitespace-nowrap shrink-0 rounded-md px-3 py-1.5 transition-colors ${navLinkClass(pathname, href)}`}
               >
                 {label}
               </Link>

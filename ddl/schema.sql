@@ -2,8 +2,10 @@
 -- Balanced Portfolio - consolidated schema
 -- Target: PostgreSQL 18 + TimescaleDB >= 2.23
 -- Equivalent to applying legacy migrations 01-32 to an empty database.
--- Also includes 34-39 merged (data sources, permissions, display order,
--- logical source grouping, recommended ETF seeds, edit-flow params).
+-- Also includes 34-42 merged (data sources, permissions, display order,
+-- logical source grouping, recommended ETF seeds, edit-flow params,
+-- currency / is_addable + btc_cme_sina; 42 dropped the redundant
+-- bp_asset_data_status.row_count, superseded by raw_rows/clean_rows).
 -- =====================================================================
 
 CREATE EXTENSION IF NOT EXISTS timescaledb;
@@ -34,6 +36,7 @@ CREATE TABLE IF NOT EXISTS bp_data_source (
     vendor              TEXT,
     logical_source      TEXT,                        -- 37: UI 逻辑源分组(物理 source 不变)
     is_backup           BOOLEAN     NOT NULL DEFAULT FALSE,  -- 37: 是否备源(非主源)
+    is_addable          BOOLEAN     NOT NULL DEFAULT TRUE,   -- 40: FALSE=不可在 /admin/assets 添加资产
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -43,31 +46,35 @@ CREATE TRIGGER trg_bp_data_source_updated_at
     BEFORE UPDATE ON bp_data_source
     FOR EACH ROW EXECUTE FUNCTION bp_set_updated_at();
 
+COMMENT ON COLUMN bp_data_source.is_addable IS 'FALSE=不可在 /admin/assets 添加资产(如 futures_cffex 走独立 pipeline)';
+
 -- 34: 新增腾讯 fqkline 数据源(ETF 后复权/前复权/不复权 + 指数不复权),
 -- 用于多源聚合降级链(东财被 IP 封禁时 ETF/指数可降级腾讯)。
 -- 37: logical_source 逻辑源分组与 is_backup 备源标记(展示元数据, 聚合取数在 bp_ingest 完成)。
+-- 40: btc_cme_sina 降级源(crypto_yfinance 限流时备源); futures_cffex is_addable=FALSE。
 INSERT INTO bp_data_source
     (code, description, akshare_func, asset_class, has_volume,
-     supports_date_range, symbol_hint, vendor, logical_source, is_backup)
+     supports_date_range, symbol_hint, vendor, logical_source, is_backup, is_addable)
 VALUES
-    ('cn_index_em',       'A股/中证指数-东财通用(字段最全, 含成交额/换手率/涨跌幅, 默认推荐)', 'index_zh_a_hist',           'cn_index',     TRUE,  TRUE,  '无市场前缀, 如 000300 / 930914', '东财', 'cn_index', FALSE),
-    ('cn_index_sina',     'A股指数-新浪',                                                    'stock_zh_index_daily',      'cn_index',     TRUE,  FALSE, '带市场前缀, 如 sh000300 / sz399552', '新浪', 'cn_index', TRUE),
-    ('cn_index_tx',       'A股指数-腾讯(支持日期范围)',                                       'stock_zh_index_daily_tx',   'cn_index',     FALSE, TRUE,  '带市场前缀, 如 sh000001', '腾讯', 'cn_index', TRUE),
-    ('cn_index_em_px',    'A股指数-东财(带前缀/csi)',                                         'stock_zh_index_daily_em',   'cn_index',     TRUE,  TRUE,  '带前缀, 如 sh000300 / csi000905', '东财', 'cn_index', TRUE),
-    ('index_tx',          '指数行情-腾讯 fqkline(不复权)',                                    'tencent_fqkline',           'cn_index',     TRUE,  TRUE,  '带市场前缀, 如 sh000300 / sz399552', '腾讯', 'cn_index', TRUE),
-    ('hk_index_em',       '港股指数-东财(close=最新价, 无成交量)',                             'stock_hk_index_daily_em',   'hk_index',     FALSE, FALSE, 'symbol 如 HSI / HSTECF2L, 见 stock_hk_index_spot_em', '东财', 'hk_index', FALSE),
-    ('hk_index_sina',     '港股指数-新浪(含成交量)',                                          'stock_hk_index_daily_sina', 'hk_index',     TRUE,  FALSE, 'symbol 如 CES100', '新浪', 'hk_index', TRUE),
-    ('global_index_em',   '全球指数-东财(中文名 symbol, close=最新价, 无成交量)',              'index_global_hist_em',      'global_index', FALSE, FALSE, '中文名, 如 标普500 / 日经225, 见 index_global_spot_em', '东财', 'global_index', FALSE),
-    ('global_index_sina', '全球指数-新浪(中文名 symbol, 近1000条)',                            'index_global_hist_sina',    'global_index', TRUE,  FALSE, '中文名, 见 index_global_name_table', '新浪', 'global_index', TRUE),
-    ('cmdty_main_sina',   '商品期货主力连续合约-新浪(OHLCV)',                                  'futures_main_sina',         'commodity',    TRUE,  TRUE,  '合约代码, 如 M0/CU0/MA0, 见 futures_display_main_sina', '新浪', 'cmdty_main_sina', FALSE),
-    ('bond_csi_treasury', '中债国债指数(财富/全收益)',                                         'bond_treasury_index_cbond', 'bond',         FALSE, FALSE, '期限标识, 如 10Y / 30Y / 0-3Y', '中债', 'bond_csi_treasury', FALSE),
-    ('etf_em',            'ETF行情-东财(后复权)',                                             'fund_etf_hist_em',          'etf',          TRUE,  TRUE,  'ETF代码, 如 518880(黄金ETF)', '东财', 'etf', FALSE),
-    ('etf_sina',          'ETF行情-新浪(全量, 自动加市场前缀)',                                 'fund_etf_hist_sina',        'etf',          TRUE,  FALSE, 'ETF代码, 如 510050 / 518880(自动加 sh/sz 前缀)', '新浪', 'etf', TRUE),
-    ('etf_tx',            'ETF行情-腾讯 fqkline(后复权/前复权/不复权)',                          'tencent_fqkline',           'etf',          TRUE,  TRUE,  'ETF代码, 如 518880(自动加 sh/sz 前缀)', '腾讯', 'etf', TRUE),
-    ('futures_cffex',     '中金所期货日行情(IF/IH/IC/IM)',                                    'get_futures_daily',         'futures',      TRUE,  TRUE,  '品种代码如 IF/IH/IC/IM', '中金所', 'futures_cffex', FALSE),
-    ('crypto_yfinance',   '加密/外汇/商品-Yahoo Finance日线(OHLCV)',                             'yfinance.download',         'alternative',  TRUE,  TRUE,  'BTC-USD / DX-Y.NYB / GC=F', 'Yahoo Finance', 'crypto_yfinance', FALSE),
-    ('dxy_em',            '美元指数(DXY)-东方财富直连 push2his (secid 100.UDI)',                 'em_push2his_kline',         'forex',        FALSE, TRUE,  'DX-Y.NYB', '东方财富', 'dxy_em', FALSE),
-    ('gold_comex_em',     'COMEX黄金(GC)-akshare futures_foreign_hist',                           'futures_foreign_hist',      'commodity',    TRUE,  TRUE,  'GC=F',     '东方财富', 'gold_comex_em', FALSE)
+    ('cn_index_em',       'A股/中证指数-东财通用(字段最全, 含成交额/换手率/涨跌幅, 默认推荐)', 'index_zh_a_hist',           'cn_index',     TRUE,  TRUE,  '无市场前缀, 如 000300 / 930914', '东财', 'cn_index', FALSE, TRUE),
+    ('cn_index_sina',     'A股指数-新浪',                                                    'stock_zh_index_daily',      'cn_index',     TRUE,  FALSE, '带市场前缀, 如 sh000300 / sz399552', '新浪', 'cn_index', TRUE, TRUE),
+    ('cn_index_tx',       'A股指数-腾讯(支持日期范围)',                                       'stock_zh_index_daily_tx',   'cn_index',     FALSE, TRUE,  '带市场前缀, 如 sh000001', '腾讯', 'cn_index', TRUE, TRUE),
+    ('cn_index_em_px',    'A股指数-东财(带前缀/csi)',                                         'stock_zh_index_daily_em',   'cn_index',     TRUE,  TRUE,  '带前缀, 如 sh000300 / csi000905', '东财', 'cn_index', TRUE, TRUE),
+    ('index_tx',          '指数行情-腾讯 fqkline(不复权)',                                    'tencent_fqkline',           'cn_index',     TRUE,  TRUE,  '带市场前缀, 如 sh000300 / sz399552', '腾讯', 'cn_index', TRUE, TRUE),
+    ('hk_index_em',       '港股指数-东财(close=最新价, 无成交量)',                             'stock_hk_index_daily_em',   'hk_index',     FALSE, FALSE, 'symbol 如 HSI / HSTECF2L, 见 stock_hk_index_spot_em', '东财', 'hk_index', FALSE, TRUE),
+    ('hk_index_sina',     '港股指数-新浪(含成交量)',                                          'stock_hk_index_daily_sina', 'hk_index',     TRUE,  FALSE, 'symbol 如 CES100', '新浪', 'hk_index', TRUE, TRUE),
+    ('global_index_em',   '全球指数-东财(中文名 symbol, close=最新价, 无成交量)',              'index_global_hist_em',      'global_index', FALSE, FALSE, '中文名, 如 标普500 / 日经225, 见 index_global_spot_em', '东财', 'global_index', FALSE, TRUE),
+    ('global_index_sina', '全球指数-新浪(中文名 symbol, 近1000条)',                            'index_global_hist_sina',    'global_index', TRUE,  FALSE, '中文名, 见 index_global_name_table', '新浪', 'global_index', TRUE, TRUE),
+    ('cmdty_main_sina',   '商品期货主力连续合约-新浪(OHLCV)',                                  'futures_main_sina',         'commodity',    TRUE,  TRUE,  '合约代码, 如 M0/CU0/MA0, 见 futures_display_main_sina', '新浪', 'cmdty_main_sina', FALSE, TRUE),
+    ('bond_csi_treasury', '中债国债指数(财富/全收益)',                                         'bond_treasury_index_cbond', 'bond',         FALSE, FALSE, '期限标识, 如 10Y / 30Y / 0-3Y', '中债', 'bond_csi_treasury', FALSE, TRUE),
+    ('etf_em',            'ETF行情-东财(后复权)',                                             'fund_etf_hist_em',          'etf',          TRUE,  TRUE,  'ETF代码, 如 518880(黄金ETF)', '东财', 'etf', FALSE, TRUE),
+    ('etf_sina',          'ETF行情-新浪(全量, 自动加市场前缀)',                                 'fund_etf_hist_sina',        'etf',          TRUE,  FALSE, 'ETF代码, 如 510050 / 518880(自动加 sh/sz 前缀)', '新浪', 'etf', TRUE, TRUE),
+    ('etf_tx',            'ETF行情-腾讯 fqkline(后复权/前复权/不复权)',                          'tencent_fqkline',           'etf',          TRUE,  TRUE,  'ETF代码, 如 518880(自动加 sh/sz 前缀)', '腾讯', 'etf', TRUE, TRUE),
+    ('futures_cffex',     '中金所期货日行情(IF/IH/IC/IM)',                                    'get_futures_daily',         'futures',      TRUE,  TRUE,  '品种代码如 IF/IH/IC/IM', '中金所', 'futures_cffex', FALSE, FALSE),
+    ('crypto_yfinance',   '加密/外汇/商品-Yahoo Finance日线(OHLCV)',                             'yfinance.download',         'alternative',  TRUE,  TRUE,  'BTC-USD / DX-Y.NYB / GC=F', 'Yahoo Finance', 'crypto_yfinance', FALSE, TRUE),
+    ('dxy_em',            '美元指数(DXY)-东方财富直连 push2his (secid 100.UDI)',                 'em_push2his_kline',         'forex',        FALSE, TRUE,  'DX-Y.NYB', '东方财富', 'dxy_em', FALSE, TRUE),
+    ('gold_comex_em',     'COMEX黄金(GC)-akshare futures_foreign_hist',                           'futures_foreign_hist',      'commodity',    TRUE,  TRUE,  'GC=F',     '东方财富', 'gold_comex_em', FALSE, TRUE),
+    ('btc_cme_sina',      'CME比特币期货(BTC主力)-akshare futures_foreign_hist',                 'futures_foreign_hist',      'alternative',  TRUE,  TRUE,  'BTC-USD',  '新浪财经', 'crypto', TRUE, TRUE)
 ON CONFLICT (code) DO UPDATE SET
     description         = EXCLUDED.description,
     akshare_func        = EXCLUDED.akshare_func,
@@ -77,7 +84,8 @@ ON CONFLICT (code) DO UPDATE SET
     symbol_hint         = EXCLUDED.symbol_hint,
     vendor              = EXCLUDED.vendor,
     logical_source      = EXCLUDED.logical_source,
-    is_backup           = EXCLUDED.is_backup;
+    is_backup           = EXCLUDED.is_backup,
+    is_addable          = EXCLUDED.is_addable;
 
 CREATE TABLE IF NOT EXISTS bp_index_config (
     config_id     BIGINT      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -92,12 +100,16 @@ CREATE TABLE IF NOT EXISTS bp_index_config (
     last_sync_at  TIMESTAMPTZ,
     last_error    TEXT,
     row_hash      CHAR(32)    GENERATED ALWAYS AS (md5(lower(symbol) || '|' || source)) STORED,
+    currency      TEXT        NOT NULL DEFAULT 'CNY',   -- 40: 资产计价币种
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT uq_bp_index_config_symbol_source UNIQUE (symbol, source),
     CONSTRAINT uq_bp_index_config_row_hash UNIQUE (row_hash),
     CONSTRAINT ck_bp_index_config_is_deleted CHECK (is_deleted IN (0, 1))
 );
+
+COMMENT ON COLUMN bp_index_config.currency IS
+  '资产计价币种。CNY=人民币可直接回测; 非CNY(USD/HKD/JPY等)=外币计价指数, 无外汇数据换算, builder 沉底并弹确认';
 
 CREATE INDEX IF NOT EXISTS idx_bp_index_config_active
     ON bp_index_config (source, symbol) WHERE is_deleted = 0;
@@ -252,6 +264,8 @@ CREATE TABLE IF NOT EXISTS bp_portfolio (
 
 CREATE INDEX IF NOT EXISTS idx_bp_portfolio_demo
     ON bp_portfolio (portfolio_id) WHERE is_demo = TRUE;
+CREATE INDEX IF NOT EXISTS idx_bp_portfolio_demo_order        -- 40: demo 排序取首位
+    ON bp_portfolio (display_order, portfolio_id) WHERE is_demo = TRUE;
 CREATE INDEX IF NOT EXISTS idx_bp_portfolio_owner
     ON bp_portfolio (owner_user_id);
 
@@ -495,6 +509,8 @@ CREATE INDEX IF NOT EXISTS idx_cffex_premium_variety_date
     ON bp_cffex_premium_daily (variety, trade_date DESC);
 CREATE INDEX IF NOT EXISTS idx_cffex_premium_type_date
     ON bp_cffex_premium_daily (contract_type, trade_date DESC);
+CREATE INDEX IF NOT EXISTS idx_cffex_premium_variety_type_date   -- 40: 品种×类型×日期点查
+    ON bp_cffex_premium_daily (variety, contract_type, trade_date);
 
 -- ---------------------------------------------------------------------
 -- Crypto correlation dashboard (预计算, 镜像 CFFEX premium 模式)
@@ -955,6 +971,53 @@ ON CONFLICT (symbol, source) DO UPDATE SET
     extra_params  = EXCLUDED.extra_params,
     is_deleted    = EXCLUDED.is_deleted,
     is_selectable = EXCLUDED.is_selectable;
+
+-- 40: 非法币种标记(新增环境 seed 后执行; 幂等, 顺序保证日经系先 JPY 后不被 USD 覆盖)。
+UPDATE bp_index_config SET currency='HKD' WHERE source IN ('hk_index_em','hk_index_sina');
+UPDATE bp_index_config SET currency='JPY'
+  WHERE source IN ('global_index_em','global_index_sina') AND name LIKE '%日经%';
+UPDATE bp_index_config SET currency='USD'
+  WHERE source IN ('global_index_em','global_index_sina') AND currency='CNY';
+UPDATE bp_index_config SET currency='USD' WHERE source IN ('crypto_yfinance','dxy_em','gold_comex_em');
+-- cmdty_main_sina(沪金/沪铜等国内期货主力) 与境内指数/ETF 保持 CNY 默认值
+
+-- 41: 修正 40 的笼统 USD 标记 — 非美元计价的外国指数按实际币种逐 symbol 精确化,
+-- 标普中国A股大盘红利低波50指数(A股) 回 CNY。置于上方笼统 USD 语句之后, 最终状态一致。
+UPDATE bp_index_config SET currency='RUB'
+ WHERE source IN ('global_index_em','global_index_sina') AND symbol = '俄罗斯RTS';
+UPDATE bp_index_config SET currency='INR'
+ WHERE source IN ('global_index_em','global_index_sina') AND symbol = '印度孟买SENSEX';
+UPDATE bp_index_config SET currency='INR'
+ WHERE source IN ('global_index_em','global_index_sina') AND symbol = '孟买SENSEX';
+UPDATE bp_index_config SET currency='BRL'
+ WHERE source IN ('global_index_em','global_index_sina') AND symbol = '巴西BOVESPA';
+UPDATE bp_index_config SET currency='BRL'
+ WHERE source IN ('global_index_em','global_index_sina') AND symbol = '巴西IBOVESPA';
+UPDATE bp_index_config SET currency='EUR'
+ WHERE source IN ('global_index_em','global_index_sina') AND symbol = '德国DAX30';
+UPDATE bp_index_config SET currency='EUR'
+ WHERE source IN ('global_index_em','global_index_sina') AND symbol = '德国DAX';
+UPDATE bp_index_config SET currency='EUR'
+ WHERE source IN ('global_index_em','global_index_sina') AND symbol = '法国CAC40';
+UPDATE bp_index_config SET currency='EUR'
+ WHERE source IN ('global_index_em','global_index_sina') AND symbol = '荷兰AEX';
+UPDATE bp_index_config SET currency='AUD'
+ WHERE source IN ('global_index_em','global_index_sina') AND symbol = '澳大利亚标普200';
+UPDATE bp_index_config SET currency='AUD'
+ WHERE source IN ('global_index_em','global_index_sina') AND symbol = '澳大利亚ASX200';
+UPDATE bp_index_config SET currency='GBP'
+ WHERE source IN ('global_index_em','global_index_sina') AND symbol = '英国富时100';
+UPDATE bp_index_config SET currency='GBP'
+ WHERE source IN ('global_index_em','global_index_sina') AND symbol = '富时100';
+UPDATE bp_index_config SET currency='VND'
+ WHERE source IN ('global_index_em','global_index_sina') AND symbol = '越南胡志明';
+UPDATE bp_index_config SET currency='VND'
+ WHERE source IN ('global_index_em','global_index_sina') AND symbol = '胡志明';
+UPDATE bp_index_config SET currency='KRW'
+ WHERE source IN ('global_index_em','global_index_sina') AND symbol = '韩国KOSPI';
+UPDATE bp_index_config SET currency='CNY'
+ WHERE source IN ('global_index_em','global_index_sina') AND symbol = '标普中国A股大盘红利低波50指数';
+-- 不动: 标普500/纳斯达克/道琼斯=USD, 日经225/日经225指数=JPY (40 已正确)。
 
 -- ---------------------------------------------------------------------
 -- Demo portfolio seed. No account or personal email is hard-coded.

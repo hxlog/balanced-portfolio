@@ -594,7 +594,8 @@ def _fetch_crypto_yfinance(symbol: str, start: date, end: date, extra: dict) -> 
 # ---------------------------------------------------------------------
 # 东方财富直连: DXY 美元指数(secid=100.UDI) + COMEX 黄金(akshare futures_foreign_hist)
 # 替代 yfinance 的 DX-Y.NYB / GC=F —— prod IP 被 Yahoo 429 限流, 切东方财富后 prod 自日更。
-# BTC-USD 仍走 yfinance (用户选择, 由 atomicity hold-back 兜底)。
+# BTC-USD 主源仍走 yfinance (用户选择, 由 atomicity hold-back 兜底), 降级走 CME 期货
+# (btc_cme_sina, 见 AGGREGATE_CHAINS["crypto_yfinance"])。
 # ---------------------------------------------------------------------
 _DXY_KLINE_COLS = ["trade_date", "open", "close", "high", "low", "volume", "amount"]
 
@@ -628,6 +629,21 @@ def _fetch_gold_comex_em(symbol: str, start: date, end: date, extra: dict) -> pd
     akshare 全量返回(cols: date/open/high/low/close/volume/...), _finalize 按 [start,end] 过滤。
     """
     raw = ak.futures_foreign_hist(symbol="GC")
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=STANDARD_COLUMNS)
+    df = _rename(raw, {"date": "trade_date"})
+    return _finalize(df, start, end)
+
+
+def _fetch_btc_cme_sina(symbol: str, start: date, end: date, extra: dict) -> pd.DataFrame:
+    """akshare futures_foreign_hist 拉 CME 比特币期货(BTC 主力)日线。
+
+    yfinance BTC-USD 的境内降级源(prod IP 被 Yahoo 429 时接管)。单资产源: symbol 参数
+    忽略, akshare symbol 固定 "BTC"。期货价与现货有基差但收益率高度相关, 经
+    AGGREGATE_CHAINS 重锚到现货口径后拼接(有重叠日用重叠收盘比值; 主源整段失败时用
+    库中锚点 anchor_close@anchor_date), 对下游清洗/相关性透明。
+    """
+    raw = ak.futures_foreign_hist(symbol="BTC")
     if raw is None or raw.empty:
         return pd.DataFrame(columns=STANDARD_COLUMNS)
     df = _rename(raw, {"date": "trade_date"})
@@ -693,6 +709,9 @@ SOURCES: dict[str, SourceAdapter] = {
     "crypto_yfinance": SourceAdapter(
         "crypto_yfinance", "yfinance.download", True, True, False, _fetch_crypto_yfinance
     ),
+    "btc_cme_sina": SourceAdapter(
+        "btc_cme_sina", "futures_foreign_hist", True, True, False, _fetch_btc_cme_sina
+    ),
     "dxy_em": SourceAdapter(
         "dxy_em", "em_push2his_kline", True, False, False, _fetch_dxy_em
     ),
@@ -715,12 +734,16 @@ def get_adapter(source: str) -> SourceAdapter:
 #
 # 指数(不复权): 东财 → 新浪 → 腾讯(三者同值, 比值恒 1)。
 # ETF: 东财 → 腾讯, adjust 由资产 extra_params.adjust 驱动(hfq 为回测口径; qfq 仅 probe/展示)。
+# 加密: BTC-USD 现货(yfinance) → CME 期货(新浪), 期货/现货基差经重锚吸收
+# (有重叠日用重叠收盘比值; 主源整段失败/被 429 时用库中锚点, 周末锚点取期货帧
+# ≤锚点日最近一根, 容差 7 天)。
 AGGREGATE_CHAINS: dict[str, list[str]] = {
     "cn_index_em": ["cn_index_sina", "cn_index_tx", "index_tx"],
     "cn_index_em_px": ["cn_index_tx", "index_tx"],
     "hk_index_em": ["hk_index_sina"],
     "global_index_em": ["global_index_sina"],
     "etf_em": ["etf_tx"],
+    "crypto_yfinance": ["btc_cme_sina"],
 }
 
 
@@ -741,7 +764,8 @@ def _align_fallback_to_base(
     同复权口径下两源日收益率一致 → 绝对价仅差一个常数倍, 故在任一重叠交易日取
     base_close / fb_close 作为缩放因子, 把降级源 ohlc 整体缩放, 与主源价格连续可比。
     无重叠时(base_df 空/无交集)退而求其次用库中锚点(anchor_close@anchor_date)对齐;
-    仍无锚点则原样返回, 由调用方视为新资产整段降级。
+    锚点日在降级帧无精确行时(如 BTC 周末锚点 vs CME 工作日帧), 取 ≤锚点日最近一根
+    (容差 7 天)重锚; 仍无锚点则原样返回, 由调用方视为新资产整段降级。
     """
     if fb_df is None or fb_df.empty:
         return fb_df
@@ -765,6 +789,14 @@ def _align_fallback_to_base(
     # 2) 库中锚点对齐(主源整段失败、仅底层已有历史时)
     if anchor_close and anchor_date is not None:
         anchor_rows = fb_df[fb_df["trade_date"] == anchor_date]
+        if anchor_rows.empty:
+            # BTC 现货 7 天周 vs CME 期货 5 天周: 周末锚点在期货帧无精确日期,
+            # 取 ≤anchor_date 最近一根(容差 7 天)重锚, 避免未缩放期货价混入现货序列。
+            prior = fb_df[fb_df["trade_date"] <= anchor_date]
+            if not prior.empty:
+                cand = prior.sort_values("trade_date").iloc[-1]
+                if (anchor_date - cand["trade_date"]).days <= 7:
+                    anchor_rows = fb_df[fb_df["trade_date"] == cand["trade_date"]]
         if not anchor_rows.empty:
             f_close = anchor_rows["close"].iloc[0]
             if f_close and not pd.isna(f_close):
@@ -797,11 +829,20 @@ def fetch_with_fallback(
     """
     import requests as _requests
 
-    # curl_cffi 抛自己的 ConnectionError(非 requests 子类), 一并纳入降级触发条件
-    _conn_exc = (_requests.exceptions.ConnectionError, _requests.exceptions.Timeout)
+    # curl_cffi 抛自己的 ConnectionError(非 requests 子类), 一并纳入降级触发条件;
+    # HTTPError 保留为通用 4xx/5xx 连接级触发(_is_conn_error 亦按连接级处理)。
+    _conn_exc = (_requests.exceptions.ConnectionError, _requests.exceptions.Timeout,
+                 _requests.exceptions.HTTPError)
     try:
         import curl_cffi.requests.exceptions as _cc_exc  # type: ignore
         _conn_exc = (*_conn_exc, _cc_exc.ConnectionError, _cc_exc.Timeout)
+    except Exception:  # noqa: BLE001
+        pass
+    # yfinance 对 Yahoo 429 抛自家 YFRateLimitError(非 requests 系), 必须显式纳入,
+    # 否则 crypto 降级链在头号场景(prod IP 被限流)下不触发。
+    try:
+        from yfinance.exceptions import YFRateLimitError as _yf_rate_exc  # type: ignore
+        _conn_exc = (*_conn_exc, _yf_rate_exc)
     except Exception:  # noqa: BLE001
         pass
 

@@ -54,6 +54,8 @@ psql -h localhost -U postgres -d balanced_portfolio -f ddl/schema.sql
 - **单一事实源**：`bp_index_quote_daily` 保存原始 OHLCV；组合回测**只读** `bp_quote_clean`，绝不直接读原始表。
 - **清洗规则**（`bp_api/quant/cleaning.py`，由 `bp_ingest clean` 或 ingest 自动刷新）：以 A 股交易日历重建面板 → 有左右锚点的内部缺口线性插值（`fill_flag=interp`）→ 保留前导空白（由回测 effective_start 处理）→ **尾部无右端锚点的缺口直接报错** → 基于清洗价重算收益率，保证协方差/净值/回撤/归因同口径。插值价 ≠ 可成交价。
 - **收盘确认**：盘中今日行不入库；上海时区 15:10（`BP_CLOSE_CONFIRM_HHMM`）后才认「今日」收盘。CFFEX 快照要求期货品种与挂钩指数同交易日齐全且收盘已确认。
+- **COUNT 分级不变式**：`bp_asset_data_status.raw_rows/clean_rows` 仅由 `refresh_asset_status(with_count=True)` 校准（ingest 推进日门控 + 管理端「刷新状态」按钮）；probe/保存/单资产 sync 等热路径 `with_count=False` 仅 MAX，不得重新引入 COUNT。
+- **币种/可添加性**：`bp_index_config.currency` 是非 CNY 资产 builder 沉底+确认弹窗的依据；`bp_data_source.is_addable=FALSE`（如 `futures_cffex`）不可从 admin 添加。
 - **资产 key**：`{symbol}@{source}`（如 `000300@cn_index_em`），全栈通用。
 
 ## 回测与优化引擎（`bp_api/quant/`）
@@ -115,12 +117,14 @@ psql -h localhost -U postgres -d balanced_portfolio -f ddl/schema.sql
 - `sources.py` 是 akshare 适配器注册表，每个 source 归一化到标准列 schema（`trade_date, open, high, low, close, volume, amount, turnover_rate, pct_change`，close 必须存在）。
 - `fetch_with_fallback` 在东财(em)连接级错误时降级到 sina/tx；`_is_conn_error` 判定反爬掐断。`prewarm_em_code_maps` 预热 secid 解析映射。
 - 资产池以东方财富为主（`cn_index_em`/`etf_em` 等），新浪/腾讯作降级；CFFEX 走 `get_futures_daily`。资产配置存 `bp_index_config`，软删除(`is_deleted`)。
+- `btc_cme_sina`（CME 比特币期货，akshare `futures_foreign_hist("BTC")`，新浪端点境内可达）作为 `crypto_yfinance` 的 AGGREGATE_CHAINS 降级源；Yahoo 429 触发依赖 `_conn_exc` 中 import-guarded 的 `YFRateLimitError` + `HTTPError`；库锚点重锚支持周末锚点（≤anchor_date 最近行，7 天容差）。
 - `http_session.py` 用 curl-cffi 硬化指纹绕反爬(仅 TLS 指纹, 已移除 cookie 注入/预热)。
 - `scripts/`（`validate_candidates.py`、`gen_seed_sql.py`）是资产池维护脚本，不参与 API 运行；`candidates.json`/`validated_candidates.json` 本地维护、不入 git。
 
 ## 数据库迁移纪律
 
-- `ddl/schema.sql` 是**合并后基线**（= 旧编号迁移 01-32），全新环境只执行它。
+- `ddl/schema.sql` 是**合并后基线**（= 旧编号迁移 01-32 + 34-42），全新环境只执行它。
+- 40-42 新增 `bp_index_config.currency`、`bp_data_source.is_addable`、两索引（demo_order / premium variety+type+date）、`btc_cme_sina` 源；42 删除了冗余的 `bp_asset_data_status.row_count`。
 - 已部署环境升级时，只执行尚未应用的新编号迁移（`NN_description.sql`）；不要重跑历史迁移，不要改已应用脚本。`deploy/deploy.sh` **不**执行迁移。
 - 主要表：行情(`bp_index_quote_daily`/`bp_quote_clean`)、组合(`bp_portfolio`/`bp_portfolio_asset`/`bp_backtest_*`)、任务(`bp_task`)、资产状态(`bp_asset_data_status`)、CFFEX(`bp_cffex_contract_daily`/`bp_cffex_premium_daily`)、交易日历(`bp_trading_calendar`)、OTC(`bp_otc_deal`/`bp_otc_deal_price_history`)、鉴权(`bp_admin_user`/`bp_user`)。`bp_index_quote_daily` 是 TimescaleDB hypertable。
 - demo 组合由 schema.sql 末尾 seed；`/api/portfolios/demo` 公开可读。

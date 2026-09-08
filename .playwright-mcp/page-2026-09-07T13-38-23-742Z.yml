@@ -1,0 +1,116 @@
+- generic [active] [ref=f1e1]:
+  - banner [ref=f1e2]:
+    - generic [ref=f1e3]:
+      - generic [ref=f1e4]:
+        - link "BP Balanced Portfolio" [ref=f1e5] [cursor=pointer]:
+          - /url: /
+          - generic [ref=f1e6]: BP
+          - generic [ref=f1e7]: Balanced Portfolio
+        - navigation [ref=f1e8]:
+          - link "风险平价回测" [ref=f1e9] [cursor=pointer]:
+            - /url: /dashboard
+          - link "股指期货看板" [ref=f1e10] [cursor=pointer]:
+            - /url: /cffex
+          - link "加密货币看板" [ref=f1e11] [cursor=pointer]:
+            - /url: /crypto
+          - link "场外衍生品定价 · Experiment" [ref=f1e12] [cursor=pointer]:
+            - /url: /otc-derivatives-pricing
+          - link "方法论" [ref=f1e13] [cursor=pointer]:
+            - /url: /methodology
+          - link "资产管理" [ref=f1e14] [cursor=pointer]:
+            - /url: /admin/assets
+          - link "用户管理" [ref=f1e15] [cursor=pointer]:
+            - /url: /admin/users
+      - generic [ref=f1e16]:
+        - link "在 GitHub 查看 Balanced Portfolio 源代码" [ref=f1e17] [cursor=pointer]:
+          - /url: https://github.com/hxlog/balanced-portfolio
+        - button "切换主题" [ref=f1e21]
+        - generic [ref=f1e24]:
+          - generic [ref=f1e25]: xingyuliu@outlook.sg
+          - button "两步验证已启用" [ref=f1e26]
+          - button "修改密码" [ref=f1e30]
+          - button "登出" [ref=f1e34]
+  - main [ref=f1e38]:
+    - generic [ref=f1e39]:
+      - generic [ref=f1e41]:
+        - generic [ref=f1e42]:
+          - generic [ref=f1e43]:
+            - heading "加密货币看板" [level=1] [ref=f1e44]
+            - paragraph [ref=f1e45]: 比特币相关性分析 — 对数日收益率滚动相关系数与美元指数远期相关性
+          - generic [ref=f1e46]: "数据截至: 2026-09-04 16:00 ET / 2026-09-05 04:00 北京时间"
+        - generic [ref=f1e48]:
+          - generic [ref=f1e49]:
+            - generic [ref=f1e50]: "滚动窗口:"
+            - tablist [ref=f1e52]:
+              - tab "3 个月" [selected] [ref=f1e53]
+              - tab "6 个月" [ref=f1e54]
+              - tab "9 个月" [ref=f1e55]
+              - tab "12 个月" [ref=f1e56]
+          - generic [ref=f1e57]:
+            - generic [ref=f1e58]: "相关方法:"
+            - tablist [ref=f1e60]:
+              - tab "Pearson" [selected] [ref=f1e61]
+              - tab "Spearman" [ref=f1e62]
+              - tab "Kendall τ" [ref=f1e63]
+              - tab "Hoeffding D" [ref=f1e64]
+      - generic [ref=f1e65]:
+        - generic [ref=f1e66]:
+          - generic [ref=f1e68]:
+            - generic [ref=f1e69]: BTC/USD
+            - generic [ref=f1e70]: $79.8k
+          - generic [ref=f1e72]:
+            - generic [ref=f1e73]: DXY 美元指数
+            - generic [ref=f1e74]: "99.06"
+          - generic [ref=f1e76]:
+            - generic [ref=f1e77]: COMEX 黄金
+            - generic [ref=f1e78]: $4.5k
+          - generic [ref=f1e80]:
+            - generic [ref=f1e81]: 沪金 AU0
+            - generic [ref=f1e82]: $965.96
+          - generic [ref=f1e84]:
+            - generic [ref=f1e85]: 3 个月 × Pearson
+            - generic [ref=f1e86]: 63 日窗口 · NYSE
+        - generic [ref=f1e88]:
+          - generic [ref=f1e90]:
+            - generic [ref=f1e91]: BTC vs 沪金AU0
+            - generic [ref=f1e92]: "0.2095"
+            - generic [ref=f1e93]: 3 个月 Pearson R
+          - generic [ref=f1e95]:
+            - generic [ref=f1e96]: BTC vs COMEX黄金
+            - generic [ref=f1e97]: "0.6231"
+            - generic [ref=f1e98]: 3 个月 Pearson R
+          - generic [ref=f1e100]:
+            - generic [ref=f1e101]: BTC vs 纳斯达克100
+            - generic [ref=f1e102]: "0.3297"
+            - generic [ref=f1e103]: 3 个月 Pearson R
+          - generic [ref=f1e105]:
+            - generic [ref=f1e106]: BTC vs 标普500
+            - generic [ref=f1e107]: "0.3167"
+            - generic [ref=f1e108]: 3 个月 Pearson R
+        - generic [ref=f1e110]:
+          - heading "BTC 滚动相关性 — 3 个月窗口 · Pearson" [level=3] [ref=f1e115]
+          - paragraph [ref=f1e116]: "基于 NYSE 交易日历（标普500 交易日），比特币对数日收益率与各资产对数日收益率的 3 个月 滚动相关系数。 右轴为 BTC 价格 (USD)。数据截止: 2026-09-04"
+        - generic [ref=f1e122]:
+          - generic [ref=f1e123]:
+            - heading "BTC vs DXY 远期走势" [level=3] [ref=f1e127]
+            - tablist [ref=f1e129]:
+              - tab "3 个月" [selected] [ref=f1e130]
+              - tab "6 个月" [ref=f1e131]
+              - tab "9 个月" [ref=f1e132]
+              - tab "12 个月" [ref=f1e133]
+          - generic [ref=f1e134]: 美元指数和加密货币市场呈反向关系，这意味着当美元指数上涨时，加密货币价格往往会下跌，反之亦然。 这是因为加密货币通常被用作对冲美元的工具，当美元强势时，投资者往往会将资金从加密货币转移到美元或其他传统避险资产上。
+          - paragraph [ref=f1e135]: 图表展示 BTC 价格 (左轴, 蓝色面积图) 与 DXY 美元指数向后平移 3M 的价格 (右轴, 金色实线)。 通过平移 DXY 可直观观察两者的领先-滞后关系。
+  - region "Notifications alt+T"
+  - contentinfo [ref=f1e140]:
+    - generic [ref=f1e141]:
+      - paragraph [ref=f1e142]: Balanced Portfolio 是开源的风险平价组合管理与回测项目。本工具仅供研究，不构成投资建议。
+      - link "在 GitHub 查看 Balanced Portfolio 源代码" [ref=f1e143] [cursor=pointer]:
+        - /url: https://github.com/hxlog/balanced-portfolio
+        - text: GitHub 源代码
+      - generic [ref=f1e144]:
+        - generic [ref=f1e145]: © 2026 Balanced Portfolio
+        - generic [aria-hidden] [ref=f1e146]: "|"
+        - link "粤ICP备2024174552号-2" [ref=f1e147] [cursor=pointer]:
+          - /url: https://beian.miit.gov.cn/
+  - button "Open Next.js Dev Tools" [ref=f1e153] [cursor=pointer]
+  - alert [ref=f1e157]

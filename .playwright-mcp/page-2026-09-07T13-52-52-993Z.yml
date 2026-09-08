@@ -1,0 +1,42 @@
+- generic [active] [ref=f3e1]:
+  - banner [ref=f3e2]:
+    - generic [ref=f3e3]:
+      - generic [ref=f3e4]:
+        - link "BP Balanced Portfolio" [ref=f3e5] [cursor=pointer]:
+          - /url: /
+          - generic [ref=f3e6]: BP
+          - generic [ref=f3e7]: Balanced Portfolio
+        - navigation [ref=f3e8]:
+          - link "风险平价回测" [ref=f3e9] [cursor=pointer]:
+            - /url: /dashboard
+          - link "股指期货看板" [ref=f3e10] [cursor=pointer]:
+            - /url: /cffex
+          - link "加密货币看板" [ref=f3e11] [cursor=pointer]:
+            - /url: /crypto
+          - link "场外衍生品定价 · Experiment" [ref=f3e12] [cursor=pointer]:
+            - /url: /otc-derivatives-pricing
+          - link "方法论" [ref=f3e13] [cursor=pointer]:
+            - /url: /methodology
+      - generic [ref=f3e14]:
+        - link "在 GitHub 查看 Balanced Portfolio 源代码" [ref=f3e15] [cursor=pointer]:
+          - /url: https://github.com/hxlog/balanced-portfolio
+        - button "切换主题" [ref=f3e19]
+        - generic [ref=f3e22]:
+          - button "注册" [ref=f3e23]
+          - button "登录" [ref=f3e24]
+  - main [ref=f3e25]:
+    - generic [ref=f3e26]: 加载中...
+  - region "Notifications alt+T"
+  - contentinfo [ref=f3e27]:
+    - generic [ref=f3e28]:
+      - paragraph [ref=f3e29]: Balanced Portfolio 是开源的风险平价组合管理与回测项目。本工具仅供研究，不构成投资建议。
+      - link "在 GitHub 查看 Balanced Portfolio 源代码" [ref=f3e30] [cursor=pointer]:
+        - /url: https://github.com/hxlog/balanced-portfolio
+        - text: GitHub 源代码
+      - generic [ref=f3e31]:
+        - generic [ref=f3e32]: © 2026 Balanced Portfolio
+        - generic [aria-hidden] [ref=f3e33]: "|"
+        - link "粤ICP备2024174552号-2" [ref=f3e34] [cursor=pointer]:
+          - /url: https://beian.miit.gov.cn/
+  - button "Open Next.js Dev Tools" [ref=f3e40] [cursor=pointer]
+  - alert [ref=f3e44]

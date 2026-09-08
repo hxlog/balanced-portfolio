@@ -332,7 +332,7 @@ export function CryptoClient({ data: initialData }: { data: CorrelationResponse 
     <div className="min-h-screen bg-background text-foreground pb-24">
       {/* Page Header */}
       <div className="border-b border-border/40 bg-card/30 backdrop-blur-sm">
-        <div className="container mx-auto max-w-7xl px-4 sm:px-6 py-6 sm:py-8">
+        <div className="container mx-auto max-w-[1440px] px-4 sm:px-6 py-6 sm:py-8">
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
             <div>
               <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mb-2">加密货币看板</h1>
@@ -370,7 +370,7 @@ export function CryptoClient({ data: initialData }: { data: CorrelationResponse 
         </div>
       </div>
 
-      <div className="container mx-auto max-w-7xl px-4 sm:px-6 py-6 sm:py-8 space-y-8">
+      <div className="container mx-auto max-w-[1440px] px-4 sm:px-6 py-6 sm:py-8 space-y-8">
         {error && (
           <div className="bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-3 text-sm text-destructive">
             数据加载异常: {error}
@@ -386,7 +386,7 @@ export function CryptoClient({ data: initialData }: { data: CorrelationResponse 
             { label: "沪金 AU0", value: fmtPrice(snap?.au0_gold ?? null) },
             { label: `${windowLabel} × ${methodLabel}`, value: "" },
           ].map((item) => (
-            <Card key={item.label} className="bg-card/50 shadow-none border-border/50">
+            <Card key={item.label} className="bg-card/50 border-border/50">
               <CardContent className="p-4">
                 <div className="text-xs text-muted-foreground mb-1">{item.label}</div>
                 <div className="text-xl font-bold tabular-nums">
@@ -400,7 +400,7 @@ export function CryptoClient({ data: initialData }: { data: CorrelationResponse 
         {/* Correlation Summary Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {currentRolling && Object.entries(currentRolling).map(([key, pair]) => (
-            <Card key={key} className="bg-card/50 shadow-none border-border/50 transition-all hover:bg-card/80">
+            <Card key={key} className="bg-card/50 border-border/50 transition-all hover:bg-card/80">
               <CardContent className="p-4">
                 <div className="text-xs text-muted-foreground mb-1">BTC vs {pair.label}</div>
                 <div className="text-2xl font-bold tabular-nums" style={{ color: corrColors[key] ?? fg }}>
@@ -413,7 +413,7 @@ export function CryptoClient({ data: initialData }: { data: CorrelationResponse 
         </div>
 
         {/* Chart 1: 滚动相关性 */}
-        <Card className="border-border/50 shadow-sm bg-card/30 backdrop-blur-sm">
+        <Card className="border-border/50 bg-card/30 backdrop-blur-sm">
           <CardHeader className="border-b border-border/40 pb-4">
             <div className="flex items-center gap-2">
               <TrendingUp className="w-5 h-5 text-muted-foreground" />
@@ -424,7 +424,7 @@ export function CryptoClient({ data: initialData }: { data: CorrelationResponse 
               右轴为 BTC 价格 (USD)。数据截止: {meta?.btc_data_end ?? "--"}
             </p>
           </CardHeader>
-          <CardContent className="pt-4 pb-2">
+          <CardContent className="pt-4 pb-2 sm:pt-0">
             {data ? (
               <EChart option={chart1Option} style={{ height: 440, width: "100%" }} />
             ) : (
@@ -436,7 +436,7 @@ export function CryptoClient({ data: initialData }: { data: CorrelationResponse 
         </Card>
 
         {/* Chart 2: BTC vs DXY 滞后平移价格 */}
-        <Card className="border-border/50 shadow-sm bg-card/30 backdrop-blur-sm">
+        <Card className="border-border/50 bg-card/30 backdrop-blur-sm">
           <CardHeader className="border-b border-border/40 pb-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-2">
@@ -460,7 +460,7 @@ export function CryptoClient({ data: initialData }: { data: CorrelationResponse 
               通过平移 DXY 可直观观察两者的领先-滞后关系。
             </p>
           </CardHeader>
-          <CardContent className="pt-4 pb-2">
+          <CardContent className="pt-4 pb-2 sm:pt-0">
             {data ? (
               <EChart option={chart2Option} style={{ height: 440, width: "100%" }} />
             ) : (

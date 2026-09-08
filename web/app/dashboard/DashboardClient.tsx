@@ -699,7 +699,7 @@ function DashboardView({
         <DashboardToc items={tocItems} />
         <div className="flex-1 min-w-0 space-y-4 sm:space-y-6">
           {/* Top bar */}
-          <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
+          <div className="bg-card border border-border rounded-xl overflow-hidden">
             <div className="px-5 pt-5 pb-4 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0 flex-1 space-y-1.5">
                 <div className="flex flex-wrap items-center gap-2">
@@ -932,7 +932,7 @@ function DashboardView({
                       表示跨象限品种, 每个调仓期及最新持仓的资产权重见右侧持仓表
                     </CardDescription>
                   </CardHeader>
-                  <CardContent>
+                  <CardContent className="pt-0 sm:pt-0">
                     <p className="text-xs text-muted-foreground mb-3 md:hidden">
                       宏观周期：通胀预期（横向）· 经济增长（纵向）
                     </p>
@@ -1056,7 +1056,7 @@ function DashboardView({
                       </label>
                     </div>
                   </CardHeader>
-                  <CardContent className="flex-1 flex flex-col">
+                  <CardContent className="flex-1 flex flex-col pt-0 sm:pt-0">
                     <div className="h-[200px] mb-4">
                       <EChart
                         option={pieOption}
@@ -1181,7 +1181,7 @@ function DashboardView({
                       </div>
                     )}
                   </CardHeader>
-                  <CardContent>
+                  <CardContent className="pt-0 sm:pt-0">
                     <EChart
                       option={navOption}
                       style={{ height: 320, width: "100%" }}
@@ -1208,7 +1208,7 @@ function DashboardView({
                       </select>
                     </div>
                   </CardHeader>
-                  <CardContent>
+                  <CardContent className="pt-0 sm:pt-0">
                     {rb && (
                       <>
                         <div className="bg-primary/5 border border-primary/20 text-sm p-4 rounded-lg mb-6 leading-relaxed space-y-1.5">
@@ -1280,7 +1280,7 @@ function DashboardView({
                 <CardHeader>
                   <CardTitle>区间收益率与波动率</CardTitle>
                 </CardHeader>
-                <CardContent className="overflow-x-auto min-w-0">
+                <CardContent className="overflow-x-auto min-w-0 pt-0 sm:pt-0">
                   <Table className="min-w-[640px]">
                     <TableHeader>
                       <TableRow>
@@ -1328,7 +1328,7 @@ function DashboardView({
                   <CardHeader>
                     <CardTitle>绩效指标对比</CardTitle>
                   </CardHeader>
-                  <CardContent className="overflow-x-auto min-w-0">
+                  <CardContent className="overflow-x-auto min-w-0 pt-0 sm:pt-0">
                     <Table className="min-w-0">
                       <TableHeader>
                         <TableRow>
@@ -1400,7 +1400,7 @@ function DashboardView({
                   <CardHeader>
                     <CardTitle>日收益率分布</CardTitle>
                   </CardHeader>
-                  <CardContent>
+                  <CardContent className="pt-0 sm:pt-0">
                     {distOption ? (
                       <>
                         <EChart
@@ -2051,7 +2051,7 @@ function RunningPortfolioView({
             你可以切换查看其他组合或 Demo；该组合完成后页面会自动刷新。
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-5">
+        <CardContent className="space-y-5 pt-0 sm:pt-0">
           <Select
             value={String(status.portfolio_id)}
             onValueChange={(v) => router.push(`/dashboard?id=${v}`)}
@@ -2183,7 +2183,7 @@ function PortfolioParamsCard({
         <CardTitle className="text-base">组合参数</CardTitle>
         <CardDescription>该投资组合设定的回测与优化参数</CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="pt-0 sm:pt-0">
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-x-6 gap-y-3 text-sm">
           {items.map(({ label, value }) => (
             <div key={label}>
@@ -2436,7 +2436,7 @@ function AttributionSection({
           残差（Carino链接近似误差），并列出各资产与每次调仓的收益贡献。
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-6">
+      <CardContent className="space-y-6 pt-0 sm:pt-0">
         {/* 概览卡片 */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
           {summaryCards.map((c) => (

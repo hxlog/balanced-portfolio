@@ -383,7 +383,7 @@ export function RiskMatrixSection({
         <CardHeader>
           <CardTitle>相关性与协方差矩阵</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="pt-0 sm:pt-0">
           <div className="text-sm text-muted-foreground py-12 text-center">无矩阵数据</div>
         </CardContent>
       </Card>
@@ -398,7 +398,7 @@ export function RiskMatrixSection({
           近 {lookbackDays || 156} 个交易日日收益率（跟随组合回溯参数） · 已选 {selected.size} / {matrixAssets.length} 个成分
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-6">
+      <CardContent className="space-y-6 pt-0 sm:pt-0">
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" variant="outline" size="sm" onClick={() => setSelected(new Set(matrixAssets.map((a) => a.index)))}>
             全选
