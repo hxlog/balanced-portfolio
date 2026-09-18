@@ -289,7 +289,11 @@ export interface Asset {
   logical_source?: string;  // 逻辑源分组(etf/cn_index/hk_index/global_index/...), 用于隐藏物理 vendor
   last_clean_date?: string | null;  // 该资产最新清洗日
   is_stale?: boolean;  // 是否落后于平台最新清洗日(断更/未到最新)
-  currency?: string;   // 计价币种(CNY/USD/HKD/JPY/...); 非 CNY 为外币计价资产, 无汇率数据, builder 沉底+添加前确认
+  /** 相对平台最新清洗日落后的**交易日数**(按 CN 交易日历数); 字段缺失(旧后端)视为 null */
+  lag_trading_days?: number | null;
+  /** 滞后 >= 2 个交易日(比 is_stale 严格: 差 1 日不算); 字段缺失视为不滞后 */
+  is_lagging?: boolean;
+  currency?: string;   // 计价币种(CNY/USD/HKD/JPY/...); 非 CNY 在清洗阶段按每日汇率折算为 CNY, builder 沉底+添加前确认
 }
 
 export interface NavPoint {
@@ -554,6 +558,10 @@ export interface AdminAsset {
   last_error?: string | null;
   last_probe_ms?: number | null;
   is_stale?: boolean;  // 落后于平台最新清洗日(断更/未到最新), 已排除删除/停用
+  /** 相对平台最新清洗日落后的**交易日数**(按 CN 交易日历数); 字段缺失(旧后端)视为 null */
+  lag_trading_days?: number | null;
+  /** 滞后 >= 2 个交易日(比 is_stale 严格: 差 1 日不算); 字段缺失视为不滞后 */
+  is_lagging?: boolean;
 }
 
 const TOKEN_KEY = "bp_token";
@@ -879,6 +887,11 @@ export const api = {
     }),
   listDataSources: () => req<{ data_sources: DataSource[] }>("/api/admin/data-sources"),
   listAdminAssets: () => req<{ assets: AdminAsset[] }>("/api/admin/assets"),
+  /** 按资产反查引用它的组合(删除/停用确认框用) */
+  listAssetPortfolioRefs: () =>
+    req<{ refs: Array<{ key: string; portfolios: Array<{ portfolio_id: number; name: string; is_demo: boolean }> }> }>(
+      "/api/admin/assets/portfolio-refs",
+    ),
   refreshAdminAssetStatus: () =>
     req<{ ok: boolean }>("/api/admin/assets/refresh-status", { method: "POST" }),
   syncAllAssets: () =>

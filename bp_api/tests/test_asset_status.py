@@ -195,18 +195,44 @@ def test_list_assets_returns_currency():
         cur.fetchone.return_value = (date(2026, 9, 4),)  # _stale_frontier 前沿日
         cur.fetchall.return_value = [
             # symbol, source, category, name, asset_class, vendor, adjust,
-            # logical_source, last_clean_date, currency
+            # logical_source, last_clean_date, currency, lag_trading_days
             ("513500", "etf_em", "etf", "标普500ETF", "equity", "东财", "hfq",
-             "etf_em", date(2026, 9, 4), "USD"),
+             "etf_em", date(2026, 9, 4), "USD", 0),
             ("510300", "etf_em", "etf", "沪深300ETF", "equity", "东财", "hfq",
-             "etf_em", date(2026, 9, 4), "CNY"),
+             "etf_em", date(2026, 9, 4), "CNY", 3),
         ]
         out = list_assets(conn)
     sql = " ".join(cur.execute.call_args[0][0].split())
     assert "c.currency" in sql
+    assert "bp_trading_calendar" in sql  # 落后交易日数来自 A 股交易日历
     by_symbol = {a["symbol"]: a for a in out}
     assert by_symbol["513500"]["currency"] == "USD"
     assert by_symbol["510300"]["currency"] == "CNY"
+    # 滞后语义: 落后 >= 2 个交易日才算「滞后」(差 1 日是正常增量节奏)
+    assert by_symbol["513500"]["lag_trading_days"] == 0
+    assert by_symbol["513500"]["is_lagging"] is False
+    assert by_symbol["510300"]["lag_trading_days"] == 3
+    assert by_symbol["510300"]["is_lagging"] is True
+
+
+def test_list_assets_lagging_boundary():
+    """边界: NULL(从未有清洗数据)/1 日/2 日 分别不滞后、不滞后、滞后。"""
+    from bp_api.repositories import list_assets
+
+    with _mock_conn() as (conn, cur):
+        cur.fetchone.return_value = (date(2026, 9, 4),)
+        cur.fetchall.return_value = [
+            ("A", "s", None, "a", "equity", "v", None, "s", None, "CNY", None),
+            ("B", "s", None, "b", "equity", "v", None, "s", date(2026, 9, 3), "CNY", 1),
+            ("C", "s", None, "c", "equity", "v", None, "s", date(2026, 9, 2), "CNY", 2),
+            ("D", "s", None, "d", "equity", "v", None, "s", date(2026, 9, 1), "CNY", 0),
+        ]
+        out = list_assets(conn)
+    by = {a["symbol"]: a for a in out}
+    assert by["A"]["lag_trading_days"] is None and by["A"]["is_lagging"] is False
+    assert by["B"]["is_lagging"] is False  # 差 1 日: 正常
+    assert by["C"]["is_lagging"] is True   # 差 2 日: 滞后
+    assert by["D"]["is_lagging"] is False  # 每日都在跑
 
 
 def test_list_admin_assets_returns_currency():
@@ -218,17 +244,52 @@ def test_list_admin_assets_returns_currency():
             # symbol, source, category, name, start_date, is_deleted, asset_class, vendor,
             # last_raw_date, last_clean_date, raw_rows, clean_rows,
             # last_success_at, last_error, last_probe_ms, is_selectable, adjust,
-            # logical_source, currency
+            # logical_source, currency, lag_trading_days
             ("000300", "cn_index_em", "index", "沪深300", None, 0, "equity", "东财",
              date(2026, 9, 4), date(2026, 9, 4), 2200, 2190,
              None, None, None, True, None,
-             "cn_index_em", "CNY"),
+             "cn_index_em", "CNY", 0),
         ]
         out = list_admin_assets(conn)
     sql = " ".join(cur.execute.call_args[0][0].split())
     assert "c.currency" in sql
+    assert "bp_trading_calendar" in sql
     assert out[0]["currency"] == "CNY"
     assert out[0]["raw_rows"] == 2200  # 既有字段不回归
+    assert out[0]["lag_trading_days"] == 0
+    assert out[0]["is_lagging"] is False
+
+
+# ---------------------------------------------------------------------
+# list_asset_portfolios: 按资产反查引用组合(删除/停用确认框用)
+# ---------------------------------------------------------------------
+def test_list_asset_portfolios_groups_by_key_and_dedups():
+    """同一资产在组合里可能有多行(不同象限) → 组合名只应出现一次; 且按 symbol@source 分组。"""
+    from bp_api.repositories import list_asset_portfolios
+
+    with _mock_conn() as (conn, cur):
+        cur.fetchall.return_value = [
+            ("510300", "etf_em", 12, "多资产全天候", True),
+            ("510300", "etf_em", 31, "高频调仓版", False),
+            ("000300", "cn_index_em", 12, "多资产全天候", True),
+        ]
+        out = list_asset_portfolios(conn)
+    sql = " ".join(cur.execute.call_args[0][0].split())
+    assert "DISTINCT" in sql  # 同资产多象限行不得重复计数
+    assert "bp_portfolio_asset" in sql
+    by_key = {r["key"]: r["portfolios"] for r in out}
+    assert set(by_key) == {"510300@etf_em", "000300@cn_index_em"}
+    assert [p["portfolio_id"] for p in by_key["510300@etf_em"]] == [12, 31]
+    assert by_key["510300@etf_em"][0]["is_demo"] is True
+    assert by_key["000300@cn_index_em"][0]["name"] == "多资产全天候"
+
+
+def test_list_asset_portfolios_empty():
+    from bp_api.repositories import list_asset_portfolios
+
+    with _mock_conn() as (conn, cur):
+        cur.fetchall.return_value = []
+        assert list_asset_portfolios(conn) == []
 
 
 # ---------------------------------------------------------------------

@@ -255,23 +255,50 @@ def _stale_frontier(conn: psycopg.Connection) -> Optional[date]:
         return row[0] if row else None
 
 
+# 落后多少个「交易日」才算滞后。1 个交易日(即 T-1)属正常增量节奏, 不算滞后。
+LAG_TRADING_DAYS_THRESHOLD = 2
+
+# 单个资产相对平台最新清洗日(前沿)的落后交易日数, 以 A 股交易日历为准。
+# last_clean_date 为 NULL(从未落过清洗数据)时返回 NULL —— 前端据此不显示滞后徽章。
+_LAG_DAYS_SQL = """
+    (SELECT COUNT(*)::int
+       FROM bp_trading_calendar tc
+      WHERE tc.market = 'CN' AND tc.is_trading
+        AND tc.cal_date > {last_clean} AND tc.cal_date <= {frontier})
+"""
+
+
+def _lag_expr(frontier: Optional[date], last_clean_col: str) -> tuple[str, list]:
+    """构造「落后交易日数」的 SQL 片段。
+
+    frontier 为 NULL(平台没有任何清洗数据)时无参照系, 直接返回 NULL 常量。
+    """
+    if frontier is None:
+        return "NULL::int", []
+    sql = _LAG_DAYS_SQL.format(last_clean=last_clean_col, frontier="%s")
+    return f"CASE WHEN {last_clean_col} IS NULL THEN NULL ELSE {sql} END", [frontier]
+
+
 def list_assets(conn: psycopg.Connection) -> list[dict]:
     frontier = _stale_frontier(conn)
+    lag_sql, lag_params = _lag_expr(frontier, "st.last_clean_date")
     with conn.cursor() as cur:
         cur.execute(
-            """
+            f"""
             SELECT c.symbol, c.source, c.category, c.name, s.asset_class,
                    s.vendor, c.extra_params->>'adjust' AS adjust,
                    COALESCE(s.logical_source, c.source) AS logical_source,
                    st.last_clean_date,
-                   c.currency
+                   c.currency,
+                   {lag_sql} AS lag_trading_days
             FROM bp_index_config c
             JOIN bp_data_source s ON s.code = c.source
             LEFT JOIN bp_asset_data_status st
               ON st.symbol = c.symbol AND st.source = c.source
             WHERE c.is_deleted = 0 AND c.is_selectable = TRUE
             ORDER BY s.asset_class, c.symbol
-            """
+            """,
+            lag_params,
         )
         return [
             {
@@ -284,6 +311,10 @@ def list_assets(conn: psycopg.Connection) -> list[dict]:
                     frontier is not None
                     and (r[8] is None or r[8] < frontier)
                 ),
+                "lag_trading_days": r[10],
+                # 与 list_admin_assets 同门槛: 永不产出行(NULL)不算滞后。/
+                # builder 的资产池只含在售资产, 软删除/停用的本就不在此列表。
+                "is_lagging": bool(r[10] is not None and r[10] >= LAG_TRADING_DAYS_THRESHOLD),
             }
             for r in cur.fetchall()
         ]
@@ -1477,20 +1508,23 @@ def list_data_sources(conn: psycopg.Connection) -> list[dict]:
 
 def list_admin_assets(conn: psycopg.Connection) -> list[dict]:
     frontier = _stale_frontier(conn)
+    lag_sql, lag_params = _lag_expr(frontier, "st.last_clean_date")
     with conn.cursor() as cur:
         cur.execute(
-            """SELECT c.symbol, c.source, c.category, c.name, c.start_date, c.is_deleted,
+            f"""SELECT c.symbol, c.source, c.category, c.name, c.start_date, c.is_deleted,
                       s.asset_class, s.vendor,
                       st.last_raw_date, st.last_clean_date, st.raw_rows, st.clean_rows,
                       st.last_success_at, st.last_error, st.last_probe_ms,
                       c.is_selectable, c.extra_params->>'adjust' AS adjust,
                       COALESCE(s.logical_source, c.source) AS logical_source,
-                      c.currency
+                      c.currency,
+                      {lag_sql} AS lag_trading_days
                FROM bp_index_config c
                JOIN bp_data_source s ON s.code = c.source
                LEFT JOIN bp_asset_data_status st
                  ON st.symbol = c.symbol AND st.source = c.source
-               ORDER BY c.is_deleted, s.asset_class, c.symbol"""
+               ORDER BY c.is_deleted, s.asset_class, c.symbol""",
+            lag_params,
         )
         return [
             {
@@ -1518,6 +1552,16 @@ def list_admin_assets(conn: psycopg.Connection) -> list[dict]:
                     and r[15] is not False
                     and frontier is not None
                     and (r[9] is None or r[9] < frontier)
+                ),
+                # 管理端「滞后」口径: 落后 >= 2 个交易日才算滞后(差 1 日是正常增量节奏)。
+                # 与上面的 is_stale 同门槛: 软删除 / 停用的资产不参与滞后判定 —— 它们本就
+                # 不在调度范围内, 报"滞后"只会污染筛选与徽章(已软删除的断更标的最多)。
+                "lag_trading_days": r[19],
+                "is_lagging": bool(
+                    r[5] == 0
+                    and r[15] is not False
+                    and r[19] is not None
+                    and r[19] >= LAG_TRADING_DAYS_THRESHOLD
                 ),
             }
             for r in cur.fetchall()
@@ -1586,6 +1630,29 @@ def set_asset_selectable(conn: psycopg.Connection, source: str, symbol: str, sel
         )
         if cur.rowcount == 0:
             raise KeyError(f"资产不存在: {symbol}@{source}")
+
+
+def list_asset_portfolios(conn: psycopg.Connection) -> list[dict]:
+    """按资产反查引用它的组合 —— 供管理端「删除/停用会波及哪些组合」的确认提示使用。
+
+    返回 {'symbol@source': [{portfolio_id, name, is_demo}, ...]}, 一次查全表避免 N+1。
+    删除是软删除, 历史回测结果仍可读; 但组合下次重算时会因该资产不可用而变化,
+    因此确认框必须把受影响的组合如实列出来。
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            # DISTINCT: 同一资产可在组合里出现多行(不同象限各一行), 组合名只应出现一次
+            """SELECT DISTINCT a.symbol, a.source, p.portfolio_id, p.name, p.is_demo
+               FROM bp_portfolio_asset a
+               JOIN bp_portfolio p ON p.portfolio_id = a.portfolio_id
+               ORDER BY a.symbol, a.source, p.portfolio_id"""
+        )
+        out: dict[str, list[dict]] = {}
+        for sym, src, pid, name, is_demo in cur.fetchall():
+            out.setdefault(f"{sym}@{src}", []).append(
+                {"portfolio_id": pid, "name": name, "is_demo": bool(is_demo)}
+            )
+        return [{"key": k, "portfolios": v} for k, v in out.items()]
 
 
 def refresh_asset_status(

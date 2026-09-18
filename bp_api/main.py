@@ -502,6 +502,16 @@ def list_admin_assets(_: auth.UserContext = Depends(auth.require_asset_editor)) 
         return {"assets": repo.list_admin_assets(conn)}
 
 
+@app.get("/api/admin/assets/portfolio-refs")
+def list_asset_portfolio_refs(_: auth.UserContext = Depends(auth.require_asset_editor)) -> dict:
+    """按资产反查引用它的组合: 管理端删除/停用前如实提示「会波及哪些组合」。
+
+    删除为软删除(历史回测结果仍保留), 但组合下次重算会因该资产缺失而变化, 故必须可见。
+    """
+    with db.get_conn() as conn:
+        return {"refs": repo.list_asset_portfolios(conn)}
+
+
 @app.post("/api/admin/assets/refresh-status")
 def refresh_admin_asset_status(_: auth.UserContext = Depends(auth.require_super_admin)) -> dict:
     """管理端「刷新状态」按钮: with_count=True 重算行数(全表扫一次, 后台操作可接受)。"""
