@@ -651,6 +651,76 @@ def _fetch_btc_cme_sina(symbol: str, start: date, end: date, extra: dict) -> pd.
 
 
 # ---------------------------------------------------------------------
+# 新浪外汇即期(人民币汇率中间价口径) — 清洗期 CNY 折算的唯一汇率来源
+#
+# 【实测事实 2026-09-18】akshare 无对应封装函数: `currency_boc_sina` 走的是
+# biz.finance.sina.com.cn 的**中国银行牌价**页(汇买价/钞买价/中行折算价), 与新浪
+# 「人民币汇率」口径是**两套不同口径**(用户已实测: USD 日变动相关仅 0.149, ±2 日移位
+# 检验亦排除日期错位)。本适配器直连新浪自己的日 K 端点(与 dxy_em 直连 push2his 同一
+# 思路, 走 http_session 的 curl_cffi Chrome 指纹):
+#
+#   https://vip.stock.finance.sina.com.cn/forex/api/jsonp.php/var%20_{sina_sym}=
+#       /NewForexService.getDayKLine?symbol={sina_sym}
+#
+# 例: symbol=USDCNY → sina_sym=fx_susdcny → 返回
+#   var _fx_susdcny=("1994-08-30,8.5616,8.5616,8.5616,8.5616,|...|2026-09-18,6.7067,...");
+# 每行 `日期,开,低,高,收,`(末位空串 —— 行尾逗号需按此剥掉空字段)。
+#
+# 【列序实测 2026-09-18】全量 8021 行做不变式检验(共 5210 行 low≠high 可区分两种候选):
+#   候选 (日期,开,高,低,收): 满足 低 ≤ 开,收 ≤ 高 的仅 2811/8021 → **否**
+#   候选 (日期,开,低,高,收): 满足 低 ≤ 开,收 ≤ 高 的有 8020/8021 → **是**
+# (唯一例外 2011-10-03 开=6.3340 < 低=6.3745, 是新浪自身的脏行。)
+# 注意: close 恒为第 4 个数值字段, 两种候选一致, 故折算结果不受列序误解影响;
+# 但 high/low 语义必须按实测写对(前端 K 线取用)。
+#
+# 【不注册 AGGREGATE_CHAINS】用户已确认: 新浪口径不可与中行/其他源聚合, 该源为单一事实源。
+# 【无成交量】新浪外汇端点不返回 volume/amount, has_volume=False。
+# ---------------------------------------------------------------------
+_FX_SINA_KLINE_COLS = ["trade_date", "open", "low", "high", "close", "_pad"]
+
+# 新浪外汇代码表里的人民币对, 币种三字母小写(实测可用: usd/hkd/jpy/eur/gbp/aud/cad/chf/
+# nzd/sgd/krw/inr/rub/brl/vnd/thb/myr/php/mop/sek/nok/dkk/try/zar/mxn/twd)。
+_FX_SINA_URL = (
+    "https://vip.stock.finance.sina.com.cn/forex/api/jsonp.php/"
+    "var%20_{sina_sym}=/NewForexService.getDayKLine"
+)
+
+
+def fx_sina_symbol(symbol: str) -> Optional[str]:
+    """`{币种}CNY`(如 USDCNY) → 新浪外汇代码(如 fx_susdcny); 非 {币种}CNY 形态返回 None。"""
+    s = symbol.strip().upper()
+    if not s.endswith("CNY") or len(s) != 6:
+        return None
+    return f"fx_s{s[:-3].lower()}cny"
+
+
+def _fetch_fx_sina(symbol: str, start: date, end: date, extra: dict) -> pd.DataFrame:
+    """直连新浪外汇日 K(全量返回, 由 _finalize 按 [start, end] 过滤)。
+
+    连接级错误(掐断/超时)**向上抛**: 汇率无降级源(用户已确认新浪口径不可聚合),
+    由 ingest 层的重试/退避处理, 绝不静默返回空表冒充「无数据」。
+    """
+    import requests as _requests
+
+    sina_sym = fx_sina_symbol(symbol)
+    if sina_sym is None:
+        raise ValueError(f"fx_sina: 非法汇率标的 {symbol!r}, 期望形如 USDCNY / HKDCNY")
+    url = _FX_SINA_URL.format(sina_sym=sina_sym)
+    r = _requests.get(url, params={"symbol": sina_sym}, timeout=20)
+    text = r.text or ""
+    if '("' not in text or '")' not in text:
+        logger.warning("fx_sina: %s(%s) 响应非 JSONP, 前 200 字符: %r", symbol, sina_sym, text[:200])
+        return pd.DataFrame(columns=STANDARD_COLUMNS)
+    body = text[text.index('("') + 2 : text.rindex('")')]
+    rows = [item.split(",") for item in body.split("|") if item]
+    if not rows:
+        return pd.DataFrame(columns=STANDARD_COLUMNS)
+    rows = [r + [""] * (len(_FX_SINA_KLINE_COLS) - len(r)) for r in rows]
+    df = pd.DataFrame([r[: len(_FX_SINA_KLINE_COLS)] for r in rows], columns=_FX_SINA_KLINE_COLS)
+    return _finalize(df, start, end)
+
+
+# ---------------------------------------------------------------------
 # 注册表
 # ---------------------------------------------------------------------
 @dataclass(frozen=True)
@@ -718,6 +788,10 @@ SOURCES: dict[str, SourceAdapter] = {
     "gold_comex_em": SourceAdapter(
         "gold_comex_em", "futures_foreign_hist", True, True, False, _fetch_gold_comex_em
     ),
+    # 汇率(新浪「人民币汇率」口径, 直连 jsonp 日 K; 无成交量)。symbol 形如 USDCNY。
+    "fx_sina": SourceAdapter(
+        "fx_sina", "NewForexService.getDayKLine", False, False, False, _fetch_fx_sina
+    ),
 }
 
 
@@ -737,6 +811,8 @@ def get_adapter(source: str) -> SourceAdapter:
 # 加密: BTC-USD 现货(yfinance) → CME 期货(新浪), 期货/现货基差经重锚吸收
 # (有重叠日用重叠收盘比值; 主源整段失败/被 429 时用库中锚点, 周末锚点取期货帧
 # ≤锚点日最近一根, 容差 7 天)。
+# 汇率(fx_sina): **刻意不注册** — 新浪人民币汇率与中行牌价是不同口径(实测 USD 日变动
+# 相关 0.149), 不可按「同口径常数倍」重锚, 故汇率只有单一事实源, 无降级链。
 AGGREGATE_CHAINS: dict[str, list[str]] = {
     "cn_index_em": ["cn_index_sina", "cn_index_tx", "index_tx"],
     "cn_index_em_px": ["cn_index_tx", "index_tx"],

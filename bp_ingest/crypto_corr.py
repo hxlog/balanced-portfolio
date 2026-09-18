@@ -69,11 +69,23 @@ LOOKBACK_DAYS = 2555
 # ---------------------------------------------------------------------------
 
 def _load_close(
-    conn: psycopg.Connection, symbol: str, source: str, start: date, end: date
+    conn: psycopg.Connection, symbol: str, source: str, start: date, end: date,
+    *, usd_native: bool = False,
 ) -> pd.Series:
+    """读清洗表收盘序列。
+
+    `usd_native=True` 用于**本身就以美元计价**的看板资产(标普500/纳斯达克, 源
+    global_index_em): 它们的 currency 非 CNY, 清洗阶段已按日折算成人民币, 直接读会把
+    CNY 口径的价格当成 USD 展示(实测标普500 显示 52643 而真实是 7799), 并让 BTC 相关性
+    偏离原生美元口径(近 3M 实测 0.2116 vs 真实 0.2546)。故此处在读侧用 `fx_rate` 还原
+    原生美元价 —— /crypto 是美元口径看板(「BTC 价格 (USD)」/NYSE 日历), 与组合回测的
+    CNY 口径是两条独立链路。
+
+    其余面板资产(BTC-USD/DXY/GC=F/AU0)的 fx_rate 为 NULL 或 1, 不受影响。
+    """
     with conn.cursor() as cur:
         cur.execute(
-            """SELECT trade_date, close, fill_flag FROM bp_quote_clean
+            """SELECT trade_date, close, fill_flag, fx_rate FROM bp_quote_clean
                WHERE symbol = %s AND source = %s
                  AND trade_date BETWEEN %s AND %s
                ORDER BY trade_date""",
@@ -82,13 +94,19 @@ def _load_close(
         rows = cur.fetchall()
     if not rows:
         return pd.Series(dtype=float)
-    # fill_flag='interp' 行(线性插值, 用了未来右锚)的 close 置 NaN, 防止未来函数 +
-    # 防止美股假日 interp 行(标普500 被 cleaning 重索引到 A 股日历)污染 NYSE 日历;
-    # 引擎随后 ffill(左锚)使缺口日收益=0、复牌日收益=真实缺口, 无未来依赖。
-    s = pd.Series(
-        {r[0]: (float(r[1]) if r[2] != "interp" else float("nan")) for r in rows},
-        dtype=float,
-    )
+
+    def _value(c, fill_flag, fx) -> float:
+        # fill_flag='interp' 行(线性插值, 用了未来右锚)置 NaN, 防止未来函数 +
+        # 防止美股假日 interp 行(标普500 被 cleaning 重索引到 A 股日历)污染 NYSE 日历;
+        # 引擎随后 ffill(左锚)使缺口日收益=0、复牌日收益=真实缺口, 无未来依赖。
+        if fill_flag == "interp" or c is None:
+            return float("nan")
+        v = float(c)
+        if usd_native and fx is not None and float(fx) not in (0.0, 1.0):
+            v /= float(fx)  # 折算价 → 原生美元价
+        return v
+
+    s = pd.Series({r[0]: _value(r[1], r[2], r[3]) for r in rows}, dtype=float)
     s.index = pd.to_datetime(s.index)
     return s.sort_index()
 
@@ -327,13 +345,17 @@ def compute_and_store_crypto_corr(
         logger.info("crypto 预计算触发 (trigger dates=%d, full=%s)", len(trade_dates), full)
 
     # 1. 加载 6 资产 7 年收盘 (仅 JOB 内读 bp_quote_clean hypertable)
+    #    标普500/纳斯达克必须 usd_native=True: 清洗阶段已把非 CNY 资产折成人民币,
+    #    而 /crypto 是美元口径看板。见 _load_close 文档。
     loaded: dict[str, pd.Series] = {
         BTC_SYMBOL:         _load_close(conn, BTC_SYMBOL, YFINANCE_SOURCE, start, end),
         DXY_SYMBOL:         _load_close(conn, DXY_SYMBOL, DXY_SOURCE, start, end),
         COMEX_GOLD_SYMBOL:  _load_close(conn, COMEX_GOLD_SYMBOL, COMEX_SOURCE, start, end),
         "AU0":               _load_close(conn, "AU0", CMDTY_SOURCE, start, end),
-        SP500_SYMBOL:       _load_close(conn, SP500_SYMBOL, GLOBAL_INDEX_SOURCE, start, end),
-        NASDAQ_SYMBOL:      _load_close(conn, NASDAQ_SYMBOL, GLOBAL_INDEX_SOURCE, start, end),
+        SP500_SYMBOL:       _load_close(conn, SP500_SYMBOL, GLOBAL_INDEX_SOURCE, start, end,
+                                        usd_native=True),
+        NASDAQ_SYMBOL:      _load_close(conn, NASDAQ_SYMBOL, GLOBAL_INDEX_SOURCE, start, end,
+                                        usd_native=True),
     }
 
     # 2. NYSE 日历 = 标普500 交易日 (单一事实源)

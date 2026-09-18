@@ -71,7 +71,10 @@ def fetch_active_configs(
     conn: psycopg.Connection, symbols: Optional[list[str]] = None
 ) -> list[ConfigRow]:
     """读取有效配置。symbols 非空时按 symbol 过滤(管理员显式单标的, 含停用品种)。
-    symbols 为空(全量/调度)时仅取启用品种(is_selectable=1)。"""
+    symbols 为空(全量/调度)时取启用品种(is_selectable=1) **加上汇率源**——
+    fx_sina 标的是清洗期折算的依赖(USDCNY/HKDCNY/JPYCNY), is_selectable=FALSE 使其
+    不进 /builder 可选池, 但必须被 6h 调度器增量拉取, 否则折算输入会停更。
+    """
     sql = """
         SELECT config_id, symbol, source, category, name, start_date, extra_params
         FROM bp_index_config
@@ -82,7 +85,7 @@ def fetch_active_configs(
         sql += " AND symbol = ANY(%s)"
         params.append(symbols)
     else:
-        sql += " AND is_selectable = TRUE"
+        sql += " AND (is_selectable = TRUE OR source = 'fx_sina')"
     sql += " ORDER BY source, symbol"
 
     rows: list[ConfigRow] = []
