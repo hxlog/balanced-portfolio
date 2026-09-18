@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, ArrowUpDown, CheckCircle2, Download, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Activity, AlertTriangle, ArrowUpDown, CheckCircle2, Download, Loader2, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -9,6 +9,7 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -28,11 +29,73 @@ const CATEGORY_OPTIONS: { value: string; label: string }[] = [
   { value: "bond", label: "bond · 债券指数" },
 ];
 
+type PortfolioRef = { portfolio_id: number; name: string };
+
+/**
+ * 「会影响哪些组合」提示块。删除/停用/批量操作前如实列出引用该资产的组合,
+ * 以及「删除后组合下次重算会变化」的后果说明 —— 避免用户在不知情的情况下改动线上组合。
+ */
+function AffectedPortfolios({
+  refs,
+  action,
+}: {
+  refs: PortfolioRef[];
+  action: "delete" | "disable" | "enable";
+}) {
+  if (action === "enable") return null;
+  if (refs.length === 0) {
+    return (
+      <span className="text-muted-foreground">当前没有组合引用这些标的。</span>
+    );
+  }
+  return (
+    <>
+      将影响 <span className="font-medium text-foreground">{refs.length}</span> 个组合：
+      <span className="text-foreground">
+        {refs.map((p) => p.name).join("、")}
+      </span>
+      {action === "delete" &&
+        "（组合下次重算时该标的将不再纳入，净值与持仓会随之变化）"}
+      {action === "disable" &&
+        "（停用只影响 builder 可选性，已有组合在重算时仍可继续使用该标的）"}
+    </>
+  );
+}
+
+/** 逻辑源短名(仅用于筛选下拉展示; 值仍是 logical_source 原文, 保证筛选与表格口径一致) */
+const LOGICAL_SOURCE_LABEL: Record<string, string> = {
+  cn_index: "cn_index · 指数聚合",
+  hk_index: "hk_index · 港股指数",
+  global_index: "global_index · 全球指数",
+  etf: "etf · ETF 聚合",
+};
+
+const LOGICAL_SOURCE_LABEL_CN: Record<string, string> = {
+  cn_index: "指数聚合",
+  hk_index: "港股指数",
+  global_index: "全球指数",
+  etf: "ETF 聚合",
+};
+
+/** 资产 key: 全栈通用口径 `{symbol}@{source}` */
+const assetKey = (a: { symbol: string; source: string }) => `${a.symbol}@${a.source}`;
+
+/** 逻辑源展示名(表格/确认弹窗共用, 与第 3 列「代码 / 源」口径一致) */
+function logicalSourceLabel(a: AdminAsset): string {
+  const ls = a.logical_source;
+  if (!ls) return a.source;
+  const cn = LOGICAL_SOURCE_LABEL_CN[ls];
+  return cn ? `${cn} · ${a.source}` : a.source;
+}
+
 export default function AdminAssetsPage() {
   const { isSuperAdmin, canManageAssets, ready } = useAuth();
   const [assets, setAssets] = useState<AdminAsset[]>([]);
   const [sources, setSources] = useState<DataSource[]>([]);
+  // loading 仅首屏 true; 后续刷新走 refreshing —— 刷新期间**不卸载** <Table>, 避免容器塌陷导致滚动位置复位。
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const loadedRef = useRef(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [probeOk, setProbeOk] = useState(false);
   const [probeResult, setProbeResult] = useState<string | null>(null);
@@ -49,22 +112,49 @@ export default function AdminAssetsPage() {
   const [search, setSearch] = useState("");
   const [sourceFilter, setSourceFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [laggingOnly, setLaggingOnly] = useState(false);
   const [minRows, setMinRows] = useState("");
   const [rowsSortDesc, setRowsSortDesc] = useState<boolean | null>(null);
+  const [lagSortDesc, setLagSortDesc] = useState<boolean | null>(null);
+  // 多选批量操作
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchOpen, setBatchOpen] = useState<null | "delete" | "enable" | "disable">(null);
   // 全量增量拉取(异步任务) + 重算所有就绪组合。
   // ⚠️ 必须在早返回(!ready/!isSuperAdmin)之前调用——否则 F5 刷新时 ready 由 false→true,
   //    hook 数量突变会触发 React Rules of Hooks 违规, 整页报 "This page couldn't load"。
   const [syncAllTaskId, setSyncAllTaskId] = useState<string | null>(null);
   const [syncAllOpen, setSyncAllOpen] = useState(false);
   const [enqueueBusy, setEnqueueBusy] = useState(false);
+  // 资产 -> 引用它的组合。删除/停用前如实列出「会波及哪些组合」。
+  const [assetRefs, setAssetRefs] = useState<Record<string, { portfolio_id: number; name: string }[]>>({});
 
-  const load = async () => {
-    setLoading(true);
+  /** 拉一次「资产 → 引用组合」映射(失败静默: 只是提示增强, 不影响主流程)。 */
+  const loadAssetRefs = async () => {
+    try {
+      const res = await api.listAssetPortfolioRefs();
+      setAssetRefs(
+        Object.fromEntries(res.refs.map((r) => [r.key, r.portfolios])),
+      );
+    } catch {
+      /* 提示增强失败不阻断资产管理 */
+    }
+  };
+
+  /** 刷新列表。首次渲染用 loading(整表占位), 之后一律 refreshing(表格保持挂载, 只显示细进度指示)。 */
+  const load = async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent ?? loadedRef.current;
+    if (silent) setRefreshing(true);
+    else setLoading(true);
     try {
       const [a, s] = await Promise.all([api.listAdminAssets(), api.listDataSources()]);
       setAssets(a.assets);
       setSources(s.data_sources);
+      loadedRef.current = true;
+      // 组合引用随列表一起刷新(不阻塞主流程): 删除/停用确认框要据此列出受影响组合
+      void loadAssetRefs();
     } finally {
+      setRefreshing(false);
       setLoading(false);
     }
   };
@@ -85,9 +175,11 @@ export default function AdminAssetsPage() {
     [sources],
   );
 
-  const vendors = useMemo(
-    () => Array.from(new Set(sources.map((s) => s.vendor).filter(Boolean))) as string[],
-    [sources],
+  // 数据源筛选项来自**资产上实际出现的 logical_source**(表格第 3 列渲染的就是它),
+  // 不再用 sources.vendor —— 两者不是一回事, 旧实现会出现「选了筛不到 / 筛了还显示」。
+  const logicalSources = useMemo(
+    () => Array.from(new Set(assets.map((a) => a.logical_source).filter(Boolean))).sort() as string[],
+    [assets],
   );
 
   const filteredAssets = useMemo(() => {
@@ -95,10 +187,11 @@ export default function AdminAssetsPage() {
     const minN = minRows.trim() === "" ? null : Number(minRows);
     let list = assets.filter((a) => {
       if (q && !(`${a.symbol}`.toLowerCase().includes(q) || `${a.name ?? ""}`.toLowerCase().includes(q))) return false;
-      if (sourceFilter !== "all" && a.vendor !== sourceFilter) return false;
+      if (sourceFilter !== "all" && a.logical_source !== sourceFilter) return false;
       if (statusFilter === "enabled" && (a.is_deleted || a.is_selectable === false)) return false;
       if (statusFilter === "disabled" && a.is_selectable !== false) return false;
       if (statusFilter === "deleted" && !a.is_deleted) return false;
+      if (laggingOnly && a.is_lagging !== true) return false;
       if (minN != null && !Number.isNaN(minN) && (a.clean_rows || 0) < minN) return false;
       return true;
     });
@@ -107,8 +200,52 @@ export default function AdminAssetsPage() {
         rowsSortDesc ? (b.clean_rows || 0) - (a.clean_rows || 0) : (a.clean_rows || 0) - (b.clean_rows || 0),
       );
     }
+    if (lagSortDesc !== null) {
+      // 缺失(旧后端 / 无清洗日)恒排最后, 与升降序无关: 用 lag_trading_days ?? -1 参与比较时,
+      // 降序会把 -1 甩到末位、升序却把它顶到最前 —— 两种序都不该让"没有数据"冒头。
+      const lag = (x: AdminAsset) => x.lag_trading_days;
+      const missing = (x: AdminAsset) => (lag(x) == null ? 1 : 0);
+      list = [...list].sort((a, b) => {
+        const ma = missing(a), mb = missing(b);
+        if (ma !== mb) return ma - mb;
+        if (ma === 1) return 0;
+        const la = lag(a) as number, lb = lag(b) as number;
+        return lagSortDesc ? lb - la : la - lb;
+      });
+    }
     return list;
-  }, [assets, search, sourceFilter, statusFilter, minRows, rowsSortDesc]);
+  }, [assets, search, sourceFilter, statusFilter, laggingOnly, minRows, rowsSortDesc, lagSortDesc]);
+
+  const laggingCount = useMemo(() => assets.filter((a) => a.is_lagging === true).length, [assets]);
+
+  // 选中态与会话数据对齐: 已从列表消失的 key 自动剔除(软删除/筛选变化都不会留下幽灵选中)
+  const selectedAssets = useMemo(
+    () => assets.filter((a) => selected.has(assetKey(a))),
+    [assets, selected],
+  );
+  const allVisibleSelected = filteredAssets.length > 0 && filteredAssets.every((a) => selected.has(assetKey(a)));
+  const someVisibleSelected = !allVisibleSelected && filteredAssets.some((a) => selected.has(assetKey(a)));
+
+  const toggleOne = (key: string, next: boolean) => {
+    setSelected((s) => {
+      const n = new Set(s);
+      if (next) n.add(key);
+      else n.delete(key);
+      return n;
+    });
+  };
+
+  const toggleAllVisible = (next: boolean) => {
+    setSelected((s) => {
+      const n = new Set(s);
+      for (const a of filteredAssets) {
+        const k = assetKey(a);
+        if (next) n.add(k);
+        else n.delete(k);
+      }
+      return n;
+    });
+  };
 
   if (!ready) return <div className="p-12 text-center text-muted-foreground">加载中...</div>;
   if (!canManageAssets) return <div className="p-12 text-center text-destructive">需要资产编辑权限</div>;
@@ -242,12 +379,12 @@ export default function AdminAssetsPage() {
   };
 
   const refreshStatus = async () => {
-    setLoading(true);
+    setRefreshing(true);
     try {
       await api.refreshAdminAssetStatus();
       await load();
     } finally {
-      setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -267,7 +404,77 @@ export default function AdminAssetsPage() {
     }
   };
 
+  /** 批量删除: 串行执行(并发受控), 单个失败不中断, 最后汇总 toast。 */
+  const runBatchDelete = async () => {
+    const targets = selectedAssets;
+    setBatchBusy(true);
+    const failed: { key: string; reason: string }[] = [];
+    let ok = 0;
+    for (const a of targets) {
+      try {
+        await api.deleteAdminAsset(a.source, a.symbol);
+        ok += 1;
+      } catch (e) {
+        failed.push({ key: assetKey(a), reason: String(e instanceof Error ? e.message : e) });
+      }
+    }
+    await api.revalidateAssets().catch(() => {});
+    await load();
+    setSelected(new Set());
+    setBatchBusy(false);
+    setBatchOpen(null);
+    if (failed.length === 0) {
+      toast.success(`已删除 ${ok} 个标的`);
+    } else {
+      toast.error(`删除完成：成功 ${ok} 个，失败 ${failed.length} 个`, {
+        description: failed.slice(0, 5).map((f) => `${f.key}: ${f.reason}`).join("\n")
+          + (failed.length > 5 ? `\n…另有 ${failed.length - 5} 个失败项` : ""),
+      });
+    }
+  };
+
+  /** 批量启用/停用: 复用既有 PATCH /selectable 端点, 串行执行 + 失败汇总。 */
+  const runBatchSelectable = async (next: boolean) => {
+    const targets = selectedAssets.filter((a) => a.is_selectable !== next);
+    setBatchBusy(true);
+    const failed: { key: string; reason: string }[] = [];
+    let ok = 0;
+    for (const a of targets) {
+      try {
+        await api.setAssetSelectable(a.source, a.symbol, next);
+        ok += 1;
+      } catch (e) {
+        failed.push({ key: assetKey(a), reason: String(e instanceof Error ? e.message : e) });
+      }
+    }
+    await api.revalidateAssets().catch(() => {});
+    await load();
+    setSelected(new Set());
+    setBatchBusy(false);
+    setBatchOpen(null);
+    const verb = next ? "启用" : "停用";
+    if (failed.length === 0) {
+      toast.success(`已${verb} ${ok} 个标的`);
+    } else {
+      toast.error(`${verb}完成：成功 ${ok} 个，失败 ${failed.length} 个`, {
+        description: failed.slice(0, 5).map((f) => `${f.key}: ${f.reason}`).join("\n")
+          + (failed.length > 5 ? `\n…另有 ${failed.length - 5} 个失败项` : ""),
+      });
+    }
+  };
+
   const probing = busyKey === `${form.symbol}@${form.source}`;
+
+  /** 选中集合涉及的组合并集(去重), 供批量确认框如实提示影响面。 */
+  const selectedPortfolioRefs = (() => {
+    const seen = new Map<number, PortfolioRef>();
+    for (const a of selectedAssets) {
+      for (const p of assetRefs[assetKey(a)] ?? []) {
+        if (!seen.has(p.portfolio_id)) seen.set(p.portfolio_id, p);
+      }
+    }
+    return [...seen.values()].sort((x, y) => x.portfolio_id - y.portfolio_id);
+  })();
 
   return (
     <div className="flex-1 p-6 max-w-[1440px] mx-auto w-full space-y-6">
@@ -407,7 +614,12 @@ export default function AdminAssetsPage() {
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between gap-3">
-            <CardTitle className="text-base">投资品列表</CardTitle>
+            <div className="flex items-center gap-2">
+              <CardTitle className="text-base">投资品列表</CardTitle>
+              {refreshing && (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" aria-label="刷新中" />
+              )}
+            </div>
             <div className="flex items-center gap-2">
               {isSuperAdmin && (
                 <Button variant="outline" size="sm" onClick={enqueueReady} disabled={enqueueBusy}>
@@ -416,14 +628,14 @@ export default function AdminAssetsPage() {
                 </Button>
               )}
               {isSuperAdmin && (
-                <Button variant="outline" size="sm" onClick={syncAll} disabled={loading}>
+                <Button variant="outline" size="sm" onClick={syncAll} disabled={loading || refreshing}>
                   <Download className="w-4 h-4 mr-1" />
                   拉取增量数据
                 </Button>
               )}
               {isSuperAdmin && (
-                <Button variant="outline" size="sm" onClick={refreshStatus} disabled={loading}>
-                  <RefreshCw className={`w-4 h-4 mr-1 ${loading ? "animate-spin" : ""}`} />
+                <Button variant="outline" size="sm" onClick={refreshStatus} disabled={loading || refreshing}>
+                  <RefreshCw className={`w-4 h-4 mr-1 ${refreshing ? "animate-spin" : ""}`} />
                   刷新状态
                 </Button>
               )}
@@ -476,11 +688,11 @@ export default function AdminAssetsPage() {
               />
             </div>
             <Select value={sourceFilter} onValueChange={setSourceFilter}>
-              <SelectTrigger className="w-[150px]"><SelectValue placeholder="数据源" /></SelectTrigger>
+              <SelectTrigger className="w-[190px]"><SelectValue placeholder="逻辑源" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">全部数据源</SelectItem>
-                {vendors.map((v) => (
-                  <SelectItem key={v} value={v}>{v}</SelectItem>
+                <SelectItem value="all">全部逻辑源</SelectItem>
+                {logicalSources.map((v) => (
+                  <SelectItem key={v} value={v}>{LOGICAL_SOURCE_LABEL[v] ?? v}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -493,6 +705,15 @@ export default function AdminAssetsPage() {
                 <SelectItem value="deleted">已删除</SelectItem>
               </SelectContent>
             </Select>
+            <label className="flex items-center gap-1.5 text-sm text-muted-foreground whitespace-nowrap">
+              <Checkbox
+                checked={laggingOnly}
+                onCheckedChange={(v) => setLaggingOnly(v === true)}
+                aria-label="仅显示滞后"
+              />
+              仅显示滞后
+              {laggingCount > 0 && <span className="font-mono text-xs">({laggingCount})</span>}
+            </label>
             <Input
               type="number"
               min={0}
@@ -508,9 +729,17 @@ export default function AdminAssetsPage() {
           {loading ? (
             <div className="py-12 text-center text-muted-foreground">加载中...</div>
           ) : (
-            <Table className="min-w-[980px]">
+            <Table className="min-w-[1080px]">
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-8 px-2">
+                    <Checkbox
+                      checked={allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false}
+                      onCheckedChange={(v) => toggleAllVisible(v === true)}
+                      aria-label="全选当前筛选结果"
+                      disabled={filteredAssets.length === 0}
+                    />
+                  </TableHead>
                   <TableHead className="min-w-[140px] max-w-[200px]">名称</TableHead>
                   <TableHead>代码 / 源</TableHead>
                   <TableHead className="whitespace-nowrap px-2">状态</TableHead>
@@ -525,7 +754,17 @@ export default function AdminAssetsPage() {
                       <ArrowUpDown className={`w-3 h-3 ${rowsSortDesc === null ? "opacity-40" : "opacity-100"}`} />
                     </button>
                   </TableHead>
-                  <TableHead className="whitespace-nowrap px-2">新鲜度</TableHead>
+                  <TableHead className="whitespace-nowrap px-2 text-xs">
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 hover:text-foreground"
+                      onClick={() => setLagSortDesc((v) => (v === null ? true : v ? false : null))}
+                      title="按滞后交易日数排序"
+                    >
+                      新鲜度
+                      <ArrowUpDown className={`w-3 h-3 ${lagSortDesc === null ? "opacity-40" : "opacity-100"}`} />
+                    </button>
+                  </TableHead>
                   <TableHead className="w-10 px-2 text-center text-xs whitespace-nowrap" title="最近错误">错误</TableHead>
                   <TableHead className="text-right whitespace-nowrap">操作</TableHead>
                 </TableRow>
@@ -535,7 +774,14 @@ export default function AdminAssetsPage() {
                   const key = `${a.symbol}@${a.source}`;
                   const disabled = a.is_selectable === false;
                   return (
-                    <TableRow key={key} className={a.is_deleted ? "opacity-50" : ""}>
+                    <TableRow key={key} className={a.is_deleted ? "opacity-50" : ""} data-state={selected.has(key) ? "selected" : undefined}>
+                      <TableCell className="px-2">
+                        <Checkbox
+                          checked={selected.has(key)}
+                          onCheckedChange={(v) => toggleOne(key, v === true)}
+                          aria-label={`选择 ${a.name || a.symbol}`}
+                        />
+                      </TableCell>
                       <TableCell className="max-w-[200px]">
                         <div className="truncate font-medium" title={a.name || a.symbol}>{a.name || a.symbol}</div>
                       </TableCell>
@@ -569,8 +815,15 @@ export default function AdminAssetsPage() {
                       <TableCell className="px-2 font-mono text-xs tabular-nums">{a.clean_rows || 0}</TableCell>
                       <TableCell className="px-2 text-xs">
                         <div>
-                          {a.is_stale ? (
-                            <Badge variant="outline" className="font-normal text-destructive border-destructive/40">停更</Badge>
+                          {/* 滞后 >= 2 个交易日才提示; is_stale(差 1 日)保持安静。字段缺失(旧后端)视为不滞后。 */}
+                          {a.is_lagging === true ? (
+                            <Badge
+                              variant="outline"
+                              className="font-normal text-warning bg-warning/10 border-warning/30"
+                              title={a.is_stale ? "落后于平台最新清洗日" : undefined}
+                            >
+                              滞后 {a.lag_trading_days ?? "?"} 个交易日
+                            </Badge>
                           ) : (
                             <span className="text-muted-foreground">—</span>
                           )}
@@ -604,8 +857,19 @@ export default function AdminAssetsPage() {
                               <AlertDialogContent>
                                 <AlertDialogHeader>
                                   <AlertDialogTitle>确认软删除 {a.name || a.symbol}？</AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    删除后停更、builder 不可选；历史行情数据保留。此操作可在数据库层面恢复，但界面上不可撤销。
+                                  <AlertDialogDescription asChild>
+                                    <div className="space-y-2">
+                                      <p>
+                                        删除后停更、builder 不可选；历史行情数据保留。
+                                        此操作可在数据库层面恢复，但界面上不可撤销。
+                                      </p>
+                                      <p>
+                                        <AffectedPortfolios
+                                          refs={assetRefs[assetKey(a)] ?? []}
+                                          action="delete"
+                                        />
+                                      </p>
+                                    </div>
                                   </AlertDialogDescription>
                                 </AlertDialogHeader>
                                 <AlertDialogFooter>
@@ -630,6 +894,97 @@ export default function AdminAssetsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* 批量操作条: 固定在视口底部, 不参与表格布局, 因此不会改变滚动容器高度 */}
+      {isSuperAdmin && selectedAssets.length > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 rounded-lg border bg-background/95 backdrop-blur px-4 py-2.5 shadow-lg">
+          <span className="text-sm whitespace-nowrap">
+            已选 <span className="font-mono font-medium">{selectedAssets.length}</span> 项
+          </span>
+          <Button variant="outline" size="sm" onClick={() => setSelected(new Set())} disabled={batchBusy}>
+            清空
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setBatchOpen("enable")} disabled={batchBusy}>
+            批量启用
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setBatchOpen("disable")} disabled={batchBusy}>
+            批量停用
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-destructive hover:text-destructive"
+            onClick={() => setBatchOpen("delete")}
+            disabled={batchBusy}
+          >
+            {batchBusy ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Trash2 className="w-4 h-4 mr-1" />}
+            批量删除
+          </Button>
+        </div>
+      )}
+
+      {/* 批量确认: 展示影响标的数与具体 key(项目规范: 禁止 window.confirm) */}
+      <AlertDialog open={batchOpen !== null} onOpenChange={(v) => { if (!v && !batchBusy) setBatchOpen(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {batchOpen === "delete" ? "确认批量删除？" : batchOpen === "disable" ? "确认批量停用？" : "确认批量启用？"}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <p>
+                  将影响 <span className="font-mono font-medium text-foreground">{selectedAssets.length}</span> 个标的
+                  {batchOpen === "delete"
+                    ? "：删除为软删除（is_deleted=1），标的立即停更并退出 builder 可选池。"
+                    : batchOpen === "disable"
+                      ? "：停用后 builder 四象限不可选，但后台仍按 6h 调度更新行情。"
+                      : "：启用后重新进入 builder 四象限可选池。"}
+                  {batchOpen === "delete" && "此操作可在数据库层面恢复，但界面上不可撤销。"}
+                </p>
+                <div className="max-h-44 overflow-y-auto rounded-md border bg-muted/30 p-2">
+                  <ul className="space-y-0.5 font-mono text-xs">
+                    {selectedAssets.map((a) => (
+                      <li key={assetKey(a)} className="flex items-center gap-2">
+                        <span>{assetKey(a)}</span>
+                        <span className="text-muted-foreground">{logicalSourceLabel(a)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                {batchOpen === "delete" && (
+                  <p className="text-xs">
+                    <AffectedPortfolios refs={selectedPortfolioRefs} action="delete" />
+                  </p>
+                )}
+                {batchOpen === "disable" && (
+                  <p className="text-xs">
+                    <AffectedPortfolios refs={selectedPortfolioRefs} action="disable" />
+                  </p>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={batchBusy}>取消</AlertDialogCancel>
+            <AlertDialogAction
+              className={batchOpen === "delete" ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : undefined}
+              disabled={batchBusy}
+              onClick={(e) => {
+                // 阻止 Radix 默认的「点击即关闭」: 操作是异步的, 对话框保持打开并显示进度,
+                // 由 runBatch* 在完成后自己置 null 关闭(否则 batchBusy 的 spinner 根本来不及显示)。
+                e.preventDefault();
+                if (batchOpen === "delete") void runBatchDelete();
+                else if (batchOpen === "disable") void runBatchSelectable(false);
+                else if (batchOpen === "enable") void runBatchSelectable(true);
+              }}
+            >
+              {batchBusy ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null}
+              {batchOpen === "delete" ? "确认删除" : batchOpen === "disable" ? "确认停用" : "确认启用"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <BacktestProgressDialog
         taskId={syncAllTaskId}
         portfolioId={null}

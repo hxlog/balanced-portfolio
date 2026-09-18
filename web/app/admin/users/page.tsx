@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Trash2, ShieldCheck } from "lucide-react";
+import { Trash2, ShieldCheck, Loader2 } from "lucide-react";
 import { api, AdminUser } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 
@@ -28,7 +28,10 @@ export default function AdminUsersPage() {
   const [newLimit, setNewLimit] = useState("3");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // loading 仅首屏 true; 后续刷新走 refreshing —— 刷新期间**不卸载** <Table>, 避免容器塌陷导致滚动位置复位。
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const loadedRef = useRef(false);
   const [savingLimit, setSavingLimit] = useState<string | null>(null);
   // null = 无限(后端 portfolio_limit 为 NULL); number = 有限上限。
   // 行内输入框只在非 null 时渲染; 「设上限」写入 3 即切换为输入模式, load() 后回到服务端真值。
@@ -36,17 +39,22 @@ export default function AdminUsersPage() {
   const [savingAssetEdit, setSavingAssetEdit] = useState<string | null>(null);
   const [saveOk, setSaveOk] = useState<string | null>(null);
 
+  /** 刷新用户列表。首次渲染用 loading(整表占位), 之后一律 refreshing(表格保持挂载, 只显示细进度指示)。 */
   const load = async () => {
-    setLoading(true);
+    const silent = loadedRef.current;
+    if (silent) setRefreshing(true);
+    else setLoading(true);
     setError(null);
     try {
       const res = await api.listUsers();
       setUsers(res.users);
       // null 保留为无限, 不回退 3
       setLimits(Object.fromEntries(res.users.map((u) => [u.email, u.portfolio_limit ?? null])));
+      loadedRef.current = true;
     } catch (e) {
       setError(String(e));
     } finally {
+      setRefreshing(false);
       setLoading(false);
     }
   };
@@ -216,7 +224,10 @@ export default function AdminUsersPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">白名单用户</CardTitle>
+          <div className="flex items-center gap-2">
+            <CardTitle className="text-base">白名单用户</CardTitle>
+            {refreshing && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" aria-label="刷新中" />}
+          </div>
         </CardHeader>
         <CardContent className="overflow-x-auto pt-0 sm:pt-0">
           {loading ? (
