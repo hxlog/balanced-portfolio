@@ -14,6 +14,7 @@ from datetime import date
 from zoneinfo import ZoneInfo
 
 import numpy as np
+import pytest
 import pandas as pd
 
 
@@ -129,3 +130,75 @@ class TestCorrMath:
         y = pd.Series([2.0, 4.0, 6.0], index=idx)
         dates, corr = _rolling_corr(x, y, 10, "pearson", idx)
         assert dates == [] and corr == []
+
+
+class TestLoadCloseUsdNative:
+    """`_load_close(usd_native=True)` 把 CNY 折算价还原成原生美元价 (/crypto 看板口径)。
+
+    背景: 标普500 / 纳斯达克@global_index_em 的 currency 非 CNY, 清洗阶段已按日折算成
+    人民币。若读侧直接读, /crypto 会把「人民币价」当成「美元价」展示(实测标普500 显示
+    52643 而真实约 7799), 并让 BTC 的相关性偏离原生美元口径。这两条链路(组合回测走 CNY,
+    /crypto 走 USD)必须各自自洽, 故此处固化还原除法。
+    """
+
+    D1 = date(2026, 9, 1)
+    D2 = date(2026, 9, 30)
+
+    def _conn(self, rows):
+        from unittest.mock import MagicMock
+
+        conn = MagicMock()
+        cur = conn.cursor.return_value.__enter__.return_value
+        cur.fetchall.return_value = rows
+        return conn
+
+    def _rows(self):
+        # (trade_date, close, fill_flag, fx_rate)
+        return [
+            (date(2026, 9, 10), 70000.0, "real", 7.0),      # 折算价 → 10000 USD
+            (date(2026, 9, 11), 70070.0, "real", 7.0),      # 折算价 → 10010 USD
+            (date(2026, 9, 12), 70000.0, "interp", None),   # 插值行恒 NaN
+        ]
+
+    def test_usd_native_divides_out_fx_rate(self):
+        from bp_ingest.crypto_corr import _load_close
+
+        s = _load_close(self._conn(self._rows()), "标普500", "global_index_em",
+                        self.D1, self.D2, usd_native=True)
+        assert s.iloc[0] == pytest.approx(10000.0)
+        assert s.iloc[1] == pytest.approx(10010.0)
+        assert s.isna().sum() == 1          # interp 行仍置 NaN, 不受 usd_native 影响
+
+    def test_default_keeps_cny_close(self):
+        from bp_ingest.crypto_corr import _load_close
+
+        s = _load_close(self._conn(self._rows()), "标普500", "global_index_em",
+                        self.D1, self.D2)
+        assert s.iloc[0] == pytest.approx(70000.0)   # 默认不还原(组合回测口径)
+
+    def test_null_or_unit_fx_rate_is_not_divided(self):
+        """BTC/DXY/COMEX 的 fx_rate 为 NULL 或 1 —— 还原除法绝不能把它们改掉。"""
+        from bp_ingest.crypto_corr import _load_close
+
+        rows = [
+            (date(2026, 9, 10), 61000.0, "real", None),
+            (date(2026, 9, 11), 61100.0, "real", 1.0),
+        ]
+        s = _load_close(self._conn(rows), "BTC-USD", "crypto_yfinance",
+                        self.D1, self.D2, usd_native=True)
+        assert s.iloc[0] == pytest.approx(61000.0)
+        assert s.iloc[1] == pytest.approx(61100.0)
+
+    def test_only_the_global_indices_use_usd_native(self):
+        """只有被折算的两个全球指数走 usd_native, 且它们确实在面板里。"""
+        import pathlib
+
+        src = (pathlib.Path(__file__).resolve().parents[2]
+               / "bp_ingest" / "crypto_corr.py").read_text(encoding="utf-8")
+        # 还原调用点恰为标普500 / 纳斯达克两处(带右括号 = 实参, 不含文档里提到的名字)
+        assert src.count("usd_native=True)") == 2
+        assert src.count("usd_native: bool = False") == 1   # 默认不还原
+        from bp_ingest import crypto_corr as cc
+
+        assert cc.SP500_SYMBOL in cc.ALL_PANEL_SYMBOLS
+        assert cc.NASDAQ_SYMBOL in cc.ALL_PANEL_SYMBOLS
