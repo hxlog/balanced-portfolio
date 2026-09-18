@@ -68,6 +68,7 @@ import { DashboardToc } from "@/components/DashboardToc";
 import { ChartLightbox } from "@/components/ChartLightbox";
 import { ConfirmRecomputeDialog } from "@/components/ConfirmRecomputeDialog";
 import { BacktestProgressDialog } from "@/components/BacktestProgressDialog";
+import { RebalanceCalculatorDialog } from "@/components/RebalanceCalculatorDialog";
 import { useIsMobile } from "@/components/ui/use-mobile";
 import {
   api,
@@ -467,6 +468,61 @@ function DashboardView({
     setShowActualHoldings(false);
   }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
   const rb = rebalances[Math.min(rbIdx, rebalances.length - 1)];
+
+  /**
+   * 「调仓变动」完整明细: 取上期权重 ∪ 本期权重 ∪ delta 的并集, 不按本期权重过滤。
+   *
+   * 原因: 原实现用 `w >= ZERO_EPS` 过滤 target_weights, 只显示本期仍持有的标的,
+   * 本期被清仓(权重归 0)的行会被整行剔除 —— 用户看到的「策略调整」是不完整的。
+   * 这里改为显示全部有变化的标的: 新建仓 / 加仓 / 减仓 / 清仓。
+   * 两期权重都为 0 的噪声行仍然不显示。
+   */
+  const rbChangeRows = useMemo(() => {
+    if (!rb?.target_weights) return [];
+    const tw = rb.target_weights ?? {};
+    const pw = rb.prev_weights ?? {};
+    const dl = rb.delta ?? {};
+    const keys = new Set<string>([
+      ...Object.keys(tw),
+      ...Object.keys(pw),
+      ...Object.keys(dl),
+    ]);
+    const rows: {
+      key: string;
+      name: string;
+      prev: number | null;
+      next: number;
+      delta: number | null;
+      isNew: boolean;
+      isClose: boolean;
+      sortAbs: number;
+    }[] = [];
+    for (const k of keys) {
+      // 权重先按噪声阈值归零再判定: 0.03% 这类远低于 ZERO_EPS 的残值在展示上就是 0,
+      // 不归零会出现「标着清仓、本期权重却写着 0.03%」的自相矛盾行(实测 95 期里 7 例)。
+      const rawNext = tw[k] ?? 0;
+      const hasPrev = Object.prototype.hasOwnProperty.call(pw, k);
+      const rawPrev = hasPrev ? pw[k] : null;
+      const next = rawNext <= ZERO_EPS ? 0 : rawNext;
+      const prev = rawPrev == null || rawPrev <= ZERO_EPS ? (hasPrev ? 0 : null) : rawPrev;
+      // 上期无此标的或权重为 0 → 本期有权重 = 新建仓位
+      const isNew = (prev ?? 0) === 0 && next > 0;
+      // 上期有权重 → 本期归零 = 清仓
+      const isClose = (prev ?? 0) > 0 && next === 0;
+      // 两期皆为 0 的噪声行不显示
+      if (next === 0 && (prev ?? 0) === 0) continue;
+      const d = prev != null ? next - prev : (dl[k] ?? (isNew ? next : null));
+      // 排序口径: 建仓视为「上期权重 0」, 绝对值即本期权重
+      const sortAbs = Math.abs(d ?? (isNew ? next : 0));
+      rows.push({ key: k, name: nameMap[k] || k, prev, next, delta: d, isNew, isClose, sortAbs });
+    }
+    // 按变动百分比的绝对值降序 —— 让调仓力度最大的标的排在最前
+    rows.sort((a, b) => b.sortAbs - a.sortAbs || a.key.localeCompare(b.key));
+    return rows;
+  }, [rb, nameMap]);
+
+  const rbNewCount = rbChangeRows.filter((r) => r.isNew).length;
+  const rbCloseCount = rbChangeRows.filter((r) => r.isClose).length;
 
   const holdingsAtRb = useMemo(() => {
     if (!rb?.target_weights) return [];
@@ -1193,19 +1249,41 @@ function DashboardView({
                 <Card id="rebalance" className="scroll-mt-24">
                   <CardHeader>
                     <div className="flex flex-wrap justify-between items-center gap-2">
-                      <CardTitle>调仓变动</CardTitle>
-                      <select
-                        className="text-sm bg-transparent border border-border rounded px-2 py-1 text-muted-foreground focus:outline-none"
-                        value={rbIdx}
-                        onChange={(e) => setRbIdx(Number(e.target.value))}
-                      >
-                        {rebalancesDesc.map(({ r, idx }) => (
-                          <option key={r.trade_date} value={idx}>
-                            {r.trade_date}
-                            {idx === rebalances.length - 1 ? " (最近)" : ""}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                        <CardTitle>调仓变动</CardTitle>
+                        {rbChangeRows.length > 0 && (
+                          <span className="text-xs text-muted-foreground">
+                            共 {rbChangeRows.length} 项
+                            {rbNewCount > 0 && ` · 新建仓 ${rbNewCount}`}
+                            {rbCloseCount > 0 && ` · 清仓 ${rbCloseCount}`}
+                            <span className="ml-1">（按变动幅度降序）</span>
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {rbChangeRows.length > 0 && (
+                          <RebalanceCalculatorDialog
+                            rows={rbChangeRows.map((r) => ({
+                              key: r.key,
+                              name: r.name,
+                              targetWeight: r.next,
+                            }))}
+                            asOf={rb?.trade_date ?? optimalAsOf}
+                          />
+                        )}
+                        <select
+                          className="text-sm bg-transparent border border-border rounded px-2 py-1 text-muted-foreground focus:outline-none"
+                          value={rbIdx}
+                          onChange={(e) => setRbIdx(Number(e.target.value))}
+                        >
+                          {rebalancesDesc.map(({ r, idx }) => (
+                            <option key={r.trade_date} value={idx}>
+                              {r.trade_date}
+                              {idx === rebalances.length - 1 ? " (最近)" : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
                   </CardHeader>
                   <CardContent className="pt-0 sm:pt-0">
@@ -1235,37 +1313,51 @@ function DashboardView({
                               </TableRow>
                             </TableHeader>
                             <TableBody>
-                              {Object.entries(rb.target_weights)
-                                .filter(([, w]) => w >= ZERO_EPS)
-                                .sort((a, b) => b[1] - a[1])
-                                .map(([k, w]) => {
-                                  const prev = rb.prev_weights?.[k];
-                                  const d =
-                                    rb.delta?.[k] ??
-                                    (prev != null ? w - prev : null);
-                                  return (
-                                    <TableRow key={k}>
-                                      <TableCell className="pl-0 font-medium">
+                              {rbChangeRows.map((row) => {
+                                const { key: k, prev, next, delta: d } = row;
+                                return (
+                                  <TableRow key={k}>
+                                    <TableCell className="pl-0 font-medium">
+                                      <span className="inline-flex items-center gap-1.5">
                                         {nameMap[k] || k}
-                                      </TableCell>
-                                      <TableCell className="text-right font-mono text-muted-foreground">
-                                        {prev != null ? pct(prev) : "-"}
-                                      </TableCell>
-                                      <TableCell className="text-right font-mono">
-                                        {pct(w)}
-                                      </TableCell>
-                                      <TableCell
-                                        className={`text-right font-mono pr-0 ${d == null ? "text-muted-foreground" : d > 0 ? "text-up" : d < 0 ? "text-down" : "text-muted-foreground"}`}
-                                      >
-                                        {d == null
-                                          ? "建仓"
+                                        {row.isNew && (
+                                          <Badge
+                                            variant="outline"
+                                            className="border-success/40 bg-success/10 text-success font-normal"
+                                          >
+                                            新建仓
+                                          </Badge>
+                                        )}
+                                        {row.isClose && (
+                                          <Badge
+                                            variant="outline"
+                                            className="border-destructive/40 bg-destructive/10 text-destructive font-normal"
+                                          >
+                                            清仓
+                                          </Badge>
+                                        )}
+                                      </span>
+                                    </TableCell>
+                                    <TableCell className="text-right font-mono text-muted-foreground">
+                                      {prev != null ? pct(prev) : "—"}
+                                    </TableCell>
+                                    <TableCell className="text-right font-mono">
+                                      {pct(next)}
+                                    </TableCell>
+                                    <TableCell
+                                      className={`text-right font-mono pr-0 ${row.isNew ? "text-success" : d == null ? "text-muted-foreground" : d > 0 ? "text-up" : d < 0 ? "text-down" : "text-muted-foreground"}`}
+                                    >
+                                      {row.isNew
+                                        ? signPct(next)
+                                        : d == null
+                                          ? "—"
                                           : Math.abs(d) < 1e-6
                                             ? "-"
                                             : signPct(d)}
-                                      </TableCell>
-                                    </TableRow>
-                                  );
-                                })}
+                                    </TableCell>
+                                  </TableRow>
+                                );
+                              })}
                             </TableBody>
                           </Table>
                         </div>
