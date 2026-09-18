@@ -6,6 +6,18 @@
 -- logical source grouping, recommended ETF seeds, edit-flow params,
 -- currency / is_addable + btc_cme_sina; 42 dropped the redundant
 -- bp_asset_data_status.row_count, superseded by raw_rows/clean_rows).
+-- 43 merged: fx_sina 汇率源 + bp_quote_clean.fx_rate 折算审计列 + 汇率标的配置行(45 扩充至 10 个币种对)。
+-- 44 merged: 错误 ETF 名称纠正(38 号按「指数名→代码」假设写入, 18 条名称与真实产品不符)
+--            + 推荐清单 17 只 ETF 全量补齐(4 类: 宽基/红利/固收/海外, 每指数恰好一只场内 ETF)。
+-- 45 merged: 补齐资产池出现过的全部外币币种人民币汇率对(EUR/GBP/AUD/KRW/INR/RUB/BRL),
+--            汇率标的共 10 个; VND 因新浪报价精度不足(4 位小数)不可用, 不种。
+-- 47 merged: 资产池与生产库对齐 —— 补 16 个生产既有品种、停用 9 个生产不存在的幽灵键、
+--            修正恒生综合中小型股指数错代码(HSSCI→HSMSI)、消除 4 行 extra_params 的兜底误加键;
+--            另把 ETF 复权判定从按 source 改成按 category(588000/513310@etf_sina 因此落到 hfq)。
+--            已部署环境的同款修复见 ddl/47_reconcile_asset_pool.sql(那边逐行注释判定依据)。
+-- 48 merged: 修正 bp_index_config.currency 的列注释 —— 40 号写的「无外汇数据换算」在 43-45
+--            接入 fx_sina 后已不成立, 列注释会误导运维与任何读 pg_description 的工具。
+--            已部署环境见 ddl/48_fix_currency_column_comment.sql。
 -- =====================================================================
 
 CREATE EXTENSION IF NOT EXISTS timescaledb;
@@ -74,7 +86,8 @@ VALUES
     ('crypto_yfinance',   '加密/外汇/商品-Yahoo Finance日线(OHLCV)',                             'yfinance.download',         'alternative',  TRUE,  TRUE,  'BTC-USD / DX-Y.NYB / GC=F', 'Yahoo Finance', 'crypto_yfinance', FALSE, TRUE),
     ('dxy_em',            '美元指数(DXY)-东方财富直连 push2his (secid 100.UDI)',                 'em_push2his_kline',         'forex',        FALSE, TRUE,  'DX-Y.NYB', '东方财富', 'dxy_em', FALSE, TRUE),
     ('gold_comex_em',     'COMEX黄金(GC)-akshare futures_foreign_hist',                           'futures_foreign_hist',      'commodity',    TRUE,  TRUE,  'GC=F',     '东方财富', 'gold_comex_em', FALSE, TRUE),
-    ('btc_cme_sina',      'CME比特币期货(BTC主力)-akshare futures_foreign_hist',                 'futures_foreign_hist',      'alternative',  TRUE,  TRUE,  'BTC-USD',  '新浪财经', 'crypto', TRUE, TRUE)
+    ('btc_cme_sina',      'CME比特币期货(BTC主力)-akshare futures_foreign_hist',                 'futures_foreign_hist',      'alternative',  TRUE,  TRUE,  'BTC-USD',  '新浪财经', 'crypto', TRUE, TRUE),
+    ('fx_sina',           '人民币汇率-新浪(日 K, 直连 NewForexService.getDayKLine; 清洗期折算唯一汇率口径)', 'NewForexService.getDayKLine', 'fx',     FALSE, FALSE, '币种+CNY, 如 USDCNY / HKDCNY / JPYCNY', '新浪财经', 'fx_sina', FALSE, FALSE)
 ON CONFLICT (code) DO UPDATE SET
     description         = EXCLUDED.description,
     akshare_func        = EXCLUDED.akshare_func,
@@ -109,7 +122,7 @@ CREATE TABLE IF NOT EXISTS bp_index_config (
 );
 
 COMMENT ON COLUMN bp_index_config.currency IS
-  '资产计价币种。CNY=人民币可直接回测; 非CNY(USD/HKD/JPY等)=外币计价指数, 无外汇数据换算, builder 沉底并弹确认';
+  '资产计价币种。CNY=人民币计价; 非CNY(USD/HKD/JPY等)=外币计价, 清洗阶段按每日汇率(fx_rate 列)折算成人民币后进回测面板。builder 把非 CNY 沉底并在添加前二次确认。';
 
 CREATE INDEX IF NOT EXISTS idx_bp_index_config_active
     ON bp_index_config (source, symbol) WHERE is_deleted = 0;
@@ -165,6 +178,7 @@ CREATE TABLE IF NOT EXISTS bp_quote_clean (
     low         NUMERIC(20,6),
     volume      BIGINT,
     ret         DOUBLE PRECISION,
+    fx_rate     NUMERIC(18,8),   -- 43: 折算所用汇率(外币→CNY); CNY 资产=1, 无汇率日=NULL
     fill_flag   TEXT          NOT NULL DEFAULT 'real',
     created_at  TIMESTAMPTZ   NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ   NOT NULL DEFAULT now(),
@@ -765,12 +779,12 @@ WITH asset_seed (symbol, source, category, name, base_params, start_date) AS (
         ('159928', 'etf_em', 'etf', '汇添富中证主要消费ETF', '{"adjust":"hfq"}'::jsonb, NULL),
         ('159936', 'etf_em', 'etf', '广发中证全指可选消费ETF', '{"adjust":"hfq"}'::jsonb, NULL),
         ('159939', 'etf_em', 'etf', '广发中证全指信息技术ETF', '{"adjust":"hfq"}'::jsonb, NULL),
-        ('159943', 'etf_em', 'etf', '广发中证全指医药卫生ETF', '{"adjust":"hfq"}'::jsonb, NULL),
+        ('159943', 'etf_em', 'etf', '深证成指ETF大成', '{"adjust":"hfq"}'::jsonb, NULL),
         ('159949', 'etf_em', 'etf', '创业板50ETF华安', '{"adjust":"hfq"}'::jsonb, NULL),
         ('159985', 'etf_em', 'etf', '豆粕ETF(华夏)', '{"adjust":"hfq"}'::jsonb, NULL),
         ('159995', 'etf_em', 'etf', '芯片ETF华夏', '{"adjust":"hfq"}'::jsonb, NULL),
-        ('159996', 'etf_em', 'etf', '易方达中证家电ETF', '{"adjust":"hfq"}'::jsonb, NULL),
-        ('159997', 'etf_em', 'etf', '广发中证电子ETF', '{"adjust":"hfq"}'::jsonb, NULL),
+        ('159996', 'etf_em', 'etf', '家电ETF国泰', '{"adjust":"hfq"}'::jsonb, NULL),
+        ('159997', 'etf_em', 'etf', '电子ETF天弘', '{"adjust":"hfq"}'::jsonb, NULL),
         ('161129', 'etf_em', 'etf', '易方达原油A', '{"adjust":"hfq"}'::jsonb, NULL),
         ('161226', 'etf_em', 'etf', '国投瑞银白银期货(LOF)A', '{"adjust":"hfq"}'::jsonb, NULL),
         ('161725', 'etf_em', 'etf', '鹏华中证白酒(LOF)', '{"adjust":"hfq"}'::jsonb, NULL),
@@ -788,18 +802,18 @@ WITH asset_seed (symbol, source, category, name, base_params, start_date) AS (
         ('511380', 'etf_em', 'etf', '可转债ETF博时', '{"adjust":"hfq"}'::jsonb, NULL),
         ('511520', 'etf_em', 'etf', '政金债ETF富国', '{"adjust":"hfq"}'::jsonb, NULL),
         ('512010', 'etf_em', 'etf', '易方达中证医药ETF', '{"adjust":"hfq"}'::jsonb, NULL),
-        ('512170', 'etf_em', 'etf', '易方达医疗ETF', '{"adjust":"hfq"}'::jsonb, NULL),
+        ('512170', 'etf_em', 'etf', '医疗ETF华宝', '{"adjust":"hfq"}'::jsonb, NULL),
         ('512200', 'etf_em', 'etf', '房地产ETF南方', '{"adjust":"hfq"}'::jsonb, NULL),
         ('512260', 'etf_em', 'etf', '中证500低波动ETF华安', '{"adjust":"hfq"}'::jsonb, NULL),
         ('512400', 'etf_em', 'etf', '有色金属ETF(南方)', '{"adjust":"hfq"}'::jsonb, NULL),
         ('512480', 'etf_em', 'etf', '半导体ETF国联安', '{"adjust":"hfq"}'::jsonb, NULL),
         ('512640', 'etf_em', 'etf', '金融地产ETF嘉实', '{"adjust":"hfq"}'::jsonb, NULL),
-        ('512720', 'etf_em', 'etf', '广发中证计算机主题ETF', '{"adjust":"hfq"}'::jsonb, NULL),
+        ('512720', 'etf_em', 'etf', '计算机ETF国泰', '{"adjust":"hfq"}'::jsonb, NULL),
         ('512750', 'etf_em', 'etf', '基本面50ETF嘉实', '{"adjust":"hfq"}'::jsonb, NULL),
         ('512800', 'etf_em', 'etf', '银行ETF华宝', '{"adjust":"hfq"}'::jsonb, NULL),
         ('512880', 'etf_em', 'etf', '证券ETF国泰', '{"adjust":"hfq"}'::jsonb, NULL),
         ('512890', 'etf_em', 'etf', '红利低波ETF华泰柏瑞', '{"adjust":"hfq"}'::jsonb, NULL),
-        ('512980', 'etf_em', 'etf', '鹏华中证传媒ETF', '{"adjust":"hfq"}'::jsonb, NULL),
+        ('512980', 'etf_em', 'etf', '传媒ETF广发', '{"adjust":"hfq"}'::jsonb, NULL),
         ('513030', 'etf_em', 'etf', '德国DAX30ETF华安', '{"adjust":"hfq"}'::jsonb, NULL),
         ('513060', 'etf_em', 'etf', '恒生医疗ETF博时', '{"adjust":"hfq"}'::jsonb, NULL),
         ('513080', 'etf_em', 'etf', '法国CAC40ETF华安', '{"adjust":"hfq"}'::jsonb, NULL),
@@ -810,10 +824,10 @@ WITH asset_seed (symbol, source, category, name, base_params, start_date) AS (
         ('515080', 'etf_em', 'etf', '中证红利ETF招商', '{"adjust":"hfq"}'::jsonb, NULL),
         ('515100', 'etf_em', 'etf', '红利低波100ETF景顺', '{"adjust":"hfq"}'::jsonb, NULL),
         ('515150', 'etf_em', 'etf', '一带一路ETF富国', '{"adjust":"hfq"}'::jsonb, NULL),
-        ('515170', 'etf_em', 'etf', '鹏华中证食品饮料ETF', '{"adjust":"hfq"}'::jsonb, NULL),
-        ('515230', 'etf_em', 'etf', '嘉实中证软件服务ETF', '{"adjust":"hfq"}'::jsonb, NULL),
+        ('515170', 'etf_em', 'etf', '食品饮料ETF华夏', '{"adjust":"hfq"}'::jsonb, NULL),
+        ('515230', 'etf_em', 'etf', '软件ETF国泰', '{"adjust":"hfq"}'::jsonb, NULL),
         ('515250', 'etf_em', 'etf', '智能汽车ETF富国', '{"adjust":"hfq"}'::jsonb, NULL),
-        ('515290', 'etf_em', 'etf', '易方达中证生物医药ETF', '{"adjust":"hfq"}'::jsonb, NULL),
+        ('515290', 'etf_em', 'etf', '银行ETF天弘', '{"adjust":"hfq"}'::jsonb, NULL),
         ('515400', 'etf_em', 'etf', '大数据ETF富国', '{"adjust":"hfq"}'::jsonb, NULL),
         ('515450', 'etf_em', 'etf', '红利低波50ETF南方', '{"adjust":"hfq"}'::jsonb, NULL),
         ('515590', 'etf_em', 'etf', '500等权ETF前海开源', '{"adjust":"hfq"}'::jsonb, NULL),
@@ -837,7 +851,10 @@ WITH asset_seed (symbol, source, category, name, base_params, start_date) AS (
         ('HSHDYI', 'hk_index_em', 'index', '恒生高股息率指数', '{}'::jsonb, NULL),
         ('HSIII', 'hk_index_em', 'index', '恒生互联网科技业指数', '{}'::jsonb, NULL),
         ('HSISC', 'hk_index_em', 'index', '恒生港股通指数', '{}'::jsonb, NULL),
-        ('HSSCI', 'hk_index_em', 'index', '恒生综合中小型股指数', '{}'::jsonb, NULL),
+        -- 47: 恒生综合中小型股指数的真实东财代码是 HSMSI(HSSCI 系错代码, 恒生综合指数族
+        -- 无此代码, 生产库从未取到过数据)。生产库该键即为 HSMSI, 此处写正确代码。
+        -- start_date 按生产库现值写死(其余 hk_index_em 行仍为 NULL, 由 ingest 回写)。
+        ('HSMSI', 'hk_index_em', 'index', '恒生综合中小型股指数', '{}'::jsonb, DATE '2017-01-01'),
         ('HSTECH', 'hk_index_em', 'index', '恒生科技指数', '{}'::jsonb, NULL),
         ('俄罗斯RTS', 'global_index_em', 'index', '俄罗斯RTS', '{}'::jsonb, NULL),
         ('孟买SENSEX', 'global_index_em', 'index', '孟买SENSEX', '{}'::jsonb, NULL),
@@ -919,18 +936,51 @@ WITH asset_seed (symbol, source, category, name, base_params, start_date) AS (
         ('512100', 'etf_em', 'etf', '中证1000ETF（南方）',      '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
         ('588080', 'etf_em', 'etf', '科创50ETF（易方达）',       '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
         ('159845', 'etf_em', 'etf', '中证1000ETF（华夏）',       '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
-        ('563300', 'etf_em', 'etf', '中证A500ETF',               '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
-        ('159351', 'etf_em', 'etf', '创业板ETF（易方达）',       '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
+        ('563300', 'etf_em', 'etf', '中证2000ETF华泰柏瑞',       '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
+        ('159351', 'etf_em', 'etf', 'A500ETF嘉实',              '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
         ('515180', 'etf_em', 'etf', '红利ETF易方达',             '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
-        ('515890', 'etf_em', 'etf', '红利低波ETF（华泰柏瑞）',    '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
-        ('159581', 'etf_em', 'etf', '深红利ETF',                 '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
+        ('515890', 'etf_em', 'etf', '红利ETF博时',               '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
+        ('159581', 'etf_em', 'etf', '红利ETF万家',               '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
         ('501031', 'etf_em', 'etf', '沪深300红利低波ETF',         '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
         ('513520', 'etf_em', 'etf', '日经ETF（华夏）',            '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
-        ('159866', 'etf_em', 'etf', '日经225ETF（易方达）',       '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
-        ('159870', 'etf_em', 'etf', '标普500ETF（易方达）',       '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
-        ('513880', 'etf_em', 'etf', '港股科技ETF',               '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
+        ('159866', 'etf_em', 'etf', '日经ETF工银',               '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
+        ('159870', 'etf_em', 'etf', '化工ETF鹏华',               '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
+        ('513880', 'etf_em', 'etf', '日经225ETF华安',            '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
         ('513300', 'etf_em', 'etf', '纳斯达克ETF（华夏）',        '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
-        ('159509', 'etf_em', 'etf', '德国ETF',                   '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01')
+        ('159509', 'etf_em', 'etf', '纳指科技ETF景顺',            '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
+        -- 44: 推荐清单 4 类共 17 只 ETF(每指数恰好一只场内 ETF, 取「成立最久 → 规模 → 流动性」最优者)。
+        -- 下列 11 只为生产库既有、38 号未收录者; start_date 置 NULL, 由 ingest 回写真实首个行情日。
+        ('510300', 'etf_em', 'etf', '沪深300ETF（华泰柏瑞）',    '{"adjust":"hfq"}'::jsonb, NULL),
+        ('510050', 'etf_em', 'etf', '上证50ETF（华夏）',         '{"adjust":"hfq"}'::jsonb, NULL),
+        ('159915', 'etf_em', 'etf', '创业板ETF（易方达）',        '{"adjust":"hfq"}'::jsonb, NULL),
+        ('561580', 'etf_em', 'etf', '央企红利ETF华泰柏瑞',        '{"adjust":"hfq"}'::jsonb, NULL),
+        ('513630', 'etf_em', 'etf', '摩根标普港股通低波红利指数（摩根ETF）', '{"adjust":"hfq"}'::jsonb, NULL),
+        ('159399', 'etf_em', 'etf', '富时中国A股自由现金流聚焦ETF（现金流ETF国泰）', '{"adjust":"hfq"}'::jsonb, NULL),
+        ('511260', 'etf_em', 'etf', '上证10年期国债ETF（国泰）',   '{"adjust":"hfq"}'::jsonb, NULL),
+        ('511090', 'etf_em', 'etf', '中债-30年期国债ETF（鹏扬）',   '{"adjust":"hfq"}'::jsonb, NULL),
+        ('513500', 'etf_em', 'etf', '标普500ETF（博时）',         '{"adjust":"hfq"}'::jsonb, NULL),
+        ('513100', 'etf_em', 'etf', '纳斯达克100 ETF（国泰）',     '{"adjust":"hfq"}'::jsonb, NULL),
+        ('159920', 'etf_em', 'etf', '恒生指数ETF（华夏）',         '{"adjust":"hfq"}'::jsonb, NULL),
+        -- 47: 生产库既有、任何一版 seed 都没有的 16 个品种(10 个 source 组合)。
+        -- 字段逐字对齐生产快照。这 16 行的 start_date 写死生产现值 —— 不像 44 段那样
+        -- 置 NULL, 否则全新库里这 16 个键的本列会与生产不一致(其余既有品种的 start_date
+        -- 仍是 NULL, 由 ingest 回写真实首个行情日, schema.sql 不跑 ingest 无从写入)。
+        ('588000', 'cn_index_em', 'etf', '科创50（华夏）',        '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
+        ('932365', 'cn_index_em', 'index', '中证自由现金流',      '{"adjust":"bfq"}'::jsonb, DATE '2025-04-10'),
+        ('sz159531', 'cn_index_sina', 'index', '中证2000',        '{}'::jsonb, DATE '2017-01-01'),
+        ('511580', 'etf_em', 'etf', '中证国债及政策性金融债0-3年ETF（招商）', '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
+        ('513000', 'etf_em', 'etf', '日经225 ETF（易方达）',       '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
+        ('513310', 'etf_em', 'etf', '中韩半导体',                 '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
+        ('513530', 'etf_em', 'etf', '中证港股通高股息ETF（华泰柏瑞）', '{"adjust":"hfq"}'::jsonb, DATE '2022-04-25'),
+        -- 同代码降级源(东财限流时走新浪); 生产两个 source 并存, 此处照搬。
+        ('513310', 'etf_sina', 'etf', '中韩半导体ETF',            '{"adjust":"hfq"}'::jsonb, DATE '2017-01-01'),
+        ('印度孟买SENSEX', 'global_index_em', 'index', '印度孟买SENSEX', '{"adjust":"bfq"}'::jsonb, DATE '2017-01-02'),
+        ('巴西BOVESPA', 'global_index_em', 'index', '巴西BOVESPA',      '{"adjust":"bfq"}'::jsonb, DATE '2017-01-02'),
+        ('德国DAX30', 'global_index_em', 'index', '德国DAX30',          '{"adjust":"bfq"}'::jsonb, DATE '2017-01-02'),
+        ('澳大利亚标普200', 'global_index_em', 'index', '澳大利亚标普200', '{"adjust":"bfq"}'::jsonb, DATE '2017-01-03'),
+        ('纳斯达克', 'global_index_em', 'index', '纳斯达克100',          '{"adjust":"bfq"}'::jsonb, DATE '2017-01-03'),
+        ('英国富时100', 'global_index_em', 'index', '英国富时100',       '{"adjust":"bfq"}'::jsonb, DATE '2017-01-03'),
+        ('越南胡志明', 'global_index_em', 'index', '越南胡志明',         '{"adjust":"bfq"}'::jsonb, DATE '2017-01-03')
 ),
 normalized AS (
     SELECT
@@ -945,7 +995,29 @@ normalized AS (
             (source = 'bond_csi_treasury' AND symbol IN (
                 '1Y', '2Y', '3Y', '5-7Y', '0-7Y', '0-15Y', '0-30Y'
             ))
-        ) AS disabled
+            -- 47: 以下 8 行生产库里既无配置行也无任何行情(H30352/H30356/RI0 另有孤儿行情,
+            -- 但同样没有配置行)。seed 保留它们以记录「这些代码试探过、不可用」, 但必须停用,
+            -- 否则全新库的可选池会凭空多出 8 个永远拉不到数据的品种, 与生产不一致。
+            -- 已部署环境由 ddl/47_reconcile_asset_pool.sql 逐行停用。
+            OR
+            (source = 'cn_index_em' AND symbol IN (
+                '000309', '399709', '930000', '930842', 'H30352', 'H30356'
+            ))
+            OR
+            (source = 'hk_index_em' AND symbol = 'HSCONSI')
+            OR
+            (source = 'cmdty_main_sina' AND symbol = 'RI0')
+        ) AS disabled,
+        -- 47: 以下 4 行的 extra_params 在生产库里是空 {}。非 ETF 的 bfq 兜底对它们不成立
+        -- (dxy_em 走 em_push2his_kline、gold_comex_em 走 futures_foreign_hist, fetch 路径
+        -- 都不读 extra_params; cn_index_sina 的中证2000 与 hk_index_em 的 HSMSI 同理为 {})。
+        -- 写成显式例外而不是依赖兜底, 保证全新库与生产库逐字段一致。
+        (
+               (source = 'dxy_em'        AND symbol = 'DX-Y.NYB')
+            OR (source = 'gold_comex_em' AND symbol = 'GC=F')
+            OR (source = 'cn_index_sina' AND symbol = 'sz159531')
+            OR (source = 'hk_index_em'   AND symbol = 'HSMSI')
+        ) AS params_final
     FROM asset_seed AS seed
 )
 INSERT INTO bp_index_config
@@ -958,7 +1030,11 @@ SELECT
     start_date,
     CASE
         WHEN disabled THEN base_params
-        WHEN source = 'etf_em' THEN base_params || '{"adjust":"hfq"}'::jsonb
+        WHEN params_final THEN '{}'::jsonb
+        -- 47: 按 category 而非 source 判定 ETF —— 588000(科创50华夏)在生产库里
+        -- 就是 category='etf' + source='cn_index_em' 的组合, 口径同为 hfq;
+        -- 513310@etf_sina 也由此落到 hfq。凡是 category='etf' 的品种生产库一律 hfq。
+        WHEN category = 'etf' THEN base_params || '{"adjust":"hfq"}'::jsonb
         ELSE base_params || '{"adjust":"bfq"}'::jsonb
     END,
     CASE WHEN disabled THEN 1 ELSE 0 END,
@@ -1018,6 +1094,54 @@ UPDATE bp_index_config SET currency='KRW'
 UPDATE bp_index_config SET currency='CNY'
  WHERE source IN ('global_index_em','global_index_sina') AND symbol = '标普中国A股大盘红利低波50指数';
 -- 不动: 标普500/纳斯达克/道琼斯=USD, 日经225/日经225指数=JPY (40 已正确)。
+
+-- ---------------------------------------------------------------------
+-- 43: 汇率折算审计列 + 汇率标的配置行
+-- 汇率(新浪人民币汇率口径, 唯一事实源)在清洗阶段把非 CNY 资产折为人民币计价;
+-- 标的 is_selectable=FALSE → 不进 /builder 可选池, 但由 bp_ingest.db.fetch_active_configs
+-- 的调度路径显式纳入(空 symbols 时 `is_selectable = TRUE OR source = 'fx_sina'`)。
+-- 45: 补齐资产池出现过的**全部**外币币种人民币汇率对(实测新浪均可直取)。
+--     VND 例外: 新浪报价精度 4 位小数下 VNDCNY 恒为 0.0000, 不可用 → 不种, 该资产
+--     继续抛 MissingFxRate 并由 bp_asset_data_status.last_error 暴露, 绝不静默以原币混入。
+-- ---------------------------------------------------------------------
+ALTER TABLE bp_quote_clean ADD COLUMN IF NOT EXISTS fx_rate NUMERIC(18,8);
+
+COMMENT ON COLUMN bp_quote_clean.fx_rate IS
+    '折算所用汇率(外币→CNY)。CNY 资产为 1；无汇率日为 NULL。close 列已是折算后的人民币价格。';
+
+INSERT INTO bp_index_config
+    (symbol, source, category, name, extra_params, is_deleted, is_selectable, currency)
+VALUES
+    ('USDCNY', 'fx_sina', 'forex', '美元兑人民币(新浪)', '{}'::jsonb, 0, FALSE, 'CNY'),
+    ('HKDCNY', 'fx_sina', 'forex', '港币兑人民币(新浪)', '{}'::jsonb, 0, FALSE, 'CNY'),
+    ('JPYCNY', 'fx_sina', 'forex', '日元兑人民币(新浪)', '{}'::jsonb, 0, FALSE, 'CNY'),
+    ('EURCNY', 'fx_sina', 'forex', '欧元兑人民币(新浪)', '{}'::jsonb, 0, FALSE, 'CNY'),
+    ('GBPCNY', 'fx_sina', 'forex', '英镑兑人民币(新浪)', '{}'::jsonb, 0, FALSE, 'CNY'),
+    ('AUDCNY', 'fx_sina', 'forex', '澳元兑人民币(新浪)', '{}'::jsonb, 0, FALSE, 'CNY'),
+    ('KRWCNY', 'fx_sina', 'forex', '韩元兑人民币(新浪)', '{}'::jsonb, 0, FALSE, 'CNY'),
+    ('INRCNY', 'fx_sina', 'forex', '印度卢比兑人民币(新浪)', '{}'::jsonb, 0, FALSE, 'CNY'),
+    ('RUBCNY', 'fx_sina', 'forex', '卢布兑人民币(新浪)', '{}'::jsonb, 0, FALSE, 'CNY'),
+    ('BRLCNY', 'fx_sina', 'forex', '雷亚尔兑人民币(新浪)', '{}'::jsonb, 0, FALSE, 'CNY')
+ON CONFLICT (symbol, source) DO UPDATE SET
+    category      = EXCLUDED.category,
+    name          = EXCLUDED.name,
+    extra_params  = EXCLUDED.extra_params,
+    is_deleted    = EXCLUDED.is_deleted,
+    is_selectable = EXCLUDED.is_selectable,
+    currency      = EXCLUDED.currency;
+
+-- ---------------------------------------------------------------------
+-- 46: 同步组合侧 display_name
+-- 44 号纠正了 bp_index_config.name(18 条 ETF 名称/错配), 但 bp_portfolio_asset.display_name
+-- 是组合侧展示缓存, 当年照抄了错误名 → 不改就出现「管理端显示正确、组合里显示错误」。
+-- 46 号只在组合侧 display_name 与旧错误名**完全一致**时改写(不覆盖用户手工起的别名),
+-- 且仅限 44 号改过的那批 symbol。全新环境由 44 段直接写入正确名称, 无需回填。
+-- ---------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------
+-- 47: 资产池与生产库对齐(seed 侧)。已部署环境的同款修复见 ddl/47_reconcile_asset_pool.sql。
+-- 语义见该文件头注释; schema.sql 侧只需保证「全新库 seed 结果 == 生产现状」。
+-- ---------------------------------------------------------------------
 
 -- ---------------------------------------------------------------------
 -- Demo portfolio seed. No account or personal email is hard-coded.
