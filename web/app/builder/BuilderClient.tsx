@@ -58,11 +58,17 @@ interface OrigSnapshot {
 type Selected = Record<Quadrant, Asset[]>;
 const emptySelection: Selected = { overheat: [], stagflation: [], recovery: [], recession: [] };
 
-// 推荐 ETF 分组(需求11): 按金融最佳实践分三类, 命中资产池即展示, 点击多选。
+// 推荐 ETF 分组(需求11): 按金融最佳实践分四类, 命中资产池(且未停用)即展示, 点击多选。
+//
+// 选品口径: 每个指数恰好一只**场内 ETF**(剔除 LOF / 场外基金), 取「成立最久(可用行情行数最多)
+// → 规模 → 流动性(成交额)」综合最优者。symbol 即场内代码, 与资产池 `{symbol}@etf_em` 一一对应;
+// 若某 symbol 未入池或被停用, 该条自动隐藏(见下方 recommended 过滤), 不做跨口径硬凑。
 const RECOMMENDED_GROUPS: { label: string; symbols: string[] }[] = [
-  { label: "国内宽基", symbols: ["510300", "510500", "512100", "588080", "159915", "159845"] },
-  { label: "红利类", symbols: ["510880", "515180", "515890", "512890", "159581", "501031"] },
-  { label: "海外投资", symbols: ["513500", "513100", "513300", "159870", "513520", "513880"] },
+  { label: "国内宽基", symbols: ["588080", "159915", "510300", "510050"] },
+  // 红利类: 央企红利 / 标普港股通低波红利 / 标普中国A股大盘红利低波50 / 中证红利 / 富时自由现金流聚焦
+  { label: "红利类", symbols: ["561580", "513630", "515450", "515180", "159399"] },
+  { label: "固收类", symbols: ["511260", "511520", "511360", "511090"] },
+  { label: "海外投资", symbols: ["513500", "513100", "513520", "159920"] },
 ];
 
 function keyOf(a: Asset | { symbol: string; source: string }) {
@@ -783,15 +789,26 @@ function AssetPicker({
         (vendor === "all" || a.vendor === vendor) &&
         (q === "" || (a.name || "").includes(q) || a.symbol.toLowerCase().includes(q.toLowerCase()))
     );
-    // 排序优先级: 后复权(hfq) ETF 最前; 停更与 前复权(qfq) ETF 沉底; 非 CNY 计价(外币指数)一律排最后。
-    const rank = (a: Asset): number => {
-      const fx = (a.currency ?? "CNY") !== "CNY" ? 10 : 0;   // 外币计价: 无外汇数据, 回测口径受限
-      if (a.logical_source === "etf" && a.adjust === "hfq") return 0 + fx;
-      if (a.is_stale) return 2 + fx;
-      if (a.logical_source === "etf" && a.adjust === "qfq") return 1 + fx;
-      return 1 + fx;
+    // 排序优先级: **先按维度分层, 层内再比下一维度**(字典序, 不是加权和)。
+    //   第 1 层 滞后 —— 沉到最底, 这是首要的可用性排序: 数据不新鲜的标的再"好"也没法用。
+    //        含两种情形: (a) is_lagging(落后 >= 2 个交易日, 字段在旧后端缺失时回退 is_stale);
+    //        (b) **从未有过清洗数据**(last_clean_date 为空, 如无汇率标的的越南胡志明) ——
+    //        这种标的 lag_trading_days 为 null 因而不带 is_lagging, 但它同样不可用, 必须沉底。
+    //   第 2 层 币种 非 CNY —— 跨市场交易日历 + 汇率折算引入额外口径差异, 排在 CNY 之后。
+    //   第 3 层 复权 hfq 场内 ETF(后复权, 含分红再投) 优先; 其余(qfq ETF、指数、商品、债券等)在后
+    //        —— 只在「后复权 ETF」与「其他一切」之间分层, 不额外发明 qfq 高于指数的次序。
+    // 用元组比较而非加权和: 加权和(fx=100 压过 lagging=10)会让「滞后的 CNY 标的」
+    // 排在「新鲜的美元标的」之前, 与「滞后沉底」的字面要求相反(实测 14 处倒挂)。
+    const rank = (a: Asset): [number, number, number] => [
+      (a.is_lagging ?? a.is_stale) || !a.last_clean_date ? 1 : 0,
+      (a.currency ?? "CNY") !== "CNY" ? 1 : 0,
+      a.logical_source === "etf" && a.adjust === "hfq" ? 0 : 1,
+    ];
+    const cmp = (a: Asset, b: Asset): number => {
+      const ra = rank(a), rb = rank(b);
+      return ra[0] - rb[0] || ra[1] - rb[1] || ra[2] - rb[2];
     };
-    return list.slice().sort((a, b) => rank(a) - rank(b));
+    return list.slice().sort(cmp);
   }, [assets, usedSet, category, vendor, q]);
 
   // 推荐分组: 命中资产池(且未被本象限选中)的推荐 ETF
@@ -914,9 +931,12 @@ function AssetPicker({
                     {(a.currency ?? "CNY") !== "CNY" && (
                       <Badge variant="outline" className="text-[10px] px-1 py-0 text-muted-foreground">{a.currency}</Badge>
                     )}
-                    {a.is_stale && (
+                    {/* 滞后徽章: 落后 >= 2 个交易日才提示(is_lagging)。差 1 日是正常增量节奏,
+                        旧实现用 is_stale 判据 → 130/278 个资产全挂「停更」红标, 噪声掩盖真问题。
+                        字段缺失(旧后端)时回退 is_stale, 与 rank() 的判据一致。 */}
+                    {(a.is_lagging ?? a.is_stale) && (
                       <Badge variant="outline" className="font-normal h-5 px-1.5 text-[10px] text-destructive border-destructive/40">
-                        停更
+                        {a.lag_trading_days != null ? `滞后 ${a.lag_trading_days} 日` : "滞后"}
                       </Badge>
                     )}
                     {a.logical_source === "etf" ? (
@@ -989,7 +1009,7 @@ function AssetPicker({
           </div>
         </DialogFooter>
       </DialogContent>
-      {/* 非 CNY 资产二次确认: 外币计价无汇率数据, 回测不包含汇率变动 */}
+      {/* 非 CNY 资产二次确认: 已按每日汇率折算为 CNY, 但仍提示跨市场交易日历差异 */}
       <AlertDialog open={pendingNonCny != null} onOpenChange={(v) => { if (!v) setPendingNonCny(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -1005,9 +1025,14 @@ function AssetPicker({
                   ))}
                 </ul>
                 <p>
-                  当前系统没有外汇数据，无法把外币收益换算成人民币。回测将直接使用外币价格收益率，
-                  <strong>未包含汇率变动</strong>，可能影响回测效果。确定继续添加吗？
+                  系统会按<strong>每日汇率</strong>把它们的价格折算成人民币后再回测，
+                  <strong>汇率变动已计入</strong>收益。需要注意两点：
                 </p>
+                <ul className="text-sm list-disc pl-4">
+                  <li>这些市场的交易日历与 A 股不同，休市日按清洗规则线性插值，插值价 ≠ 可成交价；</li>
+                  <li>汇率缺失日不会用相邻日填充，当日该资产不产生净值点。</li>
+                </ul>
+                <p>确定继续添加吗？</p>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
