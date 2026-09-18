@@ -38,6 +38,10 @@ module.exports = {
         PORT: "3000",
         BP_API_BASE: process.env.BP_API_BASE || "http://127.0.0.1:8000",
         BP_SITE_URL: process.env.BP_SITE_URL || "http://localhost:3000",
+        // umami 埋点: 由 deploy.sh 的 `set -a; source .env` 注入, 此处显式透传便于排查
+        BP_UMAMI_WEBSITE_ID: process.env.BP_UMAMI_WEBSITE_ID || "",
+        BP_UMAMI_SRC: process.env.BP_UMAMI_SRC || "",
+        BP_UMAMI_RECORDER_SRC: process.env.BP_UMAMI_RECORDER_SRC || "",
       },
     },
     {
