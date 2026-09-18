@@ -238,6 +238,56 @@ sudo nginx -t
 
 确认期货合约和四个挂钩指数都已更新到同一交易日，再运行一次 ingest。接口会拒绝用不同日期的现货和期货拼接快照。
 
+### umami 有访客数但「回放(Replays)」一直是空的
+
+回放**不是** `script.js` 的一个开关，而是独立的第二个 bundle `recorder.js`，必须单独注入。
+
+**首要根因：生产还没发布带 recorder 注入的版本。** 只注入 `script.js` 的版本里，回放无论如何都不会有数据 —— 先确认线上 HTML 里真的有两个 tag，再往下查：
+
+```bash
+# 1) 页面里两个 tag 是否都在（只看到 script.js 就是还没发布 / 环境变量没进构建）
+curl -s https://xushilu.com/ | grep -o 'umami[^ ]*\.js'
+# 期望: script.js 与 recorder.js 各一
+
+# 2) recorder bundle 是否可达
+curl -sI https://umami.morean.cn/recorder.js | head -1
+
+# 3) 该站点的回放开关是否真的开了（服务端配置）
+curl -s "https://umami.morean.cn/api/websites/<WEBSITE_ID>/recorder"
+# 期望: {"enabled":true,"replayEnabled":true,...}
+
+# 4) 确认环境变量在构建时可见，然后重建 + 重启（见 .env 的 BP_UMAMI_* 三项）
+grep -c BP_UMAMI_RECORDER_SRC .env && cd web && npm run build && pm2 restart bp-web --update-env
+```
+
+`BP_UMAMI_RECORDER_SRC` 留空时会由 `BP_UMAMI_SRC` 推导（把结尾的 `script.js` 换成 `recorder.js`）；两者相等时按禁用处理，不会重复注入第三个 tag。
+
+浏览器 DevTools → Network 应能看到 `recorder.js`、`api/websites/<id>/recorder`、以及周期性的 `POST /api/record`。
+
+前提条件：umami ≥ v3.1.0，且后台该站点已开启 Replays（采样率在后台配置，客户端不控制）。回放保留 30 天，只有加载了 recorder.js **之后**开始的会话才会被录到。
+
+### 外币折算被覆写回原币口径（`bp_quote_clean` 里 HKD/VND 等价格突然变大）
+
+**触发场景**：本地改了 `bp_api/quant/cleaning.py` 的清洗口径并跑了 `bp_ingest clean`，但**还没发布生产**。生产上的 `bp-ingest`（PM2 调度进程）跑的是部署时的旧版本，它会在下一个增量周期用旧代码重建同一批标的的清洗行，把折算结果覆写回原币口径。
+
+**机制**：旧版本的 `_UPSERT_SQL` 的 `ON CONFLICT DO UPDATE SET` 列清单里没有 `fx_rate`，于是对已有行它只改 `close`（变回原币价），而 `fx_rate` 保持着你写进去的汇率 → 落成 `close/raw_close = 1.0 ≠ fx_rate` 的自相矛盾行；对它新插入的行该列为 NULL。
+
+**判断**：
+```sql
+-- 脏行占比；正常应全为 0
+SELECT c.symbol, COUNT(*) FROM bp_quote_clean c
+  JOIN bp_index_quote_daily q USING (symbol, source, trade_date)
+ WHERE c.fx_rate IS NOT NULL AND c.fx_rate <> 1
+   AND abs(c.close / q.close - c.fx_rate) > 0.001
+ GROUP BY 1 ORDER BY 2 DESC;
+```
+
+**处置**：先 `bash deploy/deploy.sh` 发布新代码，再重跑 `python -m bp_ingest clean --symbols <受影响 symbol>`。顺序反过来的话，清洗结果会在 ~40 分钟内再次被覆写。
+
+`deploy.sh` 默认会 `pm2 stop` 全部进程再 `pm2 restart`，**全量重启会重新 import 代码**，因此发布后残留的旧模块不会继续运行。但要注意 `bp-api`/`bp-worker` 是常驻进程：如果用于手动重启（例如 `pm2 restart bp-ingest`）而**没走 deploy.sh**，先确认旧进程确实退出了再跑 clean。
+
+注意 `pg_stat_activity.client_addr` 在生产与本地之间**无法用于区分**：经 Tailscale 连库时，本机与生产服务器在服务端看到的是同一个出口地址。
+
 ### 数据库锁或共享内存不足
 
 先确认查询是否缺少日期范围，以及 TimescaleDB chunk 数量是否异常。生产参数调整和 chunk 合并会影响整个数据库，应在备份和维护窗口内由数据库管理员处理，不要在故障现场直接执行破坏性命令。
@@ -267,14 +317,18 @@ BP_SKIP_PULL=1 bash deploy/deploy.sh
 
 ## real-DB 语义测试（BP_TEST_DSN）
 
-部分测试（如 `bp_api/tests/test_asset_status.py` 的 `test_with_count_semantics_real_db`）需要真实
-PostgreSQL 验证 upsert/COUNT 语义，CI 无数据库时自动跳过，本地可选择性开启：
+部分测试需要真实 PostgreSQL 验证语义，CI 无数据库时自动跳过，本地可选择性开启：
+
+- `bp_api/tests/test_asset_status.py::test_with_count_semantics_real_db` — upsert/COUNT 语义
+- `bp_api/tests/test_fx_cleaning.py::*_real_db` — 折算脏行清理判据（`close/raw_close == fx_rate`）
+  与「不误删折算后的 interp 行」的行为回归。这条判据靠纯 mock 只能验 SQL 文本，验不了
+  `NOT EXISTS` 在真实数据上的取舍，而它曾一次性误删过 1,402 行插值数据。
 
 ```bash
 cd /opt/balanced-portfolio
 source .venv/bin/activate
 BP_TEST_DSN="postgresql://user:pass@localhost:5432/bp_tmp_test" \
-  python -m pytest bp_api/tests/test_asset_status.py -q
+  python -m pytest bp_api/tests/test_asset_status.py bp_api/tests/test_fx_cleaning.py -q
 ```
 
 注意：
@@ -296,8 +350,10 @@ psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres \
 
 # 2) 建最小 schema（utf-8 临时文件 + psql -f；含中文注释亦可）
 #    必须同时建 bp_index_quote_daily / bp_quote_clean 两张空普通表——
-#    refresh_asset_status 两个分支在 upsert 前都会对两张表跑 MAX(trade_date)[, COUNT(*)]。
-#    不需要 TimescaleDB 扩展/hypertable，scratch 库只验 COUNT/MAX 与 upsert 冲突子句语义。
+#    refresh_asset_status 两个分支在 upsert 前都会对两张表跑 MAX(trade_date)[, COUNT(*)]；
+#    fx 清理判据（test_fx_cleaning.py）也要求 bp_quote_clean 带 fx_rate 列，否则整条
+#    `abs(close/raw_close - fx_rate) <= 0.001` 等式无从验证。
+#    不需要 TimescaleDB 扩展/hypertable，scratch 库只验 COUNT/MAX 与 upsert/清理谓词语义。
 #    bp_asset_data_status 刻意不带指向 bp_data_source 的外键（生产 schema 有，见 ddl/schema.sql:387；
 #    scratch 不建 bp_data_source、不种源行，测试用的 __T4_TEST__@__t4__ 直接可插）。
 cat > /tmp/bp_tmp_test_schema.sql <<'SQL'
@@ -315,6 +371,7 @@ CREATE TABLE bp_quote_clean (
     source      TEXT          NOT NULL,
     close       NUMERIC(20,6) NOT NULL,
     fill_flag   TEXT          NOT NULL DEFAULT 'real',
+    fx_rate     NUMERIC(20,10),
     CONSTRAINT pk_bp_quote_clean PRIMARY KEY (symbol, source, trade_date)
 );
 
@@ -339,8 +396,8 @@ psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d bp_tmp_test \
 BP_TEST_DSN="postgresql://$PGUSER:$(python -c \
   "import os; from urllib.parse import quote; print(quote(os.environ['PGPASSWORD'], safe=''))")\
 @$PGHOST:$PGPORT/bp_tmp_test" \
-  python -m pytest bp_api/tests/test_asset_status.py -q
-# 预期: 全部通过, 且 real-DB 一项为执行而非 skip（测试数随用例增减, 勿写死数字）
+  python -m pytest bp_api/tests/test_asset_status.py bp_api/tests/test_fx_cleaning.py -q
+# 预期: 全部通过, 且 real-DB 各项为执行而非 skip（测试数随用例增减, 勿写死数字）
 
 # 4) 跑完清理（DROP 临时库 + 删临时 SQL 文件）
 psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres \
@@ -349,4 +406,4 @@ rm -f /tmp/bp_tmp_test_schema.sql
 ```
 
 - 未设置 `BP_TEST_DSN` 时这些测试一律 skip，`pytest -q` 与 CI 均不受影响
-  （无 env 时本文件为 `9 passed, 1 skipped`）。
+  （skip 数随带 `_real_db` 标记的用例增减, 勿写死数字）。

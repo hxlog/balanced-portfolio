@@ -52,7 +52,7 @@ psql -h localhost -U postgres -d balanced_portfolio -f ddl/schema.sql
 ## 数据流与行情口径（修改回测/行情前必读）
 
 - **单一事实源**：`bp_index_quote_daily` 保存原始 OHLCV；组合回测**只读** `bp_quote_clean`，绝不直接读原始表。
-- **清洗规则**（`bp_api/quant/cleaning.py`，由 `bp_ingest clean` 或 ingest 自动刷新）：以 A 股交易日历重建面板 → 有左右锚点的内部缺口线性插值（`fill_flag=interp`）→ 保留前导空白（由回测 effective_start 处理）→ **尾部无右端锚点的缺口直接报错** → 基于清洗价重算收益率，保证协方差/净值/回撤/归因同口径。插值价 ≠ 可成交价。
+- **清洗规则**（`bp_api/quant/cleaning.py`，由 `bp_ingest clean` 或 ingest 自动刷新）：**非 CNY 资产先按当日新浪汇率折算成人民币**（`fx_rate` 审计列；`fx_sina` 是唯一汇率口径，不与中行聚合）→ 以 A 股交易日历重建面板 → 有左右锚点的内部缺口线性插值（`fill_flag=interp`）→ 保留前导空白（由回测 effective_start 处理）→ **尾部无右端锚点的缺口直接报错** → 基于清洗价重算收益率，保证协方差/净值/回撤/归因同口径。插值价 ≠ 可成交价。无汇率日不产出清洗行；`crypto_yfinance`/`dxy_em`/`gold_comex_em` 恒不折算（原生 USD 就是 `/crypto` 口径）。**本地跑完 `clean` 后若未发布生产，生产上的旧版本会在下个增量周期把折算结果覆写回原币口径**（详见 `docs/data-sources.md`）。
 - **收盘确认**：盘中今日行不入库；上海时区 15:10（`BP_CLOSE_CONFIRM_HHMM`）后才认「今日」收盘。CFFEX 快照要求期货品种与挂钩指数同交易日齐全且收盘已确认。
 - **COUNT 分级不变式**：`bp_asset_data_status.raw_rows/clean_rows` 仅由 `refresh_asset_status(with_count=True)` 校准（ingest 推进日门控 + 管理端「刷新状态」按钮）；probe/保存/单资产 sync 等热路径 `with_count=False` 仅 MAX，不得重新引入 COUNT。
 - **币种/可添加性**：`bp_index_config.currency` 是非 CNY 资产 builder 沉底+确认弹窗的依据；`bp_data_source.is_addable=FALSE`（如 `futures_cffex`）不可从 admin 添加。
@@ -123,8 +123,10 @@ psql -h localhost -U postgres -d balanced_portfolio -f ddl/schema.sql
 
 ## 数据库迁移纪律
 
-- `ddl/schema.sql` 是**合并后基线**（= 旧编号迁移 01-32 + 34-42），全新环境只执行它。
-- 40-42 新增 `bp_index_config.currency`、`bp_data_source.is_addable`、两索引（demo_order / premium variety+type+date）、`btc_cme_sina` 源；42 删除了冗余的 `bp_asset_data_status.row_count`。
+- `ddl/schema.sql` 是**合并后基线**（= 旧编号迁移 01-32 + 34-48），全新环境只执行它。
+- 40-42 新增 `bp_index_config.currency`、`bp_data_source.is_addable`、两索引（demo_order / premium variety+type+date）、`btc_cme_sina` 源；42 删除了冗余的 `bp_asset_data_status.row_count`。43-47 见下表。
+- **43-48 迁移一览**：43 `bp_quote_clean.fx_rate` + `fx_sina` 源 + 3 个汇率对；44 推荐 ETF 名称纠正 + 17 只种子（**已取代 38 号**：38 里的 18 个名称是错的，全新环境不要重跑 38）；45 补齐 10 个币种人民币汇率对；46 从 `bp_index_config.name` 回填组合侧 `display_name`；47 资产池对账（补 16 个只在生产存在的资产、修正 `HSSCI`→`HSMSI`、软删除只在 schema 里存在的幽灵资产、按 `category='etf'` 而非 source 判 `adjust`）；48 修正 `bp_index_config.currency` 的列注释（原文仍写着「无外汇数据换算」，与 43-45 后的口径矛盾）。**判据口径**：全新环境只执行 schema.sql，无需再跑 43-48；已部署环境只跑未应用的编号。生产库实测 47 号四段全部改 0 行（生产已是目标态），并在全新临时库验证「schema.sql ×3 + 47 ×3」后可选池 278 键与生产完全一致、字段零差异；48 号是纯注释变更，在临时库重复执行 4 次均 exit 0。
+- **`start_date` 不是 schema 可 seed 的列**：生产库该列来自 ingest 首拉成功后的回写（`ingest.py:264`，`start_date IS NULL` 时写入该标的首个行情日），schema.sql 不跑 ingest 故全新环境为 NULL。实测 239 个共有可选键呈本地 NULL / 生产有日期的**单向**差异，无反向覆盖。不要为此在 schema/迁移里硬编码日期（那是编造），也不要用 `MIN(trade_date)` 回填 —— 全新库没有行情数据，回填不解决任何问题，ingest 自己会在首拉时补上。
 - 已部署环境升级时，只执行尚未应用的新编号迁移（`NN_description.sql`）；不要重跑历史迁移，不要改已应用脚本。`deploy/deploy.sh` **不**执行迁移。
 - 主要表：行情(`bp_index_quote_daily`/`bp_quote_clean`)、组合(`bp_portfolio`/`bp_portfolio_asset`/`bp_backtest_*`)、任务(`bp_task`)、资产状态(`bp_asset_data_status`)、CFFEX(`bp_cffex_contract_daily`/`bp_cffex_premium_daily`)、交易日历(`bp_trading_calendar`)、OTC(`bp_otc_deal`/`bp_otc_deal_price_history`)、鉴权(`bp_admin_user`/`bp_user`)。`bp_index_quote_daily` 是 TimescaleDB hypertable。
 - demo 组合由 schema.sql 末尾 seed；`/api/portfolios/demo` 公开可读。
