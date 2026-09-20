@@ -794,6 +794,11 @@ export const api = {
     req<{ symbol: string; source: string; date: string; close: number }>(
       `/api/otc/spot${q({ symbol, source, date: onDate })}`,
     ),
+  quotesLatest: (keys: string[], onDate?: string) =>
+    req<{
+      date: string | null;
+      quotes: Array<{ symbol: string; source: string; date: string; close: number } | null>;
+    }>(`/api/quotes/latest${q({ keys: keys.join(","), date: onDate })}`),
   otcPrice: (input: OtcPriceInput, dealId?: number) =>
     req<{ task_id: string }>(`/api/otc/price${dealId != null ? q({ deal_id: String(dealId) }) : ""}`, {
       method: "POST", body: JSON.stringify(input),

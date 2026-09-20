@@ -89,10 +89,27 @@ import {
 import { useAuth } from "@/lib/auth";
 import { getChartTheme, withAlpha, type ChartTheme } from "@/lib/chart-theme";
 import { useQueryClient } from "@tanstack/react-query";
-import { fetchResult, invalidatePortfolio, qk } from "@/lib/queries";
+import { fetchResult, invalidatePortfolio, qk, useAssets } from "@/lib/queries";
 
 const ZERO_EPS = 0.0005; // 隐藏 < 0.05% 的权重噪声
 const HOLDINGS_DISPLAY_MIN = 0.05; // 勾选「不显示低于5%」时的合并阈值
+
+/** 调仓计算器的拟投资金额初值(仅当该组合从未存过金额时使用)。 */
+const CALC_DEFAULT_AMOUNT = 1_000_000;
+const CALC_AMOUNT_STORAGE_PREFIX = "bp_calc_amount:";
+
+/** 调仓计算器「当前持仓」的金额口径: 读组合记忆的拟投资金额。 */
+function readStoredCalcAmount(key: string): number | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(CALC_AMOUNT_STORAGE_PREFIX + key);
+    if (raw == null) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
 
 const QUADRANT_ORDER: Quadrant[] = [
   "overheat",
@@ -136,6 +153,16 @@ function pct(x: number | null | undefined, digits = 2) {
 function signPct(x: number | null | undefined, digits = 2) {
   if (x === null || x === undefined || Number.isNaN(x)) return "-";
   return `${x > 0 ? "+" : ""}${(x * 100).toFixed(digits)}%`;
+}
+
+/**
+ * 金额(元)千分位显示 —— 与调仓计算器内的同名模块私有函数逐字一致(返回纯数字,
+ * `¥` 由调用点补)。两处刻意各保留一份: 把格式化函数提进 `web/lib/` 会同时触碰
+ * 两个已定稿文件的导出面, 收益不抵风险。
+ */
+function yuan(x: number): string {
+  if (!Number.isFinite(x)) return "-";
+  return Math.round(x).toLocaleString("zh-CN");
 }
 
 export default function DashboardClient({
@@ -396,6 +423,23 @@ function DashboardView({
   } = data;
   const mPort = metrics.portfolio;
   const mBench = metrics.benchmark;
+  /**
+   * 计算器的「拟投资金额」按组合持久化到 `bp_calc_amount:{组合 id}`。
+   *
+   * 必须由 `portfolio.portfolio_id` **按组合派生**而非模块级常量: 切换组合走
+   * `router.push('/dashboard?id=...')` 是客户端导航, 本组件实例被复用, 常量化会让所有
+   * 组合共用一个键, A 组合记下的金额出现在 B 组合。
+   *
+   * 该键与挂载点传给 `RebalanceCalculatorDialog` 的 `storageKey` **必须逐字同源**:
+   * 不同源时「当前持仓」会按 1,000,000 缩放、而「计划持仓」按记忆金额缩放,
+   * 两列不同尺度 → 满屏假买卖单。`portfolio_id` 缺失时退化为 `demo`(与 demo slug 无对应关系,
+   * 故不能反过来用 slug)。
+   */
+  // `Number.isFinite` 而非 `??`: `??` 只在 null/undefined 时兜底, `NaN` 会漏过去变成字符串
+  // "NaN" —— 那样所有 id 异常的组合又会共用一个 localStorage 键, 正是本次修复要消灭的缺陷形态。
+  const calcStorageKey = Number.isFinite(portfolio.portfolio_id)
+    ? String(portfolio.portfolio_id)
+    : "demo";
 
   const theme = getChartTheme(isDark);
   const textCol = theme.subtext;
@@ -447,6 +491,8 @@ function DashboardView({
   const [hideSmallHoldings, setHideSmallHoldings] = useState(true);
   const [showOptimalHoldings, setShowOptimalHoldings] = useState(false);
   const [showActualHoldings, setShowActualHoldings] = useState(false);
+  /** 调仓变动卡与计算器的日期档位: 历史调仓日 / 最近交易日最优化权重 */
+  const [calcSource, setCalcSource] = useState<"rebalance" | "latest">("rebalance");
   const rebalancesDesc = useMemo(
     () => rebalances.map((r, idx) => ({ r, idx })).reverse(),
     [rebalances],
@@ -461,11 +507,12 @@ function DashboardView({
   const actualHoldings = data.actual_holdings;
   const actualAsOf = (actualHoldings?.as_of_date ?? "").slice(0, 10);
   const hasActualHoldings = (actualHoldings?.holdings?.length ?? 0) > 0;
-  // 切换方法/组合后数据变化 → 重置选中的调仓期为最近
+  // 切换方法/组合后数据变化 → 重置选中的调仓期与日期档位
   useEffect(() => {
     setRbIdx(rebalances.length - 1);
     setShowOptimalHoldings(false);
     setShowActualHoldings(false);
+    setCalcSource("rebalance");
   }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
   const rb = rebalances[Math.min(rbIdx, rebalances.length - 1)];
 
@@ -495,6 +542,8 @@ function DashboardView({
       delta: number | null;
       isNew: boolean;
       isClose: boolean;
+      isAdd: boolean;
+      isCut: boolean;
       sortAbs: number;
     }[] = [];
     for (const k of keys) {
@@ -509,12 +558,26 @@ function DashboardView({
       const isNew = (prev ?? 0) === 0 && next > 0;
       // 上期有权重 → 本期归零 = 清仓
       const isClose = (prev ?? 0) > 0 && next === 0;
+      // 已持有且加/减仓: 用于四态动作标识(新建仓/清仓已由上面两态覆盖)
+      const isAdd = (prev ?? 0) > 0 && next > (prev ?? 0);
+      const isCut = (prev ?? 0) > 0 && next > 0 && next < (prev ?? 0);
       // 两期皆为 0 的噪声行不显示
       if (next === 0 && (prev ?? 0) === 0) continue;
       const d = prev != null ? next - prev : (dl[k] ?? (isNew ? next : null));
       // 排序口径: 建仓视为「上期权重 0」, 绝对值即本期权重
       const sortAbs = Math.abs(d ?? (isNew ? next : 0));
-      rows.push({ key: k, name: nameMap[k] || k, prev, next, delta: d, isNew, isClose, sortAbs });
+      rows.push({
+        key: k,
+        name: nameMap[k] || k,
+        prev,
+        next,
+        delta: d,
+        isNew,
+        isClose,
+        isAdd,
+        isCut,
+        sortAbs,
+      });
     }
     // 按变动百分比的绝对值降序 —— 让调仓力度最大的标的排在最前
     rows.sort((a, b) => b.sortAbs - a.sortAbs || a.key.localeCompare(b.key));
@@ -523,6 +586,19 @@ function DashboardView({
 
   const rbNewCount = rbChangeRows.filter((r) => r.isNew).length;
   const rbCloseCount = rbChangeRows.filter((r) => r.isClose).length;
+  const rbAddCount = rbChangeRows.filter((r) => r.isAdd).length;
+  const rbCutCount = rbChangeRows.filter((r) => r.isCut).length;
+
+  /**
+   * key(`symbol@source`) → category。份额换算只对 `category === "etf"` 的行生效
+   * (指数/商品/债券没有「份额」概念), 故调用方必须把类别透传给计算器。
+   */
+  const { data: assetList } = useAssets();
+  const assetCategoryByKey = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const a of assetList ?? []) m[`${a.symbol}@${a.source}`] = a.category ?? "";
+    return m;
+  }, [assetList]);
 
   const holdingsAtRb = useMemo(() => {
     if (!rb?.target_weights) return [];
@@ -547,6 +623,97 @@ function DashboardView({
         weight: h.weight,
       }));
   }, [optimal_holdings, nameMap]);
+
+  // ---- 调仓计算器接线(日期档位 / 取价 / 当前持仓) ----
+  // 档位的 as-of 日期: 最近交易日档用最优持仓日期, 历史档用该期调仓日
+  const asOfForCalc = (calcSource === "latest" ? optimalAsOf : rb?.trade_date) ?? undefined;
+
+  /**
+   * 计算器的行集: 两档口径共用一套行结构(含 symbol/source `@` 拆分)。
+   *
+   * - 最近交易日档: 用最优目标权重, 无「上期权重」(当前持仓改由 actual_holdings 传入)
+   * - 历史调仓日档: 复用调仓变动表(含清仓行), 上期权重即当期默认「当前持仓」
+   */
+  const calcRows = useMemo(() => {
+    if (calcSource === "latest") {
+      return holdingsAtOptimal.map((h) => ({
+        key: h.key,
+        name: h.name,
+        symbol: (h.key.split("@")[0] ?? "") as string,
+        source: (h.key.split("@")[1] ?? "") as string,
+        category: assetCategoryByKey[h.key],
+        targetWeight: h.weight,
+        prevWeight: null,
+      }));
+    }
+    return rbChangeRows.map((r) => ({
+      key: r.key,
+      name: r.name,
+      symbol: (r.key.split("@")[0] ?? "") as string,
+      source: (r.key.split("@")[1] ?? "") as string,
+      category: assetCategoryByKey[r.key],
+      targetWeight: r.next,
+      prevWeight: r.prev,
+    }));
+  }, [calcSource, holdingsAtOptimal, rbChangeRows, assetCategoryByKey]);
+
+  /**
+   * 计算器 ETF 份额所需的每标的清洗收盘价(CNY 口径, 与金额同币种)。
+   *
+   * 按标的代码批量取价(不含任何金额); 取价失败(含旧后端无此端点)静默降级为 `{}`
+   * —— 份额列自愈隐藏, 其余功能不受影响。
+   */
+  const [calcPriceByKey, setCalcPriceByKey] = useState<Record<string, number>>({});
+  const calcKeys = useMemo(() => calcRows.map((r) => r.key), [calcRows]);
+  useEffect(() => {
+    if (calcKeys.length === 0) {
+      setCalcPriceByKey({});
+      return;
+    }
+    let cancelled = false;
+    api
+      .quotesLatest(calcKeys.slice(0, 64), asOfForCalc)
+      .then((res) => {
+        if (cancelled) return;
+        const out: Record<string, number> = {};
+        res.quotes.forEach((qt, i) => {
+          if (qt && Number.isFinite(qt.close)) out[calcKeys[i]] = qt.close;
+        });
+        setCalcPriceByKey(out);
+      })
+      .catch(() => {
+        if (!cancelled) setCalcPriceByKey({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [calcKeys, asOfForCalc]);
+
+  /**
+   * 「当前持仓」预设(仅最近交易日档): 由 actual_holdings 的漂移后权重, 按**同一个**
+   * 拟投资金额缩放得到。
+   *
+   * 金额必须与计算器读到的那个数逐字同源(同一个 localStorage 键): 计算器内部用
+   * `readStoredAmount(storageKey) ?? defaultAmount` 缩放「计划持仓」, 这里若改用常量
+   * 缩放, 用户改过金额后两列会落在不同尺度 → 满屏假买卖单。故此处读同一键,
+   * 并显式依赖 `calcSource` —— 每次切换日期档位都重读, 计算器重新挂载时同源。
+   * 同时依赖 `portfolio.portfolio_id`: 切换组合时重读新组合记忆的金额, 否则「当前持仓」
+   * 仍按上一个组合的金额缩放。
+   */
+  const calcAmount = useMemo(
+    () => readStoredCalcAmount(calcStorageKey) ?? CALC_DEFAULT_AMOUNT,
+    [calcSource, calcStorageKey],
+  );
+
+  const calcCurrentByKey = useMemo(() => {
+    if (calcSource !== "latest" || !actualHoldings) return undefined;
+    const totalWeight = actualHoldings.holdings.reduce((s, h) => s + h.weight, 0) || 1;
+    const out: Record<string, number> = {};
+    for (const h of actualHoldings.holdings) {
+      out[h.key] = Math.round((h.weight / totalWeight) * calcAmount);
+    }
+    return out;
+  }, [calcSource, actualHoldings, calcAmount]);
 
   // 当天实际持仓(漂移后权重 + 当日/区间涨跌幅), 供持仓卡第三视图与独立表格
   const holdingsAtActual = useMemo(() => {
@@ -1246,7 +1413,7 @@ function DashboardView({
                 </Card>
 
                 {/* Rebalance timeline */}
-                <Card id="rebalance" className="scroll-mt-24">
+                <Card id="rebalance" className="scroll-mt-24 min-w-0">
                   <CardHeader>
                     <div className="flex flex-wrap justify-between items-center gap-2">
                       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
@@ -1255,31 +1422,55 @@ function DashboardView({
                           <span className="text-xs text-muted-foreground">
                             共 {rbChangeRows.length} 项
                             {rbNewCount > 0 && ` · 新建仓 ${rbNewCount}`}
+                            {rbAddCount > 0 && ` · 加仓 ${rbAddCount}`}
+                            {rbCutCount > 0 && ` · 减仓 ${rbCutCount}`}
                             {rbCloseCount > 0 && ` · 清仓 ${rbCloseCount}`}
                             <span className="ml-1">（按变动幅度降序）</span>
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-2">
-                        {rbChangeRows.length > 0 && (
+                      <div className="flex items-center gap-2 min-w-0">
+                        {calcRows.length > 0 && (
                           <RebalanceCalculatorDialog
-                            rows={rbChangeRows.map((r) => ({
-                              key: r.key,
-                              name: r.name,
-                              targetWeight: r.next,
-                            }))}
-                            asOf={rb?.trade_date ?? optimalAsOf}
+                            key={calcStorageKey}
+                            rows={calcRows}
+                            asOf={asOfForCalc}
+                            defaultAmount={CALC_DEFAULT_AMOUNT}
+                            currentByKey={calcCurrentByKey}
+                            priceByKey={calcPriceByKey}
+                            rates={{
+                              feeRate: portfolio.fee_rate ?? 0,
+                              slippageRate: portfolio.slippage_rate ?? 0,
+                              stampDutyRate: portfolio.stamp_duty_rate ?? 0,
+                            }}
+                            storageKey={calcStorageKey}
                           />
                         )}
+                        {/* `<select>` 的固有宽度由最长 option 决定, 「最近交易日 2026-09-18 最优化权重」
+                            这一档把它撑到 263px: 375 视口下该行成为 359px、超出卡片内容区 278px,
+                            右缘到 400(视口 360) 被 html/body 的 overflow-x: clip 裁掉且无法横滚。
+                            加 max-w-full + min-w-0 让它在窄屏收缩, 展开时 option 仍完整。 */}
                         <select
-                          className="text-sm bg-transparent border border-border rounded px-2 py-1 text-muted-foreground focus:outline-none"
-                          value={rbIdx}
-                          onChange={(e) => setRbIdx(Number(e.target.value))}
+                          className="text-sm bg-transparent border border-border rounded px-2 py-1 text-muted-foreground focus:outline-none max-w-full min-w-0"
+                          value={calcSource === "latest" ? "latest" : String(rbIdx)}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (v === "latest") setCalcSource("latest");
+                            else {
+                              setCalcSource("rebalance");
+                              setRbIdx(Number(v));
+                            }
+                          }}
                         >
+                          {hasOptimalHoldings && (
+                            <option value="latest">
+                              最近交易日 {optimalAsOf} 最优化权重
+                            </option>
+                          )}
                           {rebalancesDesc.map(({ r, idx }) => (
                             <option key={r.trade_date} value={idx}>
                               {r.trade_date}
-                              {idx === rebalances.length - 1 ? " (最近)" : ""}
+                              {idx === rebalances.length - 1 ? " (最近调仓)" : ""}
                             </option>
                           ))}
                         </select>
@@ -1287,82 +1478,156 @@ function DashboardView({
                     </div>
                   </CardHeader>
                   <CardContent className="pt-0 sm:pt-0">
-                    {rb && (
-                      <>
-                        <div className="bg-primary/5 border border-primary/20 text-sm p-4 rounded-lg mb-6 leading-relaxed space-y-1.5">
-                          <RebalanceSummary
-                            rb={rb}
-                            nameMap={nameMap}
-                            bandPct={bandPct}
-                          />
-                        </div>
-                        <div className="max-h-[260px] overflow-auto min-w-0">
-                          <Table className="min-w-0">
-                            <TableHeader>
-                              <TableRow>
-                                <TableHead className="pl-0">资产</TableHead>
-                                <TableHead className="text-right">
-                                  上期权重
-                                </TableHead>
-                                <TableHead className="text-right">
-                                  本期权重
-                                </TableHead>
-                                <TableHead className="text-right pr-0">
-                                  变动
-                                </TableHead>
+                    {calcSource === "latest" ? (
+                      <div className="max-h-[260px] overflow-auto min-w-0">
+                        <Table className="min-w-[560px]">
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead className="pl-0 whitespace-nowrap">
+                                资产
+                              </TableHead>
+                              <TableHead className="text-right pr-0 whitespace-nowrap">
+                                最优化权重
+                              </TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {holdingsAtOptimal.map((h) => (
+                              <TableRow key={h.key}>
+                                <TableCell className="pl-0 font-medium">
+                                  <span className="inline-flex items-center gap-1.5">
+                                    {h.name}
+                                  </span>
+                                </TableCell>
+                                <TableCell className="text-right font-mono pr-0 whitespace-nowrap">
+                                  {pct(h.weight)}
+                                </TableCell>
                               </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {rbChangeRows.map((row) => {
-                                const { key: k, prev, next, delta: d } = row;
-                                return (
-                                  <TableRow key={k}>
-                                    <TableCell className="pl-0 font-medium">
-                                      <span className="inline-flex items-center gap-1.5">
-                                        {nameMap[k] || k}
-                                        {row.isNew && (
-                                          <Badge
-                                            variant="outline"
-                                            className="border-success/40 bg-success/10 text-success font-normal"
-                                          >
-                                            新建仓
-                                          </Badge>
-                                        )}
-                                        {row.isClose && (
-                                          <Badge
-                                            variant="outline"
-                                            className="border-destructive/40 bg-destructive/10 text-destructive font-normal"
-                                          >
-                                            清仓
-                                          </Badge>
-                                        )}
-                                      </span>
-                                    </TableCell>
-                                    <TableCell className="text-right font-mono text-muted-foreground">
-                                      {prev != null ? pct(prev) : "—"}
-                                    </TableCell>
-                                    <TableCell className="text-right font-mono">
-                                      {pct(next)}
-                                    </TableCell>
-                                    <TableCell
-                                      className={`text-right font-mono pr-0 ${row.isNew ? "text-success" : d == null ? "text-muted-foreground" : d > 0 ? "text-up" : d < 0 ? "text-down" : "text-muted-foreground"}`}
-                                    >
-                                      {row.isNew
-                                        ? signPct(next)
-                                        : d == null
-                                          ? "—"
-                                          : Math.abs(d) < 1e-6
-                                            ? "-"
-                                            : signPct(d)}
-                                    </TableCell>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    ) : (
+                      <>
+                        {rb && (
+                          <>
+                            <div className="bg-primary/5 border border-primary/20 text-sm p-4 rounded-lg mb-6 leading-relaxed space-y-1.5">
+                              <RebalanceSummary
+                                rb={rb}
+                                nameMap={nameMap}
+                                bandPct={bandPct}
+                              />
+                            </div>
+                            <div className="max-h-[260px] overflow-auto min-w-0">
+                              <Table className="min-w-[560px]">
+                                <TableHeader>
+                                  <TableRow>
+                                    <TableHead className="pl-0 whitespace-nowrap">
+                                      资产
+                                    </TableHead>
+                                    <TableHead className="text-right whitespace-nowrap">
+                                      上期权重
+                                    </TableHead>
+                                    <TableHead className="text-right whitespace-nowrap">
+                                      本期权重
+                                    </TableHead>
+                                    <TableHead className="text-right pr-0 whitespace-nowrap">
+                                      变动
+                                    </TableHead>
                                   </TableRow>
-                                );
-                              })}
-                            </TableBody>
-                          </Table>
-                        </div>
+                                </TableHeader>
+                                <TableBody>
+                                  {rbChangeRows.map((row) => {
+                                    const { key: k, prev, next, delta: d } = row;
+                                    return (
+                                      <TableRow key={k}>
+                                        <TableCell className="pl-0 font-medium">
+                                          <span className="inline-flex items-center gap-1.5">
+                                            {nameMap[k] || k}
+                                            {row.isNew && (
+                                              <Badge
+                                                variant="outline"
+                                                className="border-success/40 bg-success/10 text-success font-normal shrink-0"
+                                              >
+                                                新建仓
+                                              </Badge>
+                                            )}
+                                            {row.isAdd && (
+                                              <Badge
+                                                variant="outline"
+                                                className="border-success/30 bg-success/5 text-success font-normal shrink-0"
+                                              >
+                                                加仓
+                                              </Badge>
+                                            )}
+                                            {row.isCut && (
+                                              <Badge
+                                                variant="outline"
+                                                className="border-warning/40 bg-warning/10 text-warning font-normal shrink-0"
+                                              >
+                                                减仓
+                                              </Badge>
+                                            )}
+                                            {row.isClose && (
+                                              <Badge
+                                                variant="outline"
+                                                className="border-destructive/40 bg-destructive/10 text-destructive font-normal shrink-0"
+                                              >
+                                                清仓
+                                              </Badge>
+                                            )}
+                                          </span>
+                                        </TableCell>
+                                        <TableCell className="text-right font-mono text-muted-foreground whitespace-nowrap">
+                                          {prev != null ? pct(prev) : "—"}
+                                        </TableCell>
+                                        <TableCell className="text-right font-mono whitespace-nowrap">
+                                          {pct(next)}
+                                        </TableCell>
+                                        <TableCell
+                                          className={`text-right font-mono pr-0 whitespace-nowrap ${row.isNew ? "text-success" : d == null ? "text-muted-foreground" : d > 0 ? "text-up" : d < 0 ? "text-down" : "text-muted-foreground"}`}
+                                        >
+                                          {row.isNew
+                                            ? signPct(next)
+                                            : d == null
+                                              ? "—"
+                                              : Math.abs(d) < 1e-6
+                                                ? "-"
+                                                : signPct(d)}
+                                        </TableCell>
+                                      </TableRow>
+                                    );
+                                  })}
+                                </TableBody>
+                              </Table>
+                            </div>
+                          </>
+                        )}
                       </>
                     )}
+                    <div className="mt-3 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                      <span>
+                        交易费用估算（费率取组合参数）
+                        <span className="ml-1">
+                          佣金 {pct(portfolio.fee_rate ?? 0, 3)} / 滑点{" "}
+                          {pct(portfolio.slippage_rate ?? 0, 3)} / 印花税{" "}
+                          {pct(portfolio.stamp_duty_rate ?? 0, 3)}
+                        </span>
+                      </span>
+                      <span>
+                        总调仓金额{" "}
+                        <span className="font-mono text-foreground">
+                          ¥
+                          {yuan(
+                            rbChangeRows.reduce(
+                              (s, r) => s + Math.abs((r.next ?? 0) - (r.prev ?? 0)),
+                              0,
+                            ) * CALC_DEFAULT_AMOUNT,
+                          )}
+                        </span>
+                        ，展开计算器查看逐项费用
+                      </span>
+                    </div>
                   </CardContent>
                 </Card>
               </div>

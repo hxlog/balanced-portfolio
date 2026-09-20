@@ -341,7 +341,10 @@ export function CryptoClient({ data: initialData }: { data: CorrelationResponse 
               </p>
             </div>
             <div className="flex items-center gap-2">
-              {asOfEt && asOfCn && <Badge variant="outline" className="text-muted-foreground text-xs">数据截至: {asOfEt} / {asOfCn}</Badge>}
+              {/* 两个时间戳拼起来比 375px 的行宽还长, 故本枚刻意允许折行:
+                  Badge 基类是 whitespace-nowrap(避免 CJK 标签在窄列里被逐字拆断),
+                  这里空间不够且无第二列可让, 折行才是正确形态。 */}
+              {asOfEt && asOfCn && <Badge variant="outline" className="text-muted-foreground text-xs whitespace-normal">数据截至: {asOfEt} / {asOfCn}</Badge>}
               {meta?.is_synced === false && meta?.effective_td && (
                 <Badge variant="outline" className="text-amber-700/80 dark:text-amber-400/80 text-xs border-amber-500/30">
                   数据待齐 · 展示至 {meta.effective_td}

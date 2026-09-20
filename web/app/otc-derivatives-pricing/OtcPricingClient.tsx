@@ -822,7 +822,8 @@ export function OtcPricingClient() {
       {/* 顶部标题 + 迷你日历 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 bg-card border border-border rounded-xl p-5 space-y-3">
-          <div className="flex items-center gap-2">
+          {/* 标题行放不下时整枚徽章换到下一行, 而不是被 overflow-x: clip 裁掉尾字 */}
+          <div className="flex items-center gap-2 flex-wrap">
             <TrendingUp className="w-5 h-5 text-primary" />
             <h1 className="text-xl font-semibold tracking-tight">
               场外衍生品定价 <span className="text-muted-foreground font-normal">· Experiment</span>

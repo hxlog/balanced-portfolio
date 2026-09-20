@@ -21,9 +21,10 @@ import { Check, ChevronRight, Plus, X, Lock } from "lucide-react";
 import {
   api, Asset, Quadrant, QUADRANT_LABELS, METHOD_OPTIONS, BENCHMARK_OPTIONS,
   CreatePortfolioInput, DEFAULT_BENCHMARK_KEY, DEFAULT_MAX_WEIGHT_PCT,
-  DEFAULT_DESCRIPTION, ASSET_CATEGORY_OPTIONS, ADJUST_LABEL,
+  DEFAULT_DESCRIPTION, ASSET_CATEGORY_OPTIONS, ASSET_CATEGORY_LABELS, ADJUST_LABEL,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { useIsMobile } from "@/components/ui/use-mobile";
 import { ConfirmRecomputeDialog } from "@/components/ConfirmRecomputeDialog";
 import { BacktestProgressDialog } from "@/components/BacktestProgressDialog";
 import { ChangeDiffDialog, type AssetDiff, type DiffRow } from "@/components/ChangeDiffDialog";
@@ -39,6 +40,8 @@ const QUADRANT_COLOR: Record<Quadrant, string> = {
 const QUADRANT_SHORT: Record<Quadrant, string> = {
   overheat: "过热", stagflation: "滞胀", recovery: "复苏", recession: "衰退",
 };
+// 步骤条手机端短标签(375 宽下单行放不下完整标题)
+const STEP_SHORT: Record<number, string> = { 1: "四象限", 2: "方法", 3: "参数" };
 
 // diff 弹窗用的格式化工具与方法/基准名称映射
 const fmtRatePct = (v: number) => `${+(v * 100).toFixed(2)}%`;      // 0.0005 → 0.05%
@@ -62,7 +65,7 @@ const emptySelection: Selected = { overheat: [], stagflation: [], recovery: [], 
 //
 // 选品口径: 每个指数恰好一只**场内 ETF**(剔除 LOF / 场外基金), 取「成立最久(可用行情行数最多)
 // → 规模 → 流动性(成交额)」综合最优者。symbol 即场内代码, 与资产池 `{symbol}@etf_em` 一一对应;
-// 若某 symbol 未入池或被停用, 该条自动隐藏(见下方 recommended 过滤), 不做跨口径硬凑。
+// 若某 symbol 未入池或被停用, 该条会在推荐侧栏显示为不可用(见下方 recommended 派生), 不做跨口径硬凑。
 const RECOMMENDED_GROUPS: { label: string; symbols: string[] }[] = [
   { label: "国内宽基", symbols: ["588080", "159915", "510300", "510050"] },
   // 红利类: 央企红利 / 标普港股通低波红利 / 标普中国A股大盘红利低波50 / 中证红利 / 富时自由现金流聚焦
@@ -75,6 +78,35 @@ function keyOf(a: Asset | { symbol: string; source: string }) {
   return `${a.symbol}@${a.source}`;
 }
 
+/** 回测默认起始日: 今天往前 3 年。 */
+function defaultStartDate(): string {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - 3);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * 新建方案的表单默认值 —— useState 初始化与「无 id 模式」的重置共用这一份。
+ *
+ * 两处各写一份字面量是**单向、静默**的漂移源: 改了声明处的默认值而漏改重置, 新建方案
+ * 会打开在一个文件已不认为是默认的值上, `backtestSig` 随即报出用户从未做过的变更。
+ * (`startDate` 例外 —— 它依赖「今天」, 由 `defaultStartDate()` 在两处调用同一函数求值。)
+ */
+const FORM_DEFAULTS = {
+  portfolioName: "我的组合",
+  portfolioDescription: DEFAULT_DESCRIPTION,
+  method: METHOD_OPTIONS[0].value,
+  ratio: "sharpe" as const,
+  lookback: 156,
+  benchmarkKey: DEFAULT_BENCHMARK_KEY,
+  band: 5,
+  maxWeightPct: DEFAULT_MAX_WEIGHT_PCT,
+  riskFreePct: 0,
+  feePct: 0.015,
+  slippagePct: 0.015,
+  stampDutyPct: 0.05,
+};
+
 export default function BuilderClient({
   initialAssets = [],
 }: {
@@ -82,9 +114,19 @@ export default function BuilderClient({
 }) {
   return (
     <Suspense fallback={<div className="p-12 text-center text-muted-foreground">加载中...</div>}>
-      <BuilderInner initialAssets={initialAssets} />
+      <BuilderKeyed initialAssets={initialAssets} />
     </Suspense>
   );
+}
+
+/** 中转层: 在 Suspense 内读取 searchParams, 把「编辑 / 复制 / 新建」编码成 key,
+ *  使同一路由切换 searchParams 时强制重建 BuilderInner(React 会复用同位置的实例)。 */
+function BuilderKeyed({ initialAssets = [] }: { initialAssets?: Asset[] }) {
+  const searchParams = useSearchParams();
+  const idParam = searchParams.get("id");
+  const copyParam = searchParams.get("copy");
+  const modeKey = idParam ? `edit:${idParam}` : copyParam ? `copy:${copyParam}` : "new";
+  return <BuilderInner key={modeKey} initialAssets={initialAssets} />;
 }
 
 function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
@@ -103,23 +145,19 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
   const [assets, setAssets] = useState<Asset[]>(initialAssets);
   const [selected, setSelected] = useState<Selected>(emptySelection);
   const { isWhitelisted, ready } = useAuth();
-  const [portfolioName, setPortfolioName] = useState("我的组合");
-  const [portfolioDescription, setPortfolioDescription] = useState(DEFAULT_DESCRIPTION);
-  const [method, setMethod] = useState(METHOD_OPTIONS[0].value);
-  const [ratio, setRatio] = useState<"sharpe" | "sortino">("sharpe");
-  const [lookback, setLookback] = useState(156);
-  const [benchmarkKey, setBenchmarkKey] = useState(DEFAULT_BENCHMARK_KEY);
-  const [band, setBand] = useState(5);
-  const [maxWeightPct, setMaxWeightPct] = useState(DEFAULT_MAX_WEIGHT_PCT);
-  const [riskFreePct, setRiskFreePct] = useState(0);
-  const [feePct, setFeePct] = useState(0.015);
-  const [slippagePct, setSlippagePct] = useState(0.015);
-  const [stampDutyPct, setStampDutyPct] = useState(0.05);
-  const [startDate, setStartDate] = useState(() => {
-    const d = new Date();
-    d.setFullYear(d.getFullYear() - 3);
-    return d.toISOString().slice(0, 10);
-  });
+  const [portfolioName, setPortfolioName] = useState(FORM_DEFAULTS.portfolioName);
+  const [portfolioDescription, setPortfolioDescription] = useState(FORM_DEFAULTS.portfolioDescription);
+  const [method, setMethod] = useState(FORM_DEFAULTS.method);
+  const [ratio, setRatio] = useState<"sharpe" | "sortino">(FORM_DEFAULTS.ratio);
+  const [lookback, setLookback] = useState(FORM_DEFAULTS.lookback);
+  const [benchmarkKey, setBenchmarkKey] = useState(FORM_DEFAULTS.benchmarkKey);
+  const [band, setBand] = useState(FORM_DEFAULTS.band);
+  const [maxWeightPct, setMaxWeightPct] = useState(FORM_DEFAULTS.maxWeightPct);
+  const [riskFreePct, setRiskFreePct] = useState(FORM_DEFAULTS.riskFreePct);
+  const [feePct, setFeePct] = useState(FORM_DEFAULTS.feePct);
+  const [slippagePct, setSlippagePct] = useState(FORM_DEFAULTS.slippagePct);
+  const [stampDutyPct, setStampDutyPct] = useState(FORM_DEFAULTS.stampDutyPct);
+  const [startDate, setStartDate] = useState(defaultStartDate);
   const [loadingEdit, setLoadingEdit] = useState(isEditMode || isCopyMode);
   const [error, setError] = useState<string | null>(null);
   const [origSig, setOrigSig] = useState<string | null>(null);
@@ -178,6 +216,26 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
             }
           }
           setSelected(sel);
+        } else {
+          // 新建/复制进入无 id 模式时必须回到空白态。整站跨路由导航本会重新挂载,
+          // 但同路由 searchParams 变化不会 —— 两道保险避免残留上一个组合的配置。
+          setStep(1);
+          setSelected(emptySelection);
+          setPortfolioName(FORM_DEFAULTS.portfolioName);
+          setPortfolioDescription(FORM_DEFAULTS.portfolioDescription);
+          setMethod(FORM_DEFAULTS.method);
+          setRatio(FORM_DEFAULTS.ratio);
+          setLookback(FORM_DEFAULTS.lookback);
+          setBenchmarkKey(FORM_DEFAULTS.benchmarkKey);
+          setBand(FORM_DEFAULTS.band);
+          setMaxWeightPct(FORM_DEFAULTS.maxWeightPct);
+          setRiskFreePct(FORM_DEFAULTS.riskFreePct);
+          setFeePct(FORM_DEFAULTS.feePct);
+          setSlippagePct(FORM_DEFAULTS.slippagePct);
+          setStampDutyPct(FORM_DEFAULTS.stampDutyPct);
+          setStartDate(defaultStartDate());
+          setOrigSig(null);
+          origSnapRef.current = null;
         }
       } catch (e) {
         if (!cancelled) setError(String(e));
@@ -426,28 +484,29 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
   }
 
   return (
-    <div className="flex-1 bg-bg-subtle/30 pb-24">
-      <div className="bg-background border-b border-border py-8 px-6 sticky top-16 z-40">
+    <div className="flex-1 bg-bg-subtle/30 pb-20 sm:pb-24">
+      <div className="bg-background border-b border-border py-3 px-4 sm:px-6 sticky top-14 sm:top-16 z-40">
         <div className="max-w-4xl mx-auto">
           <h1 className="text-2xl font-semibold mb-8 text-center">
             {isEditMode ? "编辑投资组合" : isCopyMode ? "复制投资组合" : "新增投资组合"}
           </h1>
-          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-6 sm:gap-0 relative">
-            <div className="absolute left-0 top-1/2 -translate-y-1/2 w-full h-px bg-border -z-10 hidden sm:block" />
+          <div className="flex items-center justify-between sm:justify-center sm:gap-16 relative">
+            <div className="absolute left-0 top-1/2 -translate-y-1/2 w-full h-px bg-border -z-10" />
             {steps.map((s) => {
               const isActive = s.id === step;
               const isPast = s.id < step;
               return (
-                <div key={s.id} className="flex flex-col items-center gap-2 bg-background px-4">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium border-2 transition-colors ${
+                <div key={s.id} className="flex items-center gap-1.5 sm:gap-2 bg-background px-2 sm:px-4">
+                  <div className={`w-6 h-6 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-xs sm:text-sm font-medium border-2 transition-colors shrink-0 ${
                     isActive ? "border-primary bg-primary text-primary-foreground"
                       : isPast ? "border-primary text-primary"
                       : "border-border text-muted-foreground bg-card"
                   }`}>
-                    {isPast ? <Check className="w-4 h-4" /> : s.id}
+                    {isPast ? <Check className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : s.id}
                   </div>
-                  <span className={`text-sm font-medium ${isActive || isPast ? "text-foreground" : "text-muted-foreground"}`}>
-                    {s.title}
+                  <span className={`text-xs sm:text-sm font-medium whitespace-nowrap ${isActive || isPast ? "text-foreground" : "text-muted-foreground"}`}>
+                    <span className="sm:hidden">{STEP_SHORT[s.id]}</span>
+                    <span className="hidden sm:inline">{s.title}</span>
                   </span>
                 </div>
               );
@@ -472,24 +531,40 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
                 已配置 {totalPlacements} 项 · {uniqueCount} 个品种。
               </p>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:min-h-[500px]">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {QUADRANT_ORDER.map((q) => (
-                <Card key={q} className="flex flex-col min-h-[240px]">
-                  <CardContent className="p-4 flex-1 flex flex-col">
-                    <div className="flex justify-between items-center mb-4">
-                      <div className={`text-sm font-medium ${QUADRANT_COLOR[q]}`}>{QUADRANT_LABELS[q]}</div>
-                      <Badge variant="secondary">已选 {selected[q].length}</Badge>
+                <Card key={q} className="flex flex-col">
+                  <CardContent className="p-3 sm:p-4 flex-1 flex flex-col">
+                    <div className="flex justify-between items-center gap-1 mb-2">
+                      <div className={`text-xs sm:text-sm font-medium ${QUADRANT_COLOR[q]}`}>
+                        <span className="lg:hidden">{QUADRANT_SHORT[q]}</span>
+                        <span className="hidden lg:inline">{QUADRANT_LABELS[q]}</span>
+                      </div>
+                      <Badge variant="secondary" className="shrink-0">已选 {selected[q].length}</Badge>
                     </div>
-                    <div className={`flex flex-wrap gap-2 flex-1 ${selected[q].length === 0 ? "items-center content-center" : "content-start"}`}>
+                    <div className={`flex flex-wrap gap-1.5 flex-1 mt-2 ${selected[q].length === 0 ? "items-center content-center" : "content-start"}`}>
                       {selected[q].map((a) => (
-                        <Badge key={keyOf(a)} variant="outline" className="pr-1 bg-card border-border text-foreground">
-                          {a.name || a.symbol}
-                          <X className="w-3 h-3 ml-1 text-muted-foreground cursor-pointer hover:text-foreground"
+                        /* 手机端象限卡片只有 ~150px 宽(内容区 ~126px), 而 Badge 基类是 whitespace-nowrap。
+                           长名标的(如「摩根标普港股通低波红利指数（摩根ETF）」, 225px)会撑破卡片,
+                           再被 html/body 的 overflow-x: clip 裁掉——无法横滚到, 连删除用的 X 一起消失。
+                           修法沿用 shadcn 的 flex-truncate 范式:
+                             · 徽章自身 `max-w-full` —— 上限 = 卡片内容宽, 故宽窄屏都不会溢出容器;
+                             · 名称 span `min-w-0 truncate` —— min-w-0 提供收缩许可, truncate 提供 overflow:hidden
+                               (即自动最小尺寸归零), 长名在卡内截断;
+                             · X `shrink-0` —— 永不被压缩, 任何宽度下都点得到。
+                           不用固定 `max-w-[9rem]`(144px)一类的写死上限: 桌面端 chip 区有 169px,
+                           144px 会在宽屏也绑死并白白截断更多长名。
+                           实测(30 个 chip, 组合 20): 无 max-w-full 时 375 下徽章右边到 456(视口 375)、
+                           3 个 X 不可达; 加上后 375 溢出元素 0 / X 不可达 0 / bodyScrollW 360=视口,
+                           长名 22 个按需截断; 1440 溢出元素 0、截断降到 8 个(即无写死上限时宽屏收益即此)。 */
+                        <Badge key={keyOf(a)} variant="outline" className="pr-1 text-xs bg-card border-border text-foreground max-w-full">
+                          <span className="block min-w-0 truncate">{a.name || a.symbol}</span>
+                          <X className="w-3 h-3 ml-1 shrink-0 text-muted-foreground cursor-pointer hover:text-foreground"
                             onClick={() => removeAsset(q, keyOf(a))} />
                         </Badge>
                       ))}
                       {selected[q].length === 0 && (
-                        <p className="text-sm text-muted-foreground w-full text-center">该象限为空。</p>
+                        <p className="text-xs text-muted-foreground w-full text-center">该象限为空。</p>
                       )}
                     </div>
                     <AssetPicker
@@ -511,26 +586,26 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
               <h2 className="text-xl font-medium">选择默认的优化方法</h2>
               <p className="text-muted-foreground mt-2">不同的最优化目标会产生不同的权重分配方案。</p>
             </div>
-            <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {METHOD_OPTIONS.map((m) => {
                 const active = m.value === method;
                 return (
                   <Card key={m.value} onClick={() => setMethod(m.value)}
                     className={`cursor-pointer transition-all ${active ? "border-primary ring-1 ring-primary/20 bg-primary/5" : "hover:border-primary/50"}`}>
-                    <CardContent className="p-5 flex items-start gap-4">
+                    <CardContent className="p-4 flex items-start gap-3">
                       <div className={`mt-1 w-5 h-5 rounded-full border flex items-center justify-center shrink-0 ${active ? "border-primary text-primary" : "border-border"}`}>
                         {active && <div className="w-2.5 h-2.5 rounded-full bg-primary" />}
                       </div>
                       <div>
                         <h3 className={`font-medium mb-1 ${active ? "text-primary" : ""}`}>{m.title}</h3>
-                        <p className="text-sm text-muted-foreground leading-relaxed">{m.desc}</p>
+                        <p className="text-xs text-muted-foreground leading-snug">{m.desc}</p>
                       </div>
                     </CardContent>
                   </Card>
                 );
               })}
             </div>
-            <div className="mt-8 pt-8 border-t border-border">
+            <div className="mt-5 pt-5 border-t border-border">
               <h3 className="font-medium mb-4">附属参数</h3>
               <div className="flex items-center justify-between p-4 bg-card border border-border rounded-lg">
                 <div>
@@ -557,62 +632,62 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
               <p className="text-muted-foreground mt-2">调整风险因子的计算窗口与回测起止时间。</p>
             </div>
             <Card>
-              <CardContent className="p-6 space-y-8">
-                <div>
-                  <label className="block text-sm font-medium mb-2">组合名称</label>
-                  <Input value={portfolioName} onChange={(e) => setPortfolioName(e.target.value)} className="w-full max-w-xs" />
+              <CardContent className="p-5 sm:p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-5">
+                <div className="space-y-1.5">
+                  <label className="block text-sm font-medium">组合名称</label>
+                  <Input value={portfolioName} onChange={(e) => setPortfolioName(e.target.value)} className="w-full" />
                 </div>
-                <div className="border-t border-border pt-8">
-                  <label className="block text-sm font-medium mb-2">组合描述</label>
+                <div className="space-y-1.5">
+                  <label className="block text-sm font-medium">组合描述</label>
                   <Input value={portfolioDescription} onChange={(e) => setPortfolioDescription(e.target.value)}
-                    placeholder={DEFAULT_DESCRIPTION} className="w-full max-w-xs" />
-                  <p className="text-sm text-muted-foreground mt-2">展示于 Dashboard 标题下方, 默认「组合描述」。</p>
+                    placeholder={DEFAULT_DESCRIPTION} className="w-full" />
+                  <p className="text-xs text-muted-foreground">展示于 Dashboard 标题下方, 默认「组合描述」。</p>
                 </div>
-                <div className="border-t border-border pt-8">
-                  <label className="block text-sm font-medium mb-2">回溯天数 (风险因子窗口)</label>
+                <div className="space-y-1.5">
+                  <label className="block text-sm font-medium">回溯天数 (风险因子窗口)</label>
                   <div className="flex items-center gap-4">
                     <Input type="number" value={lookback} onChange={(e) => setLookback(Number(e.target.value))}
-                      className="w-full max-w-xs font-mono" />
+                      className="w-full font-mono" />
                     <span className="text-sm text-muted-foreground">个交易日</span>
                   </div>
-                  <p className="text-sm text-muted-foreground mt-2">用过去 N 个交易日的日收益率方差作为风险因子进行计算。</p>
+                  <p className="text-xs text-muted-foreground">用过去 N 个交易日的日收益率方差作为风险因子进行计算。</p>
                 </div>
-                <div className="border-t border-border pt-8">
-                  <label className="block text-sm font-medium mb-2">回测开始日期</label>
-                  <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full max-w-xs" />
-                  <p className="text-sm text-muted-foreground mt-2">受限于个别指数的成立时间，实际可回测日期可能晚于设定日期。</p>
+                <div className="space-y-1.5">
+                  <label className="block text-sm font-medium">回测开始日期</label>
+                  <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full" />
+                  <p className="text-xs text-muted-foreground">受限于个别指数的成立时间，实际可回测日期可能晚于设定日期。</p>
                 </div>
-                <div className="border-t border-border pt-8">
-                  <label className="block text-sm font-medium mb-2">对比基准</label>
+                <div className="space-y-1.5">
+                  <label className="block text-sm font-medium">对比基准</label>
                   <select value={benchmarkKey} onChange={(e) => setBenchmarkKey(e.target.value)}
-                    className="w-full max-w-xs bg-input-background border border-border rounded-md px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50">
+                    className="w-full bg-input-background border border-border rounded-md px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50">
                     {BENCHMARK_OPTIONS.map((b) => <option key={b.key} value={b.key}>{b.name}</option>)}
                   </select>
-                  <p className="text-sm text-muted-foreground mt-2">净值对比所用基准（信息比率固定以沪深300为基准）。</p>
+                  <p className="text-xs text-muted-foreground">净值对比所用基准（信息比率固定以沪深300为基准）。</p>
                 </div>
-                <div className="border-t border-border pt-8">
-                  <label className="block text-sm font-medium mb-2">单资产最大权重</label>
+                <div className="space-y-1.5">
+                  <label className="block text-sm font-medium">单资产最大权重</label>
                   <div className="flex items-center gap-4">
                     <Input type="number" step="0.01" min={1} max={100} value={maxWeightPct}
-                      onChange={(e) => setMaxWeightPct(Number(e.target.value))} className="w-full max-w-xs font-mono" />
+                      onChange={(e) => setMaxWeightPct(Number(e.target.value))} className="w-full font-mono" />
                     <span className="text-sm text-muted-foreground">%</span>
                   </div>
-                  <p className="text-sm text-muted-foreground mt-2">
+                  <p className="text-xs text-muted-foreground">
                     优化器硬约束上限, 默认 33.33%。需满足「独立品种数 × 上限 ≥ 100%」。
                   </p>
                 </div>
-                <div className="border-t border-border pt-8">
-                  <label className="block text-sm font-medium mb-2">再平衡偏离带</label>
+                <div className="space-y-1.5">
+                  <label className="block text-sm font-medium">再平衡偏离带</label>
                   <div className="flex items-center gap-4">
                     <Input type="number" step="0.5" value={band} onChange={(e) => setBand(Number(e.target.value))}
-                      className="w-full max-w-xs font-mono" />
+                      className="w-full font-mono" />
                     <span className="text-sm text-muted-foreground">个百分点（绝对值）</span>
                   </div>
-                  <p className="text-sm text-muted-foreground mt-2">任一品种实际权重偏离当日最优目标超过该百分点时触发整体再平衡。默认 5。</p>
+                  <p className="text-xs text-muted-foreground">任一品种实际权重偏离当日最优目标超过该百分点时触发整体再平衡。默认 5。</p>
                 </div>
-                <div className="border-t border-border pt-8 grid md:grid-cols-3 gap-6">
-                  <div>
-                    <label className="block text-sm font-medium mb-2">
+                <div className="sm:col-span-2 lg:col-span-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-5">
+                  <div className="space-y-1.5">
+                    <label className="block text-sm font-medium">
                       无风险利率 {ratio === "sharpe" && <span className="text-destructive">*</span>}
                     </label>
                     <div className="flex items-center gap-3">
@@ -621,53 +696,53 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
                         step="0.01"
                         value={riskFreePct}
                         onChange={(e) => setRiskFreePct(Number(e.target.value))}
-                        className="w-full max-w-xs font-mono"
+                        className="w-full font-mono"
                       />
                       <span className="text-sm text-muted-foreground">%</span>
                     </div>
-                    <p className="text-xs text-muted-foreground mt-2">夏普比率口径必填；按年化利率输入。</p>
+                    <p className="text-xs text-muted-foreground">夏普比率口径必填；按年化利率输入。</p>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2">手续费</label>
+                  <div className="space-y-1.5">
+                    <label className="block text-sm font-medium">手续费</label>
                     <div className="flex items-center gap-3">
                       <Input
                         type="number"
                         step="0.001"
                         value={feePct}
                         onChange={(e) => setFeePct(Number(e.target.value))}
-                        className="w-full max-w-xs font-mono"
+                        className="w-full font-mono"
                       />
                       <span className="text-sm text-muted-foreground">%</span>
                     </div>
-                    <p className="text-xs text-muted-foreground mt-2">按单边换手在调仓日扣除。</p>
+                    <p className="text-xs text-muted-foreground">按单边换手在调仓日扣除。</p>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2">滑点</label>
+                  <div className="space-y-1.5">
+                    <label className="block text-sm font-medium">滑点</label>
                     <div className="flex items-center gap-3">
                       <Input
                         type="number"
                         step="0.001"
                         value={slippagePct}
                         onChange={(e) => setSlippagePct(Number(e.target.value))}
-                        className="w-full max-w-xs font-mono"
+                        className="w-full font-mono"
                       />
                       <span className="text-sm text-muted-foreground">%</span>
                     </div>
-                    <p className="text-xs text-muted-foreground mt-2">买卖双边均缴，模拟价差与成交冲击。</p>
+                    <p className="text-xs text-muted-foreground">买卖双边均缴，模拟价差与成交冲击。</p>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2">印花税（卖出）</label>
+                  <div className="space-y-1.5">
+                    <label className="block text-sm font-medium">印花税（卖出）</label>
                     <div className="flex items-center gap-3">
                       <Input
                         type="number"
                         step="0.001"
                         value={stampDutyPct}
                         onChange={(e) => setStampDutyPct(Number(e.target.value))}
-                        className="w-full max-w-xs font-mono"
+                        className="w-full font-mono"
                       />
                       <span className="text-sm text-muted-foreground">%</span>
                     </div>
-                    <p className="text-xs text-muted-foreground mt-2">仅卖出方缴纳，A股默认 0.05%。</p>
+                    <p className="text-xs text-muted-foreground">仅卖出方缴纳，A股默认 0.05%。</p>
                   </div>
                 </div>
               </CardContent>
@@ -711,12 +786,12 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
       />
 
       <div className="fixed bottom-0 left-0 w-full bg-background border-t border-border p-4 z-40">
-        <div className="max-w-4xl mx-auto flex flex-wrap justify-between items-center gap-2">
-          <Button variant="ghost" onClick={() => setStep((s) => Math.max(1, s - 1))} disabled={step === 1 || submitting || savingMeta}>
+        <div className="max-w-4xl mx-auto flex items-center justify-between gap-2">
+          <Button variant="ghost" className="flex-1 sm:flex-none" onClick={() => setStep((s) => Math.max(1, s - 1))} disabled={step === 1 || submitting || savingMeta}>
             上一步
           </Button>
           {step < 3 ? (
-            <Button onClick={() => setStep((s) => Math.min(3, s + 1))} disabled={step === 1 && uniqueCount === 0}>
+            <Button className="flex-1 sm:flex-none" onClick={() => setStep((s) => Math.min(3, s + 1))} disabled={step === 1 && uniqueCount === 0}>
               下一步 <ChevronRight className="w-4 h-4 ml-1" />
             </Button>
           ) : isWhitelisted ? (
@@ -731,12 +806,14 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
                 <div className="flex items-center gap-3">
                   <Button
                     variant="outline"
+                    className="flex-1 sm:flex-none"
                     onClick={() => setDiffOpen(true)}
                     disabled={savingMeta || submitting || uniqueCount === 0}
                   >
                     {savingMeta ? "保存中..." : "保存"}
                   </Button>
                   <Button
+                    className="flex-1 sm:flex-none"
                     onClick={() => setDiffOpen(true)}
                     disabled={savingMeta || submitting || uniqueCount === 0}
                   >
@@ -745,7 +822,7 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
                 </div>
               )
             ) : (
-              <Button onClick={() => handleSubmitClick(false)} disabled={submitting || uniqueCount === 0}>
+              <Button className="flex-1 sm:flex-none" onClick={() => handleSubmitClick(false)} disabled={submitting || uniqueCount === 0}>
                 生成组合
               </Button>
             )
@@ -773,6 +850,9 @@ function AssetPicker({
   const [category, setCategory] = useState<string>("all");
   const [vendor, setVendor] = useState<string>("all");
   const [pending, setPending] = useState<Set<string>>(new Set());
+  // 手机端单栏: 375 宽下左右双栏会各剩一半, 列表与推荐互相挤压, 故按模式切换。
+  const isMobile = useIsMobile();
+  const [pane, setPane] = useState<"list" | "recommended">("list");
   // 待确认的非 CNY 批次: null=无弹窗; 确认后整批(含 CNY 项)一起添加, 取消则整批不添加。
   const [pendingNonCny, setPendingNonCny] = useState<Asset[] | null>(null);
   const usedSet = useMemo(() => new Set(usedInQuadrant), [usedInQuadrant]);
@@ -811,14 +891,18 @@ function AssetPicker({
     return list.slice().sort(cmp);
   }, [assets, usedSet, category, vendor, q]);
 
-  // 推荐分组: 命中资产池(且未被本象限选中)的推荐 ETF
+  // 推荐分组: 保留已选条目(置灰标记)与空分组 —— 否则用户把某组标的选进象限后,
+  // 该条目乃至整组会从侧栏消失, 表现为「资产库缺了这个标的」。
   const recommended = RECOMMENDED_GROUPS.map((g) => ({
     ...g,
-    assets: assets.filter((a) => g.symbols.includes(a.symbol) && !usedSet.has(keyOf(a))),
-  })).filter((g) => g.assets.length > 0);
+    assets: assets
+      .filter((a) => g.symbols.includes(a.symbol))
+      .map((a) => ({ asset: a, picked: usedSet.has(keyOf(a)) })),
+  }));
 
-  const toggleRecommended = (group: typeof recommended[number]) => {
-    const ks = group.assets.map((a) => keyOf(a));
+  const toggleRecommended = (group: (typeof recommended)[number]) => {
+    const ks = group.assets.filter((x) => !x.picked).map((x) => keyOf(x.asset));
+    if (ks.length === 0) return;
     setPending((prev) => {
       const next = new Set(prev);
       const allChecked = ks.every((k) => next.has(k));
@@ -870,21 +954,47 @@ function AssetPicker({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
-        <Button variant="outline" size="sm" className="w-full mt-4 border-dashed text-muted-foreground">
+        <Button variant="outline" size="sm" className="w-full mt-3 border-dashed text-muted-foreground">
           <Plus className="w-4 h-4 mr-1" /> 添加资产
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-4xl max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-4xl max-h-[85vh] flex flex-col gap-3 overflow-hidden">
+        <DialogHeader className="shrink-0">
           <DialogTitle>添加资产到「{quadrantLabel}」</DialogTitle>
         </DialogHeader>
-        <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_260px] gap-4">
+        {isMobile && (
+          <div className="shrink-0 grid grid-cols-2 gap-1 rounded-md bg-muted p-1 text-sm">
+            <button
+              type="button"
+              onClick={() => setPane("list")}
+              className={`rounded px-3 py-1.5 ${pane === "list" ? "bg-background font-medium shadow-sm" : "text-muted-foreground"}`}
+            >
+              全部资产
+            </button>
+            <button
+              type="button"
+              onClick={() => setPane("recommended")}
+              className={`rounded px-3 py-1.5 ${pane === "recommended" ? "bg-background font-medium shadow-sm" : "text-muted-foreground"}`}
+            >
+              推荐 ETF
+            </button>
+          </div>
+        )}
+        <div className="flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[minmax(0,1fr)_260px] gap-4">
           {/* 左: 搜索 + 勾选明细 */}
-          <div className="min-w-0">
-            <div className="flex flex-wrap gap-2 mb-3">
-              <Input placeholder="搜索名称或代码..." value={q} onChange={(e) => setQ(e.target.value)} className="flex-1" />
+          {/* display 类互斥而非叠加: 常驻 `flex` + 条件 `hidden` 不会被 twMerge 去重(不同冲突组),
+              能否隐藏取决于 Tailwind 把 `hidden` 排在 `flex` 之后 —— 今天成立, 但改 utility 或对该元素
+              用 cn() 都会静默改变结果。这里只 emit 一个 display 类, 不存在竞争。 */}
+          <div className={`min-w-0 min-h-0 ${isMobile && pane !== "list" ? "hidden" : "flex flex-col"}`}>
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              <Input
+                placeholder="搜索名称或代码..."
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                className="col-span-2"
+              />
               <Select value={vendor} onValueChange={setVendor}>
-                <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">全部数据源</SelectItem>
                   {vendors.map((v) => (
@@ -893,7 +1003,7 @@ function AssetPicker({
                 </SelectContent>
               </Select>
               <Select value={category} onValueChange={setCategory}>
-                <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">全部类别</SelectItem>
                   {ASSET_CATEGORY_OPTIONS.map((c) => (
@@ -902,7 +1012,7 @@ function AssetPicker({
                 </SelectContent>
               </Select>
             </div>
-            <div className="max-h-[60vh] overflow-auto space-y-1 pr-1">
+            <div className="flex-1 min-h-0 overflow-auto space-y-1 pr-1">
               {filtered.map((a) => {
                 const k = keyOf(a);
                 const checked = pending.has(k);
@@ -929,41 +1039,44 @@ function AssetPicker({
                     </div>
                     <span className="text-sm flex-1">{a.name || a.symbol}</span>
                     {(a.currency ?? "CNY") !== "CNY" && (
-                      <Badge variant="outline" className="text-[10px] px-1 py-0 text-muted-foreground">{a.currency}</Badge>
+                      <Badge variant="outline" className="text-xs px-1 py-0 text-muted-foreground">{a.currency}</Badge>
                     )}
                     {/* 滞后徽章: 落后 >= 2 个交易日才提示(is_lagging)。差 1 日是正常增量节奏,
                         旧实现用 is_stale 判据 → 130/278 个资产全挂「停更」红标, 噪声掩盖真问题。
                         字段缺失(旧后端)时回退 is_stale, 与 rank() 的判据一致。 */}
                     {(a.is_lagging ?? a.is_stale) && (
-                      <Badge variant="outline" className="font-normal h-5 px-1.5 text-[10px] text-destructive border-destructive/40">
+                      <Badge variant="outline" className="font-normal px-1.5 text-xs text-destructive border-destructive/40">
                         {a.lag_trading_days != null ? `滞后 ${a.lag_trading_days} 日` : "滞后"}
                       </Badge>
                     )}
                     {a.logical_source === "etf" ? (
-                      <Badge variant="secondary" className="font-normal h-5 px-1.5 text-[10px]">ETF{typeof a.adjust === "string" && a.adjust ? ` · ${ADJUST_LABEL[a.adjust] ?? a.adjust}` : ""}</Badge>
+                      <Badge variant="secondary" className="font-normal px-1.5 text-xs">ETF{typeof a.adjust === "string" && a.adjust ? ` · ${ADJUST_LABEL[a.adjust] ?? a.adjust}` : ""}</Badge>
                     ) : a.logical_source === "cn_index" ? (
-                      <Badge variant="secondary" className="font-normal h-5 px-1.5 text-[10px]">指数</Badge>
+                      <Badge variant="secondary" className="font-normal px-1.5 text-xs">指数</Badge>
                     ) : a.vendor ? (
-                      <Badge variant="secondary" className="font-normal h-5 px-1.5 text-[10px]">{a.vendor}</Badge>
+                      <Badge variant="secondary" className="font-normal px-1.5 text-xs">{a.vendor}</Badge>
                     ) : null}
                     <span className="text-xs text-muted-foreground font-mono">
-                      {a.symbol}{a.adjust && a.logical_source !== "etf" ? ` · ${ADJUST_LABEL[a.adjust] ?? a.adjust}` : ""}{a.category ? ` · ${a.category}` : ""}
+                      {a.symbol}
+                      {a.adjust && a.logical_source !== "etf" ? ` · ${ADJUST_LABEL[a.adjust] ?? a.adjust}` : ""}
+                      {a.category ? ` · ${ASSET_CATEGORY_LABELS[a.category] ?? a.category}` : ""}
                     </span>
                   </div>
                 );
               })}
-              {filtered.length === 0 && <p className="text-sm text-muted-foreground px-3 py-4">无可选资产</p>}
+              {filtered.length === 0 && <p className="text-xs text-muted-foreground px-3 py-4">无可选资产</p>}
             </div>
           </div>
 
           {/* 右: 推荐 ETF */}
-          <div className="min-w-0 border-l border-border md:pl-4">
-            <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">推荐 ETF（点击整组多选）</div>
-            {recommended.length > 0 ? (
-              <div className="space-y-3 max-h-[60vh] overflow-auto pr-1">
+          {/* 同左列: display 互斥, 不依赖产物顺序 */}
+          <div className={`min-w-0 min-h-0 md:border-l md:border-border md:pl-4 ${isMobile && pane !== "recommended" ? "hidden" : "flex flex-col"}`}>
+            <div className="shrink-0 text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">推荐 ETF（点击整组多选）</div>
+            {recommended.some((g) => g.assets.length > 0) ? (
+              <div className="flex-1 min-h-0 overflow-auto space-y-3 pr-1">
                 {recommended.map((g) => {
-                  const ks = g.assets.map((a) => keyOf(a));
-                  const allChecked = ks.every((k) => pending.has(k));
+                  const ks = g.assets.filter((x) => !x.picked).map((x) => keyOf(x.asset));
+                  const allChecked = ks.length > 0 && ks.every((k) => pending.has(k));
                   return (
                     <div key={g.label}>
                       <Badge
@@ -974,21 +1087,38 @@ function AssetPicker({
                         {g.label}（{g.assets.length}）
                       </Badge>
                       <div className="flex flex-col gap-1">
-                        {g.assets.map((a) => (
+                        {g.assets.length === 0 ? (
+                          <p className="text-xs text-muted-foreground">该组标的暂不可用</p>
+                        ) : g.assets.every((x) => x.picked) ? (
+                          <p className="text-xs text-muted-foreground">该组已全部选入该象限</p>
+                        ) : null}
+                        {g.assets.map(({ asset: a, picked }) => (
                           <button
                             key={keyOf(a)}
                             type="button"
-                            onClick={() => toggle(a)}
-                            className={`text-left flex items-center gap-1.5 text-xs px-2 py-1 rounded border cursor-pointer select-none ${
-                              pending.has(keyOf(a)) ? "border-primary text-primary bg-primary/10" : "border-border text-muted-foreground hover:text-foreground"
+                            disabled={picked}
+                            title={picked ? "已选入该象限，请从象限卡片移除" : `${a.name} (${a.symbol})`}
+                            onClick={() => !picked && toggle(a)}
+                            className={`text-left flex items-center gap-1.5 text-xs px-2 py-1 rounded border select-none ${
+                              picked
+                                ? "border-border text-muted-foreground opacity-40 cursor-not-allowed"
+                                : "cursor-pointer hover:border-primary/40"
+                            } ${
+                              pending.has(keyOf(a))
+                                ? "border-primary text-primary bg-primary/10"
+                                : picked
+                                  ? ""
+                                  : "border-border text-muted-foreground"
                             }`}
-                            title={`${a.name} (${a.symbol})`}
                           >
                             <span className="size-3 shrink-0 rounded-[3px] border flex items-center justify-center">
                               {pending.has(keyOf(a)) && <Check className="w-2.5 h-2.5" />}
                             </span>
                             <span className="font-medium truncate">{a.name || a.symbol}</span>
                             <span className="font-mono opacity-70 shrink-0">({a.symbol})</span>
+                            {picked && (
+                              <span className="ml-auto text-xs text-muted-foreground shrink-0">已选</span>
+                            )}
                           </button>
                         ))}
                       </div>
@@ -997,12 +1127,15 @@ function AssetPicker({
                 })}
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">暂无推荐资产</p>
+              <p className="text-xs text-muted-foreground">暂无推荐资产</p>
             )}
           </div>
         </div>
-        <DialogFooter className="flex-row justify-between sm:justify-between items-center gap-2">
-          <span className="text-sm text-muted-foreground">已选 {pending.size} 项</span>
+        {/* 基座 DialogFooter 带 `sm:justify-end`; 无前缀的 `justify-between` 与它**不会**被 twMerge 去重
+            (跨 variant 不去重), 两者并存时 `sm:` 块在 ≥640px 胜出 → 页脚会丢掉 space-between。
+            必须写成 `sm:justify-between` 才能覆盖基座。 */}
+        <DialogFooter className="shrink-0 border-t border-border pt-3 flex-row sm:justify-between items-center gap-2">
+          <span className="text-xs text-muted-foreground">已选 {pending.size} 项</span>
           <div className="flex gap-2">
             <Button variant="ghost" onClick={() => handleOpenChange(false)}>取消</Button>
             <Button onClick={confirm} disabled={pending.size === 0}>确认添加</Button>

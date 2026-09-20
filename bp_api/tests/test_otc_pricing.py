@@ -703,3 +703,111 @@ def test_barrier_quad_no_double_rebate():
     )
     assert np.isfinite(pv)
     assert pv == pytest.approx(rebate, rel=0.05, abs=0.5)
+
+
+def test_latest_closes_batch_and_order(monkeypatch):
+    """批量取价: 顺序与入参一致, 缺失项为 None, on_date 生效。"""
+    from datetime import date as d
+
+    import bp_api.repositories_otc as rotc
+
+    rows = [
+        ("000300", "cn_index_em", d(2026, 9, 17), 4000.5),
+        ("000300", "cn_index_em", d(2026, 9, 18), 4010.25),
+        ("510300", "etf_em", d(2026, 9, 18), 4.1234),
+    ]
+
+    class _Cur:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, q, params):
+            # on_date 存在时 SQL 会多一个参数
+            assert "DISTINCT ON" in q
+            assert "bp_quote_clean" in q
+
+        def fetchall(self):
+            return rows
+
+    class _Conn:
+        def cursor(self):
+            return _Cur()
+
+    out = rotc.latest_closes(
+        _Conn(),
+        [("510300", "etf_em"), ("MISSING", "etf_em"), ("000300", "cn_index_em")],
+    )
+    assert [x and x["symbol"] for x in out] == ["510300", None, "000300"]
+    assert out[0]["close"] == 4.1234
+    assert out[0]["date"] == "2026-09-18"
+
+
+def test_quotes_latest_endpoint_parses_and_rejects(monkeypatch):
+    """端点: 合法 keys 返回 quotes; 非法格式 400; date 非法 400; 上限 64。
+
+    注意: 本仓库**不通过 TestClient 测路由** —— starlette 1.3 的 TestClient 需要
+    httpx2 包(未在 requirements.txt 里), 且它会在导入期构造 app 并触碰连接池。
+    既有测试一律直接取路由的 endpoint 函数调用(见 bp_api/tests/ 其他用例的风格),
+    这样既不引入新依赖, 也不需要真库 —— `db.get_conn` 由 monkeypatch 打桩。
+    """
+    from datetime import date
+
+    from fastapi import HTTPException
+
+    import bp_api.otc_api as otc_api
+    from bp_api import main
+
+    routes = {getattr(r, "path", None): r for r in main.app.routes}
+    handler = routes["/api/quotes/latest"].endpoint
+
+    with pytest.raises(HTTPException) as bad:
+        handler(keys="510300")
+    assert bad.value.status_code == 400
+    assert "symbol@source" in bad.value.detail
+
+    with pytest.raises(HTTPException) as bad_date:
+        handler(keys="510300@etf_em", date_str="2026/09/18")
+    assert bad_date.value.status_code == 400
+
+    with pytest.raises(HTTPException) as empty:
+        handler(keys=" , ")
+    assert empty.value.status_code == 400
+
+    with pytest.raises(HTTPException) as too_many:
+        handler(keys=",".join(f"S{i}@etf_em" for i in range(65)))
+    assert too_many.value.status_code == 400
+    assert "64" in too_many.value.detail
+
+    # 成功路径: 打桩 db.get_conn 与 latest_closes, 断言解析后的 keys 顺序与 date 透传,
+    # 且响应同时带顶层 date 与逐条 quotes。
+    seen: dict = {}
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def _fake_conn(*a, **k):
+        return _Conn()
+
+    def _fake_closes(conn, keys, on_date=None):
+        seen["keys"] = keys
+        seen["on_date"] = on_date
+        return [
+            {"symbol": s, "source": src, "date": "2026-09-18", "close": 4.1234}
+            for s, src in keys
+        ]
+
+    monkeypatch.setattr(otc_api.db, "get_conn", _fake_conn)
+    monkeypatch.setattr(otc_api.rotc, "latest_closes", _fake_closes)
+
+    body = handler(keys=" 510300@etf_em , 000300@cn_index_em ", date_str="2026-09-18")
+    assert seen["keys"] == [("510300", "etf_em"), ("000300", "cn_index_em")]
+    assert seen["on_date"] == date(2026, 9, 18)
+    assert body["date"] == "2026-09-18"
+    assert [qq and qq["symbol"] for qq in body["quotes"]] == ["510300", "000300"]

@@ -501,6 +501,56 @@ def spot_on_date(
     }
 
 
+def latest_closes(
+    conn: psycopg.Connection,
+    keys: list[tuple[str, str]],
+    on_date: Optional[date] = None,
+) -> list[Optional[dict]]:
+    """批量取 (symbol, source) 在 on_date(含)之前最近交易日的清洗收盘价。
+
+    返回与 `keys` **等长且顺序一致**的列表, 缺失项为 None —— 调用方可直接按位对应。
+    单条 SQL: VALUES 列表 JOIN bp_quote_clean + DISTINCT ON 取每标的最新一行,
+    避免 N 次往返。
+    """
+    if not keys:
+        return []
+
+    pairs = sorted({(s, src) for s, src in keys if s and src})
+    if not pairs:
+        return [None] * len(keys)
+
+    placeholders = ", ".join(["(%s, %s)"] * len(pairs))
+    params: list = []
+    for s, src in pairs:
+        params.extend([s, src])
+
+    q = (
+        "SELECT DISTINCT ON (q.symbol, q.source) "
+        "q.symbol, q.source, q.trade_date, q.close "
+        "FROM bp_quote_clean q "
+        f"JOIN (VALUES {placeholders}) AS k(symbol, source) "
+        "  ON k.symbol = q.symbol AND k.source = q.source "
+    )
+    if on_date is not None:
+        q += "WHERE q.trade_date <= %s "
+        params.append(on_date)
+    q += "ORDER BY q.symbol, q.source, q.trade_date DESC"
+
+    with conn.cursor() as cur:
+        cur.execute(q, tuple(params))
+        rows = cur.fetchall()
+
+    found: dict[tuple[str, str], dict] = {}
+    for r in rows:
+        found[(r[0], r[1])] = {
+            "symbol": r[0],
+            "source": r[1],
+            "date": r[2].isoformat(),
+            "close": round(float(r[3]), 4),
+        }
+    return [found.get((s, src)) for s, src in keys]
+
+
 def save_deal_valuation(
     conn: psycopg.Connection,
     deal_id: int,

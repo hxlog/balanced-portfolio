@@ -12,15 +12,28 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { useIsMobile } from "@/components/ui/use-mobile";
+import {
+  LOT_SIZE,
+  applyShares,
+  computeFees,
+  computeLines,
+  computeTotals,
+  defaultCurrentByPrev,
+  targetAmounts,
+  type CalcRow,
+  type Rates,
+} from "@/lib/rebalance-calc";
 
-/** 调仓计算器的一行: 目标权重来自当日最优化结果, 金额由用户输入。 */
-export type CalcRow = {
-  key: string;
-  name: string;
-  /** 当天最优目标权重 (0~1) */
-  targetWeight: number;
-};
+export type { CalcRow };
 
 function yuan(x: number): string {
   if (!Number.isFinite(x)) return "-";
@@ -35,142 +48,205 @@ function pct(x: number | null | undefined, digits = 2): string {
   return `${(x * 100).toFixed(digits)}%`;
 }
 
+const AMOUNT_STORAGE_PREFIX = "bp_calc_amount:";
+
+function readStoredAmount(key: string): number | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(AMOUNT_STORAGE_PREFIX + key);
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null; // 隐私模式/存储被禁
+  }
+}
+
+function writeStoredAmount(key: string, value: number): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(AMOUNT_STORAGE_PREFIX + key, String(value));
+  } catch {
+    /* 忽略 */
+  }
+}
+
 /**
- * 调仓计算器: 输入当前持仓金额 → 自动换算为组合权重 → 与当天最优目标权重对比,
- * 输出每只标的的买卖金额(差值)与总调仓金额。
+ * 调仓计算器: 输入当前持仓与计划持仓金额 → 逐行算出买入/卖出金额与 ETF 可成交份额。
  *
- * 隐私: 全部在浏览器本地计算, 金额不上传、不存储、不进任何请求。
+ * 金额算法全部来自 `@/lib/rebalance-calc`(纯函数、已单测), 本组件只负责渲染与输入。
+ * 隐私: 金额在浏览器本地计算不上传; 仅按标的代码取最新收盘价(该请求不含金额)。
  */
 export function RebalanceCalculatorDialog({
   rows,
   asOf,
+  defaultAmount = 1_000_000,
+  currentByKey,
+  priceByKey,
+  rates,
+  storageKey,
 }: {
   rows: CalcRow[];
   /** 目标权重对应的日期, 用于标题与说明 */
   asOf?: string;
+  /** 拟投资金额初值 */
+  defaultAmount?: number;
+  /** 「当前持仓」的预设值(最近交易日模式传入 actual_holdings 市值) */
+  currentByKey?: Record<string, number>;
+  /** 每标的清洗收盘价(CNY); 缺失则不显示份额 */
+  priceByKey: Record<string, number>;
+  /** 组合自身的三项费率 */
+  rates: Rates;
+  /** localStorage 键(按组合区分) */
+  storageKey: string;
 }) {
+  const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
+  const [amount, setAmount] = useState<number>(() => readStoredAmount(storageKey) ?? defaultAmount);
   // key -> 用户输入的金额字符串(保留原始文本以便输入过程中的中间态)
-  const [amounts, setAmounts] = useState<Record<string, string>>({});
+  const [current, setCurrent] = useState<Record<string, string>>({});
+  const [plan, setPlan] = useState<Record<string, string>>({});
 
-  const hasNegative = useMemo(
-    () => Object.values(amounts).some((v) => v.trim() !== "" && Number(v) < 0),
-    [amounts],
-  );
+  // 打开时(或行集/预设变化时)把「当前持仓」「计划持仓」初始化到默认值
+  const initKey = `${rows.map((r) => r.key).join("|")}|${currentByKey ? "actual" : "prev"}|${amount}`;
+  const [initSig, setInitSig] = useState<string>("");
 
-  const total = useMemo(
-    () =>
-      rows.reduce((s, r) => {
-        const n = Number(amounts[r.key]);
-        return s + (Number.isFinite(n) && n > 0 ? n : 0);
-      }, 0),
-    [rows, amounts],
-  );
-
-  const computed = useMemo(
-    () =>
-      rows.map((r) => {
-        const raw = amounts[r.key];
-        const amt = raw != null && raw.trim() !== "" ? Number(raw) : null;
-        const valid = amt != null && Number.isFinite(amt) && amt > 0;
-        // 当前权重: 金额 / 总金额
-        const curWeight = valid && total > 0 ? amt / total : null;
-        // 差值: (目标权重 - 当前权重) × 总金额
-        const diff =
-          curWeight != null ? (r.targetWeight - curWeight) * total : null;
-        return { ...r, amt: valid ? amt : null, curWeight, diff };
-      }),
-    [rows, amounts, total],
-  );
-
-  /**
-   * 舍入噪声下限: 金额只能取整数元, 每行残差 ≤ 0.5 元 → n 行合计残差下限约 n/2 元。
-   * 即使完全按目标权重填, 17 行也会算出「¥2」这种纯噪声 —— 若只在汇总处归零, 明细里
-   * 仍会单独显示「买入 ¥2」, 表头与明细再次自相矛盾。故**汇总与逐行共用同一下限**:
-   * 低于总额 0.01%(且不足 1 元)的差额一律视为 0。
-   */
-  const noiseFloor = useMemo(() => Math.max(1, total * 0.0001), [total]);
-
-  const totalTurnover = useMemo(() => {
-    const raw = computed.reduce(
-      (s, r) => s + (r.diff == null ? 0 : Math.abs(r.diff)),
-      0,
-    );
-    return raw < noiseFloor ? 0 : raw;
-  }, [computed, noiseFloor]);
-
-  const anyFilled = computed.some((r) => r.amt != null);
-
-  /**
-   * 按目标权重 × 总额度快速填充, 方便用户先看一个示例。
-   *
-   * 逐行四舍五入会让各行之和偏离总额(如 17 行各差 0.5 元 → 汇总差 2 元), 而换算权重
-   * = 金额/总额 是逐行算的, 于是"完全按目标权重填"反而显示出一笔凭空出现的调仓额。
-   * 故把舍入残差一次性补到权重最大的那一行(对它的权重影响最小), 使 Σ金额 === 总额。
-   * 另: 后端权重按 6 位小数落库, Σtarget_weights 通常为 0.999999 而非严格 1, 逐行
-   * 四舍五入后会残留 ≤ 0.5 元的差额 —— 归入同一处残差修正, 一并消掉。
-   */
-  const fillByTarget = () => {
-    const base = total > 0 ? total : 1_000_000;
-    const rounded = rows.map((r) => ({ key: r.key, amt: Math.round(r.targetWeight * base) }));
-    const drift = Math.round(base) - rounded.reduce((s, x) => s + x.amt, 0);
-    if (drift !== 0 && rounded.length > 0) {
-      // 权重最大(金额最大)的行吸收残差, 相对误差最小
-      let big = 0;
-      rounded.forEach((x, i) => {
-        if (x.amt > rounded[big].amt) big = i;
-      });
-      rounded[big].amt = Math.max(0, rounded[big].amt + drift);
+  const currentAmounts = useMemo<Record<string, number>>(() => {
+    const out: Record<string, number> = {};
+    for (const r of rows) {
+      const raw = current[r.key];
+      out[r.key] = raw == null || raw.trim() === "" ? 0 : Number(raw);
     }
-    const next: Record<string, string> = {};
-    rounded.forEach((x) => {
-      next[x.key] = String(x.amt);
-    });
-    setAmounts(next);
+    return out;
+  }, [rows, current]);
+
+  const planAmounts = useMemo<Record<string, number>>(() => {
+    const out: Record<string, number> = {};
+    for (const r of rows) {
+      const raw = plan[r.key];
+      out[r.key] = raw == null || raw.trim() === "" ? 0 : Number(raw);
+    }
+    return out;
+  }, [rows, plan]);
+
+  const lines = useMemo(
+    () => applyShares(computeLines(rows, currentAmounts, planAmounts), rows, priceByKey),
+    [rows, currentAmounts, planAmounts, priceByKey],
+  );
+  const totals = useMemo(() => computeTotals(lines), [lines]);
+  const fees = useMemo(
+    () => computeFees(totals.buyTotal, totals.sellTotal, rates),
+    [totals, rates],
+  );
+  // 手数合计 = Σ 各行取整后可成交份额 / 100(仅 ETF 有份额)
+  const lots = useMemo(() => {
+    let buy = 0;
+    let sell = 0;
+    for (const l of lines) {
+      if (l.buyShares != null) buy += l.buyShares;
+      if (l.sellShares != null) sell += l.sellShares;
+    }
+    return { buy: buy / LOT_SIZE, sell: sell / LOT_SIZE };
+  }, [lines]);
+  const hasAnyPrice = Object.values(priceByKey).some((p) => Number.isFinite(p) && p > 0);
+  /**
+   * 提示的触发条件不是「一个价都没取到」, 而是「有 ETF 行拿不到价」。
+   *
+   * `applyShares` 只给 `category === "etf"` 且价格有效的行填份额, 所以份额列缺的成因
+   * 精确地是「某个 ETF 行没有价」——它可能是全站取价失败, 也可能只是这一只标的新股/停牌,
+   * 而后一种情形下 `hasAnyPrice` 仍为真, 用 `!hasAnyPrice` 当门控会漏掉提示。
+   * 反过来, 纯指数/商品组合本就没有份额列, 若按「有行 + 无价」提示, 就会告诉用户
+   * 一个从未存在过的东西不可用 —— 故也不能用 `rows.length > 0` 兜底。
+   */
+  const showShareHint = rows.some(
+    (r) => r.category === "etf" && !(Number.isFinite(priceByKey[r.key]) && priceByKey[r.key] > 0),
+  );
+
+  const applyDefaults = () => {
+    const cur = currentByKey ?? defaultCurrentByPrev(rows, amount);
+    const tgt = targetAmounts(rows, amount);
+    setCurrent(Object.fromEntries(Object.entries(cur).map(([k, v]) => [k, String(v)])));
+    setPlan(Object.fromEntries(rows.map((r) => [r.key, String(tgt[r.key] ?? 0)])));
   };
 
-  const reset = () => setAmounts({});
-
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        setOpen(v);
+        // 打开时按默认值填充一次; 关闭时保留用户输入, 便于再次打开继续编辑
+        if (v && initSig !== initKey) {
+          applyDefaults();
+          setInitSig(initKey);
+        }
+      }}
+    >
       <DialogTrigger asChild>
         <Button variant="outline" size="sm" className="gap-1.5">
           <Calculator className="h-3.5 w-3.5" />
           调仓计算器
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-4xl">
-        <DialogHeader>
+      <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-5xl max-h-[85vh] flex flex-col gap-3 overflow-hidden">
+        <DialogHeader className="shrink-0">
           <DialogTitle>调仓计算器</DialogTitle>
           <DialogDescription>
             输入当前持仓金额，按{asOf ? ` ${asOf} ` : "当日"}最优化权重自动算出每只标的的买卖金额
-            {totalTurnover > 0 && (
+            {totals.turnover > 0 && (
               <>
                 {" "}
                 · 总调仓金额{" "}
                 <span className="font-mono font-semibold text-foreground">
-                  ¥{yuan(totalTurnover)}
+                  ¥{yuan(totals.turnover)}
                 </span>
               </>
             )}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="shrink-0 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Lock className="h-3.5 w-3.5" />
-            全部在您的浏览器本地计算，金额不会上传服务器、不会被存储。
+            <Lock className="h-3.5 w-3.5 shrink-0" />
+            金额在您的浏览器本地计算，不会上传服务器；仅按标的代码查询最新收盘价以换算份额。
+            {showShareHint && (
+              <span className="text-xs text-muted-foreground">（未取到价格，份额暂不可用）</span>
+            )}
           </div>
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" className="gap-1.5" onClick={fillByTarget}>
-              按目标权重填充示例
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              拟投资金额
+              <Input
+                type="number"
+                min={0}
+                step={10_000}
+                inputMode="numeric"
+                className="h-8 w-32 text-right font-mono"
+                value={amount}
+                aria-label="拟投资金额"
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  const next = Number.isFinite(v) && v > 0 ? v : 0;
+                  setAmount(next);
+                  writeStoredAmount(storageKey, next);
+                  // 金额变化即自动重算计划持仓
+                  const tgt = targetAmounts(rows, next);
+                  setPlan(Object.fromEntries(rows.map((r) => [r.key, String(tgt[r.key] ?? 0)])));
+                }}
+              />
+              元
+            </label>
+            <Button variant="ghost" size="sm" className="gap-1.5" onClick={applyDefaults}>
+              按目标权重填充
             </Button>
             <Button
               variant="ghost"
               size="sm"
               className="gap-1.5"
-              onClick={reset}
-              disabled={!anyFilled}
+              onClick={() => {
+                setCurrent({});
+                setPlan({});
+              }}
+              disabled={lines.length === 0}
             >
               <RotateCcw className="h-3.5 w-3.5" />
               清空
@@ -178,95 +254,241 @@ export function RebalanceCalculatorDialog({
           </div>
         </div>
 
-        <div className="max-h-[52vh] overflow-auto min-w-0">
-          <Table className="min-w-[720px]">
-            <TableHeader>
-              <TableRow>
-                <TableHead className="pl-0">标的</TableHead>
-                <TableHead className="text-right whitespace-nowrap">
-                  最优化权重
-                </TableHead>
-                <TableHead className="text-right whitespace-nowrap">
-                  当前持仓金额（元）
-                </TableHead>
-                <TableHead className="text-right whitespace-nowrap">
-                  自动换算权重
-                </TableHead>
-                <TableHead className="text-right pr-0 whitespace-nowrap">
-                  差值买卖金额
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {computed.map((r) => (
-                <TableRow key={r.key}>
-                  <TableCell className="pl-0 font-medium">{r.name}</TableCell>
-                  <TableCell className="text-right font-mono text-muted-foreground">
-                    {pct(r.targetWeight)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Input
-                      type="number"
-                      min={0}
-                      step={100}
-                      inputMode="numeric"
-                      className="ml-auto h-8 w-36 text-right font-mono"
-                      placeholder="0"
-                      aria-label={`${r.name} 当前持仓金额`}
-                      value={amounts[r.key] ?? ""}
-                      onChange={(e) =>
-                        setAmounts((prev) => ({
-                          ...prev,
-                          [r.key]: e.target.value,
-                        }))
-                      }
-                    />
-                  </TableCell>
-                  <TableCell className="text-right font-mono text-muted-foreground">
-                    {r.curWeight != null ? pct(r.curWeight) : "—"}
-                  </TableCell>
-                  <TableCell
-                    className={`text-right font-mono pr-0 ${r.diff == null ? "text-muted-foreground" : r.diff > 0 ? "text-up" : r.diff < 0 ? "text-down" : "text-muted-foreground"}`}
-                  >
-                    {r.diff == null
-                      ? "—"
-                      : Math.abs(r.diff) < noiseFloor
-                        ? "-"
-                        : `${r.diff > 0 ? "买入" : "卖出"} ¥${yuan(Math.abs(r.diff))}`}
-                  </TableCell>
+        {isMobile ? (
+          <div className="flex-1 min-h-0 overflow-auto space-y-2">
+            {lines.map((l) => {
+              const r = rows.find((x) => x.key === l.key)!;
+              return (
+                <div key={l.key} className="rounded-lg border border-border p-3 space-y-2">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-sm font-medium truncate">{r.name}</span>
+                    <span className="text-xs text-muted-foreground font-mono shrink-0">
+                      {r.symbol}
+                    </span>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    最优化权重{" "}
+                    <span className="font-mono text-foreground">{pct(l.targetWeight)}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="space-y-1">
+                      <span className="text-xs text-muted-foreground">当前持仓（元）</span>
+                      <Input
+                        type="number"
+                        min={0}
+                        step={100}
+                        inputMode="numeric"
+                        className="h-9 w-full text-right font-mono"
+                        placeholder="0"
+                        aria-label={`${r.name} 当前持仓金额`}
+                        value={current[l.key] ?? ""}
+                        onChange={(e) => setCurrent((p) => ({ ...p, [l.key]: e.target.value }))}
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-xs text-muted-foreground">计划持仓（元）</span>
+                      <Input
+                        type="number"
+                        min={0}
+                        step={100}
+                        inputMode="numeric"
+                        className="h-9 w-full text-right font-mono"
+                        placeholder="0"
+                        aria-label={`${r.name} 计划持仓金额`}
+                        value={plan[l.key] ?? ""}
+                        onChange={(e) => setPlan((p) => ({ ...p, [l.key]: e.target.value }))}
+                      />
+                    </label>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-2 pt-1 border-t border-border text-sm">
+                    {l.buy > 0.5 ? (
+                      <span className="font-mono text-success">买入 ¥{yuan(l.buy)}</span>
+                    ) : l.sell > 0.5 ? (
+                      <span className="font-mono text-warning">卖出 ¥{yuan(l.sell)}</span>
+                    ) : (
+                      <span className="text-muted-foreground">无需调仓</span>
+                    )}
+                    {l.buyShares != null && l.buyShares > 0 && (
+                      <span
+                        className="text-xs text-muted-foreground font-mono"
+                        title={`${l.buyShares / LOT_SIZE} 手`}
+                      >
+                        {l.buyShares.toLocaleString("zh-CN")} 份
+                      </span>
+                    )}
+                    {l.sellShares != null && l.sellShares > 0 && (
+                      <span
+                        className="text-xs text-muted-foreground font-mono"
+                        title={`${l.sellShares / LOT_SIZE} 手`}
+                      >
+                        {l.sellShares.toLocaleString("zh-CN")} 份
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="flex-1 min-h-0 overflow-auto">
+            <Table className="min-w-[880px]">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="pl-0">标的</TableHead>
+                  <TableHead className="text-right whitespace-nowrap">最优化权重</TableHead>
+                  <TableHead className="text-right whitespace-nowrap">当前持仓（元）</TableHead>
+                  <TableHead className="text-right whitespace-nowrap">计划持仓（元）</TableHead>
+                  <TableHead className="text-right whitespace-nowrap">买入</TableHead>
+                  <TableHead className="text-right whitespace-nowrap">卖出</TableHead>
+                  {hasAnyPrice && (
+                    <TableHead className="text-right pr-0 whitespace-nowrap">份额</TableHead>
+                  )}
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+              </TableHeader>
+              <TableBody>
+                {lines.map((l) => {
+                  const r = rows.find((x) => x.key === l.key)!;
+                  return (
+                    <TableRow key={l.key}>
+                      <TableCell className="pl-0 font-medium">
+                        <span className="block truncate max-w-[12rem]">{r.name}</span>
+                        <span className="block text-xs text-muted-foreground font-mono">
+                          {r.symbol}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-muted-foreground">
+                        {pct(l.targetWeight)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Input
+                          type="number"
+                          min={0}
+                          step={100}
+                          inputMode="numeric"
+                          className="ml-auto h-8 w-26 text-right font-mono"
+                          placeholder="0"
+                          aria-label={`${r.name} 当前持仓金额`}
+                          value={current[l.key] ?? ""}
+                          onChange={(e) => setCurrent((p) => ({ ...p, [l.key]: e.target.value }))}
+                        />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Input
+                          type="number"
+                          min={0}
+                          step={100}
+                          inputMode="numeric"
+                          className="ml-auto h-8 w-26 text-right font-mono"
+                          placeholder="0"
+                          aria-label={`${r.name} 计划持仓金额`}
+                          value={plan[l.key] ?? ""}
+                          onChange={(e) => setPlan((p) => ({ ...p, [l.key]: e.target.value }))}
+                        />
+                      </TableCell>
+                      <TableCell className="text-right font-mono whitespace-nowrap">
+                        {l.buy > 0.5 ? (
+                          <span className="text-success">买入 ¥{yuan(l.buy)}</span>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right font-mono whitespace-nowrap">
+                        {l.sell > 0.5 ? (
+                          <span className="text-warning">卖出 ¥{yuan(l.sell)}</span>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </TableCell>
+                      {hasAnyPrice && (
+                        <TableCell className="text-right pr-0 font-mono text-xs whitespace-nowrap text-muted-foreground">
+                          {l.buyShares ? (
+                            <span title={`${l.buyShares / LOT_SIZE} 手`}>
+                              买 {l.buyShares.toLocaleString("zh-CN")} 份
+                            </span>
+                          ) : null}
+                          {l.buyShares && l.sellShares ? " / " : ""}
+                          {l.sellShares ? (
+                            <span title={`${l.sellShares / LOT_SIZE} 手`}>
+                              卖 {l.sellShares.toLocaleString("zh-CN")} 份
+                            </span>
+                          ) : null}
+                          {!l.buyShares && !l.sellShares ? "-" : ""}
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        )}
 
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3 text-sm">
-          <span className="text-muted-foreground">
-            当前组合总金额{" "}
-            <span className="font-mono text-foreground">
-              ¥{yuan(total)}
-            </span>
-            {hasNegative && (
-              <span className="ml-2 text-destructive">
-                金额请填非负数
+        <div className="shrink-0 rounded-lg border border-border bg-muted/20 p-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-sm">
+            <span className="text-muted-foreground">
+              交易费用
+              <span className="ml-2 text-xs">
+                （佣金 {pct(rates.feeRate, 3)} / 滑点 {pct(rates.slippageRate, 3)} / 印花税{" "}
+                {pct(rates.stampDutyRate, 3)}，来自组合参数）
               </span>
-            )}
-          </span>
-          <span className="text-muted-foreground">
-            总调仓金额{" "}
+            </span>
             <span className="font-mono font-semibold text-foreground">
-              ¥{yuan(totalTurnover)}
+              合计 ¥{yuan(fees.total)}
             </span>
-            <span className="ml-1 text-xs">
-              （买卖绝对值合计，不含交易成本）
-            </span>
-          </span>
+          </div>
+          <dl className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs">
+            <div className="flex justify-between gap-2">
+              <dt className="text-muted-foreground">预计佣金</dt>
+              <dd className="font-mono">¥{yuan(fees.commission)}</dd>
+            </div>
+            <div className="flex justify-between gap-2">
+              <dt className="text-muted-foreground">滑点成本</dt>
+              <dd className="font-mono">¥{yuan(fees.slippage)}</dd>
+            </div>
+            <div className="flex justify-between gap-2">
+              <dt className="text-muted-foreground">印花税</dt>
+              <dd className="font-mono">¥{yuan(fees.stampDuty)}</dd>
+            </div>
+            <div className="flex justify-between gap-2">
+              <dt className="text-muted-foreground">取整剩余现金</dt>
+              <dd className="font-mono">¥{yuan(totals.remainder)}</dd>
+            </div>
+            <div className="flex justify-between gap-2">
+              <dt className="text-muted-foreground">买入手数合计</dt>
+              <dd className="font-mono">{lots.buy.toLocaleString("zh-CN")} 手</dd>
+            </div>
+            <div className="flex justify-between gap-2">
+              <dt className="text-muted-foreground">卖出手数合计</dt>
+              <dd className="font-mono">{lots.sell.toLocaleString("zh-CN")} 手</dd>
+            </div>
+          </dl>
         </div>
 
-        <p className="text-xs text-muted-foreground leading-relaxed">
-          说明：换算权重 = 该标的金额 ÷ 组合总金额；差值 = (最优化权重 − 换算权重) × 组合总金额，
-          正数=需买入、负数=需卖出。结果仅供执行参考，未计入申赎费、佣金、滑点与最小交易单位，
-          实际下单请按券商规则取整。
+        <div className="shrink-0 border-t pt-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+            <span className="text-muted-foreground">
+              买入合计{" "}
+              <span className="font-mono text-foreground">¥{yuan(totals.buyTotal)}</span>
+              <span className="mx-2">·</span>
+              卖出合计{" "}
+              <span className="font-mono text-foreground">¥{yuan(totals.sellTotal)}</span>
+              <span className="mx-2">·</span>
+              总调仓金额{" "}
+              <span className="font-mono font-semibold text-foreground">
+                ¥{yuan(totals.turnover)}
+              </span>
+            </span>
+            <Button variant="outline" size="sm" onClick={() => setOpen(false)}>
+              关闭
+            </Button>
+          </div>
+        </div>
+
+        <p className="shrink-0 text-xs text-muted-foreground leading-relaxed">
+          说明：计划持仓 = 最优化权重 × 拟投资金额；买入 = max(0, 计划 − 当前)，卖出 =
+          max(0, 当前 − 计划)。ETF 份额按 100 份/手向下取整，未成交的零头计入「取整剩余现金」。
+          交易费用按组合自身费率参数计算，与回测成本口径一致（佣金/滑点双边、印花税仅卖出）。
+          结果仅供执行参考。
         </p>
       </DialogContent>
     </Dialog>

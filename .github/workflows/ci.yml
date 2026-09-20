@@ -38,4 +38,6 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci --legacy-peer-deps
+      - name: 前端单元测试
+        run: npm test
       - run: npm run build

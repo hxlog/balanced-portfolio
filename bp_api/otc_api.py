@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date
+from typing import Annotated
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
 
@@ -24,6 +25,8 @@ from .schemas_otc import (
 )
 
 logger = logging.getLogger(__name__)
+
+MAX_QUOTE_KEYS = 64
 
 
 def _dispatch_otc(task_id: str, spec: dict, deal_id: int | None, background_tasks: BackgroundTasks) -> None:
@@ -160,6 +163,45 @@ def register_routes(app: FastAPI) -> None:
         if not row:
             raise HTTPException(404, "未找到该日行情")
         return row
+
+    # ---------------------------------------------------------------
+    # 批量最新收盘价 (公开; 供调仓计算器把金额换算成份额)
+    # ---------------------------------------------------------------
+    @app.get("/api/quotes/latest")
+    def quotes_latest(
+        keys: str = Query(..., description="symbol@source, 逗号分隔, 最多 64 个"),
+        # alias 与 otc_spot 同风格; 用 Annotated 是为了让直接调用 endpoint 函数
+        # (本仓测路由的既有约定, 不走 ASGI) 时拿到真值而非 Query 对象。
+        date_str: Annotated[str | None, Query(alias="date")] = None,
+    ) -> dict:
+        """批量最新清洗收盘价(CNY 口径, 与回测/换算金额同币种)。
+
+        供前端调仓计算器把买卖金额换算成 ETF 份额使用。公开端点, 与 /api/otc/spot 同级。
+        """
+        on_date = None
+        if date_str:
+            try:
+                on_date = date.fromisoformat(date_str)
+            except ValueError as exc:
+                raise HTTPException(400, "date 须为 YYYY-MM-DD") from exc
+
+        parsed: list[tuple[str, str]] = []
+        for part in keys.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            sym, sep, src = part.rpartition("@")
+            if not sep or not sym or not src:
+                raise HTTPException(400, f"keys 须为 symbol@source 形式: {part}")
+            parsed.append((sym, src))
+        if not parsed:
+            raise HTTPException(400, "keys 不能为空")
+        if len(parsed) > MAX_QUOTE_KEYS:
+            raise HTTPException(400, f"一次最多查询 {MAX_QUOTE_KEYS} 个标的")
+
+        with db.get_conn() as conn:
+            rows = rotc.latest_closes(conn, parsed, on_date=on_date)
+        return {"date": rows[0]["date"] if rows and rows[0] else None, "quotes": rows}
 
     # ---------------------------------------------------------------
     # 定价 (异步; 需登录)
