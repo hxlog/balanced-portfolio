@@ -156,9 +156,12 @@ function signPct(x: number | null | undefined, digits = 2) {
 }
 
 /**
- * 金额(元)千分位显示 —— 与调仓计算器内的同名模块私有函数逐字一致(返回纯数字,
- * `¥` 由调用点补)。两处刻意各保留一份: 把格式化函数提进 `web/lib/` 会同时触碰
- * 两个已定稿文件的导出面, 收益不抵风险。
+ * 金额(元)千分位显示(返回纯数字, `¥` 由调用点补)。
+ *
+ * 与调仓计算器内的同名私有函数**刻意不同**: 那边用 `toLocaleString` 的
+ * `maximumFractionDigits: 0`(正数四舍五入, 负数向负无穷取整), 这边用 `Math.round`
+ * (负数对称为 0.5 远离零)。两处调用点的取值都非负, 今天结果一致; 但负数上会分叉
+ * (`-1.5` → 那边 `-2` / 这边 `-1`), 故不再声称二者逐字一致。
  */
 function yuan(x: number): string {
   if (!Number.isFinite(x)) return "-";
@@ -2532,7 +2535,7 @@ function PortfolioParamsCard({
     { label: "手续费", value: pct(portfolio.fee_rate ?? 0, 3) },
     { label: "滑点", value: pct(portfolio.slippage_rate ?? 0, 3) },
     { label: "印花税", value: pct(portfolio.stamp_duty_rate ?? 0, 3) },
-    { label: "成本口径", value: "单边换手（印花税仅卖出）" },
+    { label: "成本口径", value: "佣金/滑点双边，印花税仅卖出" },
   ];
   return (
     <Card id="params" className="scroll-mt-24">

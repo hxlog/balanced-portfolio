@@ -79,28 +79,40 @@ export type Rates = {
 /**
  * 计划持仓金额 = 权重 × 拟投资金额。
  *
- * 逐行四舍五入会让各行之和偏离拟投资金额(后端权重按 6 位小数落库, 往往
- * Σ权重 = 0.999999), 故把残差补到最后一行, 使 Σ 严格等于取整后的拟投资金额 ——
- * 否则「完全按目标权重填」反而会凭空多出一笔调仓额。
+ * 逐行四舍五入会让各行之和偏离整额(后端权重按 6 位小数落库, 往往 Σ权重 = 0.999999),
+ * 故把**舍入残差**补给权重最大的那一行, 使 Σ 严格等于 `round(Σ权重 × 拟投资金额)`。
  *
- * 权重先归一到 ≤1, 故 Σ 不超过拟投资金额对所有输入都成立(不只是后端产出的 Σ=1)。
+ * 两条边界(均有回归测试):
+ *
+ * - **残差不补给「排序最后」的行。** 调仓变动表按 |Δ| 升序排, 目标权重为 0 的清仓行
+ *   |Δ| = 上期权重, 常常排在最后。老实现把残差给它, 等于给一个目标为零的标的凭空造出
+ *   计划持仓 —— 实测 2024-09-30 期 `000510@cn_index_em`(目标 0.000000)被分到 ¥204,
+ *   于是它算出「卖出 673」而正确答案是清仓卖出 877, 少卖 23%, 用户照做会留下残仓。
+ *
+ * - **Σ权重 < 1 时不缩放。** 未分配的权重属于压根没出现在这张表里的标的(被噪声阈值
+ *   滤掉的残值行), 摊给任何一行都是无中生有。此时 Σ计划 = `round(Σ权重 × 金额)`。
+ *   只有 Σ权重 > 1(调用方传了未归一的权重)才按 `1/Σ` 缩回, 以免「买入合计」超过用户
+ *   自己填的拟投资金额。
  */
 export function targetAmounts(rows: CalcRow[], amount: number): Record<string, number> {
   const base = Math.round(safeAmount(amount));
   const out: Record<string, number> = {};
   if (rows.length === 0) return out;
-  // 权重先归一: 后端 optimizer 保证 Σw=1, 但本模块是导出的纯函数, 调用方可能传
-  // 未归一的子集(例如筛选后重归一失败)。不归一的话 clamp 掉的负残差会让 Σ 超过 base,
-  // 用户看到的「买入合计」会大于自己填的拟投资金额。
   const w = rows.map((r) => Math.max(0, Number.isFinite(r.targetWeight) ? r.targetWeight : 0));
   const sumW = w.reduce((s, x) => s + x, 0);
   const scale = sumW > 1 ? 1 / sumW : 1;
-  let acc = 0;
+  const scaled = w.map((x) => x * scale * base);
+  const rounded = scaled.map((x) => Math.round(x));
+  const residual = Math.round(sumW * scale * base) - rounded.reduce((s, x) => s + x, 0);
   rows.forEach((r, i) => {
-    const v = i === rows.length - 1 ? Math.max(0, base - acc) : Math.round(w[i] * scale * base);
-    out[r.key] = v;
-    acc += v;
+    out[r.key] = rounded[i];
   });
+  if (residual !== 0) {
+    // 补给权重最大的行(并列取首个): 它一定存在, 且残差相对它足够小, 不会把它压到负数。
+    let k = 0;
+    for (let i = 1; i < w.length; i++) if (w[i] > w[k]) k = i;
+    out[rows[k].key] = Math.max(0, out[rows[k].key] + residual);
+  }
   return out;
 }
 

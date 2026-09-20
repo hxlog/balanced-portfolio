@@ -43,6 +43,17 @@ function yuan(x: number): string {
   });
 }
 
+/** 分(2 位小数)显示 —— 费用分项用它, 保证「分项之和 == 合计」在屏幕上严格成立。 */
+function yuan2(x: number): string {
+  if (!Number.isFinite(x)) return "-";
+  return x.toFixed(2);
+}
+
+/** 按「分」取整。 */
+function toCents(x: number): number {
+  return Math.round(x * 100) / 100;
+}
+
 function pct(x: number | null | undefined, digits = 2): string {
   if (x === null || x === undefined || Number.isNaN(x)) return "-";
   return `${(x * 100).toFixed(digits)}%`;
@@ -134,10 +145,20 @@ export function RebalanceCalculatorDialog({
     [rows, currentAmounts, planAmounts, priceByKey],
   );
   const totals = useMemo(() => computeTotals(lines), [lines]);
-  const fees = useMemo(
-    () => computeFees(totals.buyTotal, totals.sellTotal, rates),
-    [totals, rates],
-  );
+  /**
+   * 费用先按「分」取整再求和 —— 合计是三个分项**显示值**之和, 而不是独立取整的精确值。
+   *
+   * 否则屏幕上的三个数相加与「合计」会差 ¥1(实测真实费率: 40+20+50=110 vs 合计 109),
+   * 用户手算对不上就会判断「费用算错了」。误差上界 ≤ ¥0.015, 远小于回测口径本身的
+   * 不确定性, 用可核对性换这点精度是划算的。
+   */
+  const fees = useMemo(() => {
+    const f = computeFees(totals.buyTotal, totals.sellTotal, rates);
+    const commission = toCents(f.commission);
+    const slippage = toCents(f.slippage);
+    const stampDuty = toCents(f.stampDuty);
+    return { commission, slippage, stampDuty, total: commission + slippage + stampDuty };
+  }, [totals, rates]);
   // 手数合计 = Σ 各行取整后可成交份额 / 100(仅 ETF 有份额)
   const lots = useMemo(() => {
     let buy = 0;
@@ -433,21 +454,23 @@ export function RebalanceCalculatorDialog({
               </span>
             </span>
             <span className="font-mono font-semibold text-foreground">
-              合计 ¥{yuan(fees.total)}
+              合计 ¥{yuan2(fees.total)}
             </span>
           </div>
+          {/* 分项按「分」两位小数显示: 逐项取整到元再相加会与精确值算出的合计差 ¥1
+              (实测真实费率下 40+20+50=110 vs 合计 109), 用户手算对不上会以为费率错了。 */}
           <dl className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs">
             <div className="flex justify-between gap-2">
               <dt className="text-muted-foreground">预计佣金</dt>
-              <dd className="font-mono">¥{yuan(fees.commission)}</dd>
+              <dd className="font-mono">¥{yuan2(fees.commission)}</dd>
             </div>
             <div className="flex justify-between gap-2">
               <dt className="text-muted-foreground">滑点成本</dt>
-              <dd className="font-mono">¥{yuan(fees.slippage)}</dd>
+              <dd className="font-mono">¥{yuan2(fees.slippage)}</dd>
             </div>
             <div className="flex justify-between gap-2">
               <dt className="text-muted-foreground">印花税</dt>
-              <dd className="font-mono">¥{yuan(fees.stampDuty)}</dd>
+              <dd className="font-mono">¥{yuan2(fees.stampDuty)}</dd>
             </div>
             <div className="flex justify-between gap-2">
               <dt className="text-muted-foreground">取整剩余现金</dt>
@@ -487,7 +510,8 @@ export function RebalanceCalculatorDialog({
         <p className="shrink-0 text-xs text-muted-foreground leading-relaxed">
           说明：计划持仓 = 最优化权重 × 拟投资金额；买入 = max(0, 计划 − 当前)，卖出 =
           max(0, 当前 − 计划)。ETF 份额按 100 份/手向下取整，未成交的零头计入「取整剩余现金」。
-          交易费用按组合自身费率参数计算，与回测成本口径一致（佣金/滑点双边、印花税仅卖出）。
+          交易费用是「计划口径」：按上表的买卖金额（取整前）估算，因此与实际成交额（取整后）
+          略有出入。费率取自组合自身参数，与回测成本口径一致（佣金/滑点双边、印花税仅卖出）。
           结果仅供执行参考。
         </p>
       </DialogContent>

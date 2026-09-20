@@ -39,7 +39,7 @@ describe("defaultCurrentByPrev", () => {
 });
 
 describe("targetAmounts", () => {
-  it("最后一行吸收舍入残差, Σ 严格等于拟投资金额", () => {
+  it("Σ 严格等于拟投资金额(残差补给权重最大的行)", () => {
     const uneven: CalcRow[] = [
       { key: "A", name: "甲", symbol: "A", source: "x", targetWeight: 1 / 3 },
       { key: "B", name: "乙", symbol: "B", source: "x", targetWeight: 1 / 3 },
@@ -48,10 +48,61 @@ describe("targetAmounts", () => {
     const got = targetAmounts(uneven, 1_000_000);
     const sum = got.A + got.B + got.C;
     expect(sum).toBe(1_000_000);
+    // 残差 +1 落在并列最大权重的首行(A), 而不是行集最后一行(C)
+    expect(got.A).toBe(333_334);
+    expect(got.C).toBe(333_333);
   });
 
   it("空行集返回空对象", () => {
     expect(targetAmounts([], 1_000_000)).toEqual({});
+  });
+
+  it("清仓行排在最后时不会分到残差 —— 真实事故 2024-09-30(e2e 回归)", () => {
+    // 调仓变动表按 |Δ| 升序排, 清仓行 |Δ| = 上期权重, 落于末尾。
+    // 老实现把残差给「最后一行」, 于是给目标权重为 0 的 000510 分到 ¥204 →
+    // 该行当前持仓 = 0.0877% × 100 万 = ¥877, 差额算出「卖出 673」,
+    // 而正确答案是清仓卖出 877, 少卖 ¥204(该笔的 23%)。
+    const rows: CalcRow[] = [
+      { key: "518880@etf_em", name: "黄金", symbol: "518880", source: "etf_em", targetWeight: 0.134123, prevWeight: 0.166571 },
+      { key: "511090@etf_em", name: "国债", symbol: "511090", source: "etf_em", targetWeight: 0.128018, prevWeight: 0.134506 },
+      { key: "511260@etf_em", name: "十年国债", symbol: "511260", source: "etf_em", targetWeight: 0.128018, prevWeight: 0.134447 },
+      { key: "000510@cn_index_em", name: "中证A500", symbol: "000510", source: "cn_index_em", targetWeight: 0, prevWeight: 0.000877 },
+    ];
+    const got = targetAmounts(rows, 1_000_000);
+    // 清仓行拿到的计划额必须是 0(目标权重为 0), 而不是被残差塞进去的正数
+    expect(got["000510@cn_index_em"]).toBe(0);
+    // Σ计划 = round(Σ权重 × 金额) —— Σ权重 < 1 时不放大, 未分配的权重属于表外标的
+    const sumW = 0.134123 + 0.128018 + 0.128018 + 0;
+    expect(Object.values(got).reduce((s, x) => s + x, 0)).toBe(Math.round(sumW * 1_000_000));
+    // 该行的买卖: 当前持仓 ¥877, 计划 0 → 全额卖出(旧实现只能卖出 673)
+    const lines = computeLines(rows, { "000510@cn_index_em": 877 }, got);
+    const close = lines.find((l) => l.key === "000510@cn_index_em")!;
+    expect(close.sell).toBe(877);
+    expect(close.buy).toBe(0);
+  });
+
+  it("Σ权重 < 1 时不摊派未分配权重给任何一行", () => {
+    // 真实调用路径里被保留的行几乎总是 Σ≈1(仅噪声行被 ZERO_EPS 归零),
+    // 但纯函数契约必须对任意输入成立: 12 行各 7% + 末行 3.12% → Σ=0.8712
+    const rows: CalcRow[] = [
+      ...Array.from({ length: 12 }, (_, i) => ({
+        key: `r${i}`, name: `r${i}`, symbol: `r${i}`, source: "x", targetWeight: 0.07,
+      })),
+      { key: "LAST", name: "末", symbol: "LAST", source: "x", targetWeight: 0.0312 },
+    ];
+    const got = targetAmounts(rows, 1_000_000);
+    // 首行严格等于 70,000(不因残差被放大), 末行严格等于 31,200
+    expect(got.r0).toBe(70_000);
+    expect(got.LAST).toBe(31_200);
+    expect(Object.values(got).reduce((s, x) => s + x, 0)).toBe(871_200);
+  });
+
+  it("单行行集按自身权重的 1/Σ 缩放(调用方传了未归一的权重)", () => {
+    // Σ=0.12 < 1 → 不缩放: 该行拿 round(0.12×100万)=120,000, 不是整额
+    const one: CalcRow[] = [
+      { key: "A", name: "甲", symbol: "A", source: "x", targetWeight: 0.12 },
+    ];
+    expect(targetAmounts(one, 1_000_000).A).toBe(120_000);
   });
 });
 

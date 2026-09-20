@@ -714,7 +714,7 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
                       />
                       <span className="text-sm text-muted-foreground">%</span>
                     </div>
-                    <p className="text-xs text-muted-foreground">按单边换手在调仓日扣除。</p>
+                    <p className="text-xs text-muted-foreground">买卖双边计费，调仓日按换手额扣除。</p>
                   </div>
                   <div className="space-y-1.5">
                     <label className="block text-sm font-medium">滑点</label>
