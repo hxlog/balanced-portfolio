@@ -39,7 +39,7 @@ describe("defaultCurrentByPrev", () => {
 });
 
 describe("targetAmounts", () => {
-  it("Σ 严格等于拟投资金额(残差补给权重最大的行)", () => {
+  it("Σ 严格等于拟投资金额(残差按最大余额法补, 并列取行序靠前者)", () => {
     const uneven: CalcRow[] = [
       { key: "A", name: "甲", symbol: "A", source: "x", targetWeight: 1 / 3 },
       { key: "B", name: "乙", symbol: "B", source: "x", targetWeight: 1 / 3 },
@@ -48,9 +48,69 @@ describe("targetAmounts", () => {
     const got = targetAmounts(uneven, 1_000_000);
     const sum = got.A + got.B + got.C;
     expect(sum).toBe(1_000_000);
-    // 残差 +1 落在并列最大权重的首行(A), 而不是行集最后一行(C)
+    // 三元小数部分并列(都是 0.333…), 补的那 1 元落在行序靠前的 A
     expect(got.A).toBe(333_334);
     expect(got.C).toBe(333_333);
+  });
+
+  it("小金额 × 多行不超发 —— Σ 恒 ≤ 用户填的金额(真实事故口径)", () => {
+    // 逐行四舍五入 + 残差塞单行的老实现: 20 行各 5% 配 ¥15, 每行 round(0.75)=1,
+    // Σ计划 = ¥19 > ¥15, 负残差被 max(0, …) 钳掉后无法回收。最大余额法下
+    // 15 行各分到 1 元、其余 5 行 0 元, Σ 严格 = 15。
+    const rows20: CalcRow[] = Array.from({ length: 20 }, (_, i) => ({
+      key: `r${i}`, name: `r${i}`, symbol: `r${i}`, source: "x", targetWeight: 0.05,
+    }));
+    for (const amt of [1, 5, 11, 15, 19, 20, 31, 100]) {
+      const got = targetAmounts(rows20, amt);
+      const sum = Object.values(got).reduce((s, x) => s + x, 0);
+      const sumW = rows20.reduce((s, r) => s + r.targetWeight, 0);
+      const scale = sumW > 1 ? 1 / sumW : 1;
+      // Σ计划 = round(Σ权重 × 金额) —— 归一后恰为金额本身
+      expect(sum).toBe(Math.round(sumW * scale * amt));
+      // 用户面不变式: 计划买入合计永不超过自己填的钱
+      expect(sum).toBeLessThanOrEqual(amt);
+    }
+    // 摊到 15 行: 每行 ≤ 1 元且只有 15 行非零
+    const got15 = targetAmounts(rows20, 15);
+    expect(Object.values(got15).filter((x) => x > 0).length).toBe(15);
+    expect(Math.max(...Object.values(got15))).toBe(1);
+  });
+
+  it("小金额 × 多行不超发 —— 60 行 1/60 配 ¥31 最差 +28 的老缺陷", () => {
+    const rows60: CalcRow[] = Array.from({ length: 60 }, (_, i) => ({
+      key: `r${i}`, name: `r${i}`, symbol: `r${i}`, source: "x", targetWeight: 1 / 60,
+    }));
+    const sumW = rows60.reduce((s, r) => s + r.targetWeight, 0);
+    const scale = sumW > 1 ? 1 / sumW : 1;
+    for (const amt of [31, 45, 58, 59, 60]) {
+      const got = targetAmounts(rows60, amt);
+      const sum = Object.values(got).reduce((s, x) => s + x, 0);
+      expect(sum).toBe(Math.round(sumW * scale * amt));
+      expect(sum).toBeLessThanOrEqual(amt);
+    }
+  });
+
+  it("小金额下零权重行仍分不到钱(清仓行不会被凑整塞进 1 元)", () => {
+    const rows: CalcRow[] = [
+      { key: "A", name: "甲", symbol: "A", source: "x", targetWeight: 0.5 },
+      { key: "B", name: "乙", symbol: "B", source: "x", targetWeight: 0.5 },
+      { key: "C", name: "丙", symbol: "C", source: "x", targetWeight: 0 },
+    ];
+    for (const amt of [1, 2, 3, 7, 11, 100]) {
+      const got = targetAmounts(rows, amt);
+      expect(got.C).toBe(0);
+      expect(got.A + got.B + got.C).toBe(amt);
+    }
+  });
+
+  it("余额相同时按行序补, 与输入顺序确定对应(不依赖排序稳定性)", () => {
+    const four: CalcRow[] = [0.25, 0.25, 0.25, 0.25].map((w, i) => ({
+      key: `r${i}`, name: `r${i}`, symbol: `r${i}`, source: "x", targetWeight: w,
+    }));
+    const got = targetAmounts(four, 1_000_001);
+    expect(got.r0 + got.r1 + got.r2 + got.r3).toBe(1_000_001);
+    expect(got.r0).toBe(250_001);
+    expect(got.r1).toBe(250_000);
   });
 
   it("空行集返回空对象", () => {

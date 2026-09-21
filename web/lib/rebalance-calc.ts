@@ -79,15 +79,24 @@ export type Rates = {
 /**
  * 计划持仓金额 = 权重 × 拟投资金额。
  *
- * 逐行四舍五入会让各行之和偏离整额(后端权重按 6 位小数落库, 往往 Σ权重 = 0.999999),
- * 故把**舍入残差**补给权重最大的那一行, 使 Σ 严格等于 `round(Σ权重 × 拟投资金额)`。
+ * 用**最大余额法**分摊: 先取各自的下取整, 再把不足的元按小数部分从大到小补 1 元,
+ * 直到 Σ 严格等于 `round(Σ权重 × 拟投资金额)`。逐行四舍五入会让各行之和偏离整额
+ * (后端权重按 6 位小数落库, 往往 Σ权重 = 0.999999)。
+ *
+ * 为什么不是「逐行四舍五入 + 把残差补给某一行」: 当目标额小于行数时(小金额 + 多行),
+ * 逐行四舍五入会把每行都拱到 ≥1, Σ 反而**超过**用户填的拟投资金额; 残差是负的, 塞给
+ * 单一行只会被 `max(0, …)` 钳掉, 缺口不会重新分配。实测 `amt=15` 配 20 行 5%: 旧实现
+ * Σ计划 = ¥19 > ¥15; `amt=11` 时最差超发 +8, `amt=31` 配 60 行最差 +28。最大余额法
+ * 从构造上保证 Σ === 目标额, 且负残差不存在。
  *
  * 两条边界(均有回归测试):
  *
- * - **残差不补给「排序最后」的行。** 调仓变动表按 |Δ| 升序排, 目标权重为 0 的清仓行
- *   |Δ| = 上期权重, 常常排在最后。老实现把残差给它, 等于给一个目标为零的标的凭空造出
- *   计划持仓 —— 实测 2024-09-30 期 `000510@cn_index_em`(目标 0.000000)被分到 ¥204,
- *   于是它算出「卖出 673」而正确答案是清仓卖出 877, 少卖 23%, 用户照做会留下残仓。
+ * - **零权重的行永远分不到钱。** 调仓变动表按 |Δ| 升序排, 目标权重为 0 的清仓行
+ *   |Δ| = 上期权重, 常常排在最后。老实现把残差补给「排序最后」的行, 等于给一个目标为零
+ *   的标的凭空造出计划持仓 —— 实测 2024-09-30 期 `000510@cn_index_em`(目标 0.000000)
+ *   被分到 ¥204, 于是它算出「卖出 673」而正确答案是清仓卖出 877, 少卖 23%, 用户照做
+ *   会留下残仓。最大余额法下零权重行的小数部分为 0, 排在有余额可分的行之后, 而待补
+ *   的元数恒 ≤ 小数部分 > 0 的行数, 故它拿不到任何一元。
  *
  * - **Σ权重 < 1 时不缩放。** 未分配的权重属于压根没出现在这张表里的标的(被噪声阈值
  *   滤掉的残值行), 摊给任何一行都是无中生有。此时 Σ计划 = `round(Σ权重 × 金额)`。
@@ -101,17 +110,23 @@ export function targetAmounts(rows: CalcRow[], amount: number): Record<string, n
   const w = rows.map((r) => Math.max(0, Number.isFinite(r.targetWeight) ? r.targetWeight : 0));
   const sumW = w.reduce((s, x) => s + x, 0);
   const scale = sumW > 1 ? 1 / sumW : 1;
-  const scaled = w.map((x) => x * scale * base);
-  const rounded = scaled.map((x) => Math.round(x));
-  const residual = Math.round(sumW * scale * base) - rounded.reduce((s, x) => s + x, 0);
-  rows.forEach((r, i) => {
-    out[r.key] = rounded[i];
+  const total = Math.round(sumW * scale * base);
+  const exact = w.map((x) => x * scale * base);
+  const floors = exact.map((x) => Math.floor(x));
+  let deficit = total - floors.reduce((s, x) => s + x, 0);
+  // 小数部分从大到小; 并列时按行序, 保证结果与输入顺序确定对应
+  const order = rows.map((_, i) => i).sort((a, b) => {
+    const fa = exact[a] - floors[a];
+    const fb = exact[b] - floors[b];
+    return fb - fa || a - b;
   });
-  if (residual !== 0) {
-    // 补给权重最大的行(并列取首个): 它一定存在, 且残差相对它足够小, 不会把它压到负数。
-    let k = 0;
-    for (let i = 1; i < w.length; i++) if (w[i] > w[k]) k = i;
-    out[rows[k].key] = Math.max(0, out[rows[k].key] + residual);
+  rows.forEach((r, i) => {
+    out[r.key] = floors[i];
+  });
+  for (const i of order) {
+    if (deficit <= 0) break;
+    out[rows[i].key] += 1;
+    deficit -= 1;
   }
   return out;
 }
