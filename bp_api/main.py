@@ -248,12 +248,23 @@ def reorder_portfolios(
     payload: ReorderPortfoliosIn,
     user: auth.UserContext = Depends(auth.require_user),
 ) -> dict:
+    """保存组合顺序。
+
+    权限: 示例组合(demo)的展示顺序是**全局**的(对匿名访客与所有用户生效),
+    因此只有超级管理员能调整; 普通用户只能排自己创建的非 demo 组合。
+    前端在非管理员视图里不展示 demo, 这里是服务端的第二道防线 —— 带上 demo id
+    直接 403, 避免「拖了没生效还提示成功」这种静默失败。
+    """
     if user.user_id is None:
         raise HTTPException(401, "需要登录")
     with db.get_conn() as conn:
-        repo.reorder_portfolios(conn, user.user_id, payload.ordered_ids, user.is_admin)
+        if not user.is_admin:
+            demo_ids = repo.filter_demo_ids(conn, payload.ordered_ids)
+            if demo_ids:
+                raise HTTPException(403, "示例组合的顺序仅管理员可调整")
+        result = repo.reorder_portfolios(conn, user.user_id, payload.ordered_ids, user.is_admin)
         conn.commit()
-    return {"ok": True}
+    return {"ok": True, **result}
 
 
 @app.post("/api/portfolios")

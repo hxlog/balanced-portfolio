@@ -88,6 +88,7 @@ import {
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { getChartTheme, withAlpha, type ChartTheme } from "@/lib/chart-theme";
+import { selectSortablePortfolios } from "@/lib/portfolio-order";
 import { useQueryClient } from "@tanstack/react-query";
 import { fetchResult, invalidatePortfolio, qk, useAssets } from "@/lib/queries";
 
@@ -896,6 +897,9 @@ function DashboardView({
   const otherPortfolios = portfolios.filter((p) => !p.is_demo);
   const selectValue = idParam ?? String(portfolio.portfolio_id);
   const allPortfolios = [...demoPortfolios, ...otherPortfolios];
+  // 与 ReorderDialog 的可排集合同口径(demo 仅管理员可排, 非 demo 仅 owner 可排):
+  // 入口只在「至少 2 个可排项」时出现, 免得管理员看着一堆别人的组合点进去却只有 1 项可拖。
+  const sortableCount = selectSortablePortfolios(portfolios, { isSuperAdmin, userId }).length;
   const canEdit =
     isSuperAdmin ||
     (!!userId && !portfolio.is_demo && portfolio.owner_user_id === userId);
@@ -1008,9 +1012,11 @@ function DashboardView({
                     )}
                   </SelectContent>
                 </Select>
-                {isWhitelisted && allPortfolios.length > 1 && (
+                {/* 排序入口只在「至少 2 个可排项」时出现(见 sortableCount):
+                    普通用户只排自己创建的非 demo 组合, demo 连显示都不显示。 */}
+                {isWhitelisted && sortableCount > 1 && (
                   <ReorderDialog
-                    portfolios={allPortfolios}
+                    portfolios={portfolios}
                     onSaved={onReloadPortfolios}
                   />
                 )}
@@ -2240,15 +2246,23 @@ function ReorderDialog({
   portfolios: PortfolioInfo[];
   onSaved: () => void;
 }) {
+  const { isSuperAdmin, userId } = useAuth();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<PortfolioInfo[]>([]);
   const [busy, setBusy] = useState(false);
   const [dragId, setDragId] = useState<number | null>(null);
   const [overId, setOverId] = useState<number | null>(null);
 
+  // 可排序的集合按身份切分 —— 判定与后端 PATCH /api/portfolios/order 同口径, 见
+  // web/lib/portfolio-order.ts(demo 仅管理员; 非 demo 仅 owner, 别人的连列都不列)。
+  const sortable = useMemo(
+    () => selectSortablePortfolios(portfolios, { isSuperAdmin, userId }),
+    [portfolios, isSuperAdmin, userId],
+  );
+
   useEffect(() => {
-    if (open) setItems(portfolios);
-  }, [open, portfolios]);
+    if (open) setItems(sortable);
+  }, [open, sortable]);
 
   const save = async () => {
     setBusy(true);
@@ -2294,9 +2308,16 @@ function ReorderDialog({
           <DialogTitle>调整组合顺序</DialogTitle>
         </DialogHeader>
         <p className="text-xs text-muted-foreground">
-          第一个组合将作为默认显示。拖拽调整顺序后点「保存顺序」。示例组合顺序为全局展示顺序（需管理员身份调整，对所有访客生效）；自建组合顺序仅影响你自己的下拉顺序。
+          {isSuperAdmin
+            ? "第一个组合将作为默认显示。拖拽调整顺序后点「保存顺序」。示例组合的顺序为全局展示顺序，对所有访客生效；自建组合顺序仅影响你自己的下拉顺序。"
+            : "第一个组合将作为默认显示。拖拽调整顺序后点「保存顺序」。这里只列出你自己创建的组合，顺序仅影响你自己的下拉顺序；示例组合由管理员统一维护。"}
         </p>
         <div className="max-h-[50vh] overflow-auto space-y-1.5 pr-1">
+          {items.length === 0 && (
+            <p className="text-xs text-muted-foreground py-3 text-center">
+              你还没有创建组合，暂无可排序项。
+            </p>
+          )}
           {items.map((p) => (
             <div
               key={p.portfolio_id}

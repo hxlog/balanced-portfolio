@@ -680,16 +680,34 @@ def list_portfolios(conn: psycopg.Connection, user_id: Optional[int] = None, is_
         return out
 
 
+def filter_demo_ids(conn: psycopg.Connection, ids: list[int]) -> list[int]:
+    """从给定 id 中挑出示例组合(demo)的 id —— 权限校验用(非管理员不得排 demo)。"""
+    if not ids:
+        return []
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT portfolio_id FROM bp_portfolio WHERE is_demo = TRUE AND portfolio_id = ANY(%s)",
+            (ids,),
+        )
+        return [r[0] for r in cur.fetchall()]
+
+
 def reorder_portfolios(
     conn: psycopg.Connection,
     user_id: int,
     ordered_ids: list[int],
     is_admin: bool = False,
-) -> None:
+) -> dict:
     """保存组合下拉顺序, 分两类:
-    - 示例组合(demo): 管理员调整的是**全局展示顺序**(写入 bp_portfolio.display_order,
-      对匿名访客/所有用户生效); 非管理员对 demo 的排序被忽略。
-    - 自建组合: 写入当前用户的 bp_user_portfolio_order(仅其可见的自建组合生效)。
+    - 示例组合(demo): **只有管理员**能调整, 且调整的是**全局展示顺序**(写入
+      bp_portfolio.display_order, 对匿名访客/所有用户生效); 非管理员传来的 demo id
+      一律忽略(并原样回报在 skipped 里, 不再假装成功)。
+    - 自建组合: 只有 owner 是自己且非 demo 的组合可排, 写入 bp_user_portfolio_order
+      (仅其可见的自建组合生效)。别人的组合同属 skipped —— 越权与不存在同样处理,
+      不泄露「该 id 存在但不属于你」。
+
+    返回 {"demo_applied": [...], "own_applied": [...], "skipped": [...]} 供调用方
+    如实反馈, 避免前端「拖了没生效却提示保存成功」。
     """
     if user_id is None:
         raise ValueError("缺少用户")
@@ -704,12 +722,25 @@ def reorder_portfolios(
             pid for pid in ordered_ids
             if any(r[0] == pid and not r[1] and r[2] == user_id for r in rows)
         ]
+        demo_ids: list[int] = []
         if is_admin:
             # 管理员额外可写全局 demo 顺序(对访客/所有用户生效)
             demo_ids = [
                 pid for pid in ordered_ids
                 if any(r[0] == pid and r[1] for r in rows)
             ]
+            # 全局顺序必须是**全量**的: 旧实现只对 payload 里出现的 demo 从 0 重新编号,
+            # 未出现的 demo 保留旧 display_order, 于是新旧编号交错, 顺序变得不可预测。
+            # 这里把未列出的 demo 按其现有相对次序追加到末尾, 保证任一 payload 都得到
+            # 一个确定的全局排列。
+            ordered_set = set(demo_ids)
+            cur.execute(
+                """SELECT portfolio_id FROM bp_portfolio
+                   WHERE is_demo = TRUE AND NOT (portfolio_id = ANY(%s))
+                   ORDER BY display_order ASC NULLS LAST, portfolio_id ASC""",
+                (demo_ids,),
+            )
+            demo_ids = demo_ids + [r[0] for r in cur.fetchall() if r[0] not in ordered_set]
             for order, pid in enumerate(demo_ids):
                 cur.execute(
                     "UPDATE bp_portfolio SET display_order=%s, updated_at=now() WHERE portfolio_id=%s AND is_demo=TRUE",
@@ -723,6 +754,12 @@ def reorder_portfolios(
                    DO UPDATE SET display_order = EXCLUDED.display_order, updated_at = now()""",
                 (user_id, pid, order),
             )
+    applied = set(own_ids) | set(demo_ids)
+    return {
+        "demo_applied": demo_ids if is_admin else [],
+        "own_applied": own_ids,
+        "skipped": [pid for pid in ordered_ids if pid not in applied],
+    }
 
 
 # ---------------------------------------------------------------------
