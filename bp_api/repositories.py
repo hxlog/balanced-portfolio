@@ -1637,15 +1637,43 @@ def upsert_asset_config(conn: psycopg.Connection, data) -> None:
 
 
 def asset_probe_ok(conn: psycopg.Connection, symbol: str, source: str) -> bool:
+    """保存资产的「先测试读取」门禁。
+
+    放行条件: 曾经 probe 过, 且结论是 ok(=读到了) 或 unreachable(=接口可达但本次
+    被反爬/限频挡住)。后者是本次新增的关键分支: 用户明知该品种用某个接口是通的,
+    只是当下拿不到全量日行情, 不该被永久卡住 —— 落库后由后台 ingest 补拉。
+    invalid(未知数据源 / 代码不存在) 与从未 probe(NULL) 仍然拦截。
+    """
     with conn.cursor() as cur:
         cur.execute(
-            """SELECT last_probe_ms, last_error
+            """SELECT COALESCE(last_probe_kind, ''),
+                      CASE WHEN last_probe_ms IS NOT NULL AND last_error IS NULL
+                           THEN 'ok' ELSE '' END AS legacy_verdict
                FROM bp_asset_data_status
                WHERE symbol=%s AND source=%s""",
             (symbol, source),
         )
         row = cur.fetchone()
-    return bool(row and row[0] is not None and row[1] is None)
+    if not row:
+        return False
+    kind, legacy = row[0], row[1]
+    # 兼容 49 号迁移前写入的旧行: 那时只有 last_probe_ms/last_error, 成功即 legacy_verdict='ok'。
+    # 迁移后新写入的行 last_probe_kind 恒非空, 走 kind 判据。
+    return kind in ("ok", "unreachable") or legacy == "ok"
+
+
+def asset_has_no_clean_data(conn: psycopg.Connection, symbol: str, source: str) -> bool:
+    """该资产在清洗表里是否一行数据都没有 —— 新加资产(或被限频卡住的资产)为 True。
+
+    用它来决定保存后要不要立刻排队补拉: 已有数据的资产(改名/换分类/换复权口径)
+    不该因为一次保存就把整段历史重拉一遍。
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM bp_quote_clean WHERE symbol=%s AND source=%s LIMIT 1",
+            (symbol, source),
+        )
+        return cur.fetchone() is None
 
 
 def soft_delete_asset(conn: psycopg.Connection, source: str, symbol: str) -> None:
@@ -1700,6 +1728,7 @@ def refresh_asset_status(
     probe_ms: Optional[int] = None,
     *,
     with_count: bool = False,
+    probe_kind: Optional[str] = None,
 ) -> None:
     """维护 bp_asset_data_status 单资产行。
 
@@ -1711,6 +1740,11 @@ def refresh_asset_status(
       既有行保留库中上次校准值(如 999 不被清零), 新行靠 DEFAULT 0。
     - with_count=True(数据推进后/管理端手动刷新): MAX+COUNT 一起查, 写回真实行数。
     last_success_at 的 COALESCE 语义(失败刷新不清空上次成功时间)两条分支一致。
+
+    probe_kind(49 号)同样用 COALESCE 保留: 它描述的是「(symbol, source) 这个接口能不能用」,
+    与资产改名/换分类无关。若改成直接赋值, 那么每次 ingest 收尾的 refresh_all_asset_status
+    (error=None, probe_kind=None)都会把 invalid 结论抹成 NULL, 门禁就被静默绕过了。
+    只有 probe 端点传了新的结论时才覆盖。
     """
     with conn.cursor() as cur:
         success_at = datetime.now(timezone.utc) if error is None else None
@@ -1728,8 +1762,8 @@ def refresh_asset_status(
             cur.execute(
                 """INSERT INTO bp_asset_data_status
                      (symbol, source, last_raw_date, last_clean_date, raw_rows, clean_rows,
-                      last_success_at, last_error, last_probe_ms)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                      last_success_at, last_error, last_probe_ms, last_probe_kind)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                    ON CONFLICT (symbol, source) DO UPDATE SET
                      last_raw_date=EXCLUDED.last_raw_date,
                      last_clean_date=EXCLUDED.last_clean_date,
@@ -1738,8 +1772,9 @@ def refresh_asset_status(
                      last_success_at=COALESCE(EXCLUDED.last_success_at, bp_asset_data_status.last_success_at),
                      last_error=EXCLUDED.last_error,
                      last_probe_ms=EXCLUDED.last_probe_ms,
+                     last_probe_kind=COALESCE(EXCLUDED.last_probe_kind, bp_asset_data_status.last_probe_kind),
                      updated_at=now()""",
-                (symbol, source, raw_date, clean_date, raw_rows or 0, clean_rows or 0, success_at, error, probe_ms),
+                (symbol, source, raw_date, clean_date, raw_rows or 0, clean_rows or 0, success_at, error, probe_ms, probe_kind),
             )
         else:
             cur.execute(
@@ -1755,16 +1790,17 @@ def refresh_asset_status(
             cur.execute(
                 """INSERT INTO bp_asset_data_status
                      (symbol, source, last_raw_date, last_clean_date,
-                      last_success_at, last_error, last_probe_ms)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s)
+                      last_success_at, last_error, last_probe_ms, last_probe_kind)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
                    ON CONFLICT (symbol, source) DO UPDATE SET
                      last_raw_date=EXCLUDED.last_raw_date,
                      last_clean_date=EXCLUDED.last_clean_date,
                      last_success_at=COALESCE(EXCLUDED.last_success_at, bp_asset_data_status.last_success_at),
                      last_error=EXCLUDED.last_error,
                      last_probe_ms=EXCLUDED.last_probe_ms,
+                     last_probe_kind=COALESCE(EXCLUDED.last_probe_kind, bp_asset_data_status.last_probe_kind),
                      updated_at=now()""",
-                (symbol, source, raw_date, clean_date, success_at, error, probe_ms),
+                (symbol, source, raw_date, clean_date, success_at, error, probe_ms, probe_kind),
             )
 
 

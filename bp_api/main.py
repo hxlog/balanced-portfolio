@@ -99,6 +99,23 @@ def _dispatch_backtest(task_id: str, portfolio_id: int, background_tasks: Backgr
         background_tasks.add_task(tasks.run_backtest_background, portfolio_id, settings, task_id)
 
 
+def _dispatch_asset_ingest(task_id: str, symbol: str, source: str, background_tasks: BackgroundTasks) -> None:
+    """事务提交后再派发单资产补拉任务(与 _dispatch_backtest 同一模式)。
+
+    走 Celery `bp_api.asset_ingest`; 无 Redis/worker 时降级为 FastAPI BackgroundTasks,
+    故本地 inline 模式同样能跑通「保存 → 后台补拉 → builder 可选」这条链。
+    """
+    celery_id = tasking.enqueue_task(
+        "bp_api.asset_ingest", {"task_id": task_id, "symbol": symbol, "source": source}
+    )
+    if celery_id:
+        with db.get_conn() as conn:
+            tasking.set_celery_id(conn, task_id, celery_id)
+            conn.commit()
+    else:
+        background_tasks.add_task(tasks.run_asset_ingest_background, symbol, source, task_id)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_pool(settings)
@@ -635,27 +652,60 @@ def recompute_all_portfolios(
 
 
 @app.post("/api/admin/assets")
-def upsert_admin_asset(payload: AssetAdminIn, _: auth.UserContext = Depends(auth.require_asset_editor)) -> dict:
+def upsert_admin_asset(
+    payload: AssetAdminIn,
+    background_tasks: BackgroundTasks,
+    _: auth.UserContext = Depends(auth.require_asset_editor),
+) -> dict:
+    task_id = None
     with db.get_conn() as conn:
         if not repo.asset_probe_ok(conn, payload.symbol, payload.source):
             raise HTTPException(400, "请先测试该投资品读取成功后再保存")
         repo.upsert_asset_config(conn, payload)
         repo.refresh_asset_status(conn, payload.symbol, payload.source)
+        # 「先测试成功再保存」的门禁允许 unreachable(接口可达但本次被反爬/限频挡住)通过,
+        # 那种情况下库里还没有任何行情 —— 保存成功后必须主动补拉, 否则用户以为加成功了,
+        # 实际上该标的在 builder 里永远是空数据。已有数据的资产(改名/换分类)不重复拉。
+        if repo.asset_has_no_clean_data(conn, payload.symbol, payload.source):
+            task_id = tasking.create_task(
+                conn,
+                "asset_ingest",
+                progress_total=1,
+                message=f"已排队拉取 {payload.name}（{payload.symbol}）历史行情",
+            )
         conn.commit()
-    return {"ok": True}
+    if task_id:
+        _dispatch_asset_ingest(task_id, payload.symbol, payload.source, background_tasks)
+    return {"ok": True, "task_id": task_id, "ingest_queued": task_id is not None}
 
 
 @app.patch("/api/admin/assets/{source}/{symbol}")
-def update_admin_asset(source: str, symbol: str, payload: AssetAdminIn, _: auth.UserContext = Depends(auth.require_asset_editor)) -> dict:
+def update_admin_asset(
+    source: str,
+    symbol: str,
+    payload: AssetAdminIn,
+    background_tasks: BackgroundTasks,
+    _: auth.UserContext = Depends(auth.require_asset_editor),
+) -> dict:
     payload.source = source
     payload.symbol = symbol
+    task_id = None
     with db.get_conn() as conn:
         if not repo.asset_probe_ok(conn, symbol, source):
             raise HTTPException(400, "请先测试该投资品读取成功后再保存")
         repo.upsert_asset_config(conn, payload)
         repo.refresh_asset_status(conn, symbol, source)
+        if repo.asset_has_no_clean_data(conn, symbol, source):
+            task_id = tasking.create_task(
+                conn,
+                "asset_ingest",
+                progress_total=1,
+                message=f"已排队拉取 {payload.name}（{symbol}）历史行情",
+            )
         conn.commit()
-    return {"ok": True}
+    if task_id:
+        _dispatch_asset_ingest(task_id, symbol, source, background_tasks)
+    return {"ok": True, "task_id": task_id, "ingest_queued": task_id is not None}
 
 
 @app.delete("/api/admin/assets/{source}/{symbol}")
@@ -693,6 +743,7 @@ def probe_admin_asset(
     start = today - timedelta(days=365)
     extra = dict(payload.extra_params) if payload else {}
     error = None
+    probe_kind = None
     rows = 0
     first_date = None
     last_date = None
@@ -714,17 +765,31 @@ def probe_admin_asset(
         if last_exc is not None:
             raise last_exc
         rows = int(len(df))
-        if rows > 0:
-            first_date = str(df["trade_date"].min())
-            last_date = str(df["trade_date"].max())
+        if rows == 0:
+            # 无降级链的源在「代码不存在」时会返回空表而不抛错 —— 这不是「可达」,
+            # 归为 invalid, 否则放行后会落库一个永远没有数据的死标的。
+            raise ValueError(f"该代码在源 {source} 下没有任何行情数据")
+        probe_kind = "ok"
+        first_date = str(df["trade_date"].min())
+        last_date = str(df["trade_date"].max())
     except Exception as exc:  # noqa: BLE001
         error = f"{type(exc).__name__}: {exc}"
+        # 关键分类: unreachable(反爬/限频/超时 → 允许保存, 后台补拉) vs invalid(真实错误 → 拦截)
+        from bp_ingest.sources import classify_probe_error
+
+        probe_kind = classify_probe_error(exc)
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     with db.get_conn() as conn:
-        repo.refresh_asset_status(conn, symbol, source, error=error, probe_ms=elapsed_ms)
+        repo.refresh_asset_status(
+            conn, symbol, source, error=error, probe_ms=elapsed_ms, probe_kind=probe_kind
+        )
         conn.commit()
     if error:
-        raise HTTPException(422, error)
+        # 422 供前端原样展示(数据源/代码/限频原因); 前端据 kind 判断能否「仍要保存」
+        raise HTTPException(
+            422,
+            detail={"message": error, "probe_kind": probe_kind, "can_save_anyway": probe_kind == "unreachable"},
+        )
     return {
         "ok": True,
         "symbol": symbol,
@@ -733,6 +798,7 @@ def probe_admin_asset(
         "first_date": first_date,
         "last_date": last_date,
         "elapsed_ms": elapsed_ms,
+        "probe_kind": probe_kind,
     }
 
 

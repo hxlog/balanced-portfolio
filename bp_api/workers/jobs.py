@@ -70,6 +70,22 @@ def run_ingest_all_job(self, task_id: str) -> dict:
         raise
 
 
+@celery_app.task(name="bp_api.asset_ingest", bind=True, max_retries=1)
+def run_asset_ingest_job(self, task_id: str, symbol: str, source: str) -> dict:
+    """单资产补拉: 保存新投资品后立即拉该标的的全量历史 + 清洗 + 状态校准。
+
+    与 bp_api.ingest_all 的区别是只处理一个 symbol(probe 被限频挡住的场景),
+    复用同一份实现在 bp_api.tasks, 避免 inline/Celery 两条路径行为漂移。
+    """
+    settings = load_settings()
+    db.init_pool(settings)
+    logger.info("Celery 单资产补拉开始 task_id=%s %s@%s", task_id, symbol, source)
+    from bp_api import tasks as api_tasks
+
+    api_tasks.run_asset_ingest_background(symbol, source, task_id)
+    return {"task_id": task_id, "symbol": symbol, "source": source}
+
+
 @celery_app.task(name="bp_api.price_otc", bind=True, max_retries=0)
 def run_otc_price_job(self, task_id: str, spec: dict, deal_id: int | None = None) -> dict:
     """场外衍生品异步定价 (含 Greeks)。"""
