@@ -18,6 +18,9 @@
 -- 48 merged: 修正 bp_index_config.currency 的列注释 —— 40 号写的「无外汇数据换算」在 43-45
 --            接入 fx_sina 后已不成立, 列注释会误导运维与任何读 pg_description 的工具。
 --            已部署环境见 ddl/48_fix_currency_column_comment.sql。
+-- 49 merged: bp_asset_data_status.last_probe_kind —— probe 结论分三类(ok/unreachable/invalid),
+--            让「接口可达但本次被反爬/限频挡住」的品种也能保存, 由后台 ingest 补拉。
+--            已部署环境见 ddl/49_asset_probe_kind.sql。
 -- =====================================================================
 
 CREATE EXTENSION IF NOT EXISTS timescaledb;
@@ -406,8 +409,13 @@ CREATE TABLE IF NOT EXISTS bp_asset_data_status (
     last_success_at TIMESTAMPTZ,
     last_error      TEXT,
     last_probe_ms   INTEGER,
+    -- 49: 上次测试读取的结论类别。ok=成功; unreachable=接口可达但本次被反爬/限频/超时挡住
+    -- (允许保存, 由后台 ingest 补拉); invalid=未知源/代码不存在(拦截保存); NULL=从未测试。
+    last_probe_kind TEXT,
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT pk_bp_asset_data_status PRIMARY KEY (symbol, source)
+    CONSTRAINT pk_bp_asset_data_status PRIMARY KEY (symbol, source),
+    CONSTRAINT ck_bp_asset_data_status_probe_kind
+        CHECK (last_probe_kind IS NULL OR last_probe_kind IN ('ok', 'unreachable', 'invalid'))
 );
 
 DROP TRIGGER IF EXISTS trg_bp_asset_data_status_updated_at ON bp_asset_data_status;
