@@ -65,3 +65,6 @@ desktop.ini
 
 # ===== 临时脚本 =====
 _e2e.py
+
+# Playwright MCP 的截图/追踪/临时脚本产物
+.playwright-mcp
