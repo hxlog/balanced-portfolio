@@ -653,14 +653,20 @@ async function req<T>(path: string, init?: RequestInit, retried = false): Promis
     if (newToken) return req<T>(path, init, true);
   }
   if (!res.ok) {
-    let detail = res.statusText;
+    let detail: unknown = res.statusText;
     try {
       const body = await res.json();
       detail = body.detail || detail;
     } catch {
       /* noop */
     }
-    throw new Error(detail);
+    // FastAPI 的 detail 可以是对象(如 probe 的 {message, probe_kind, can_save_anyway});
+    // 对象无法直接当 message 用, 故把原始 detail 挂到 error 上供调用方还原结构。
+    const err = new Error(
+      typeof detail === "string" ? detail : String((detail as { message?: string })?.message ?? detail),
+    ) as Error & { detail?: unknown };
+    err.detail = detail;
+    throw err;
   }
   return res.json() as Promise<T>;
 }
@@ -908,11 +914,19 @@ export const api = {
     ),
   saveAdminAsset: (input: {
     symbol: string; source: string; name: string; category?: string | null; start_date?: string | null; is_deleted?: number; adjust?: string | null;
-  }) => req<{ ok: boolean }>("/api/admin/assets", { method: "POST", body: JSON.stringify(input) }),
+  }) =>
+    req<{ ok: boolean; task_id?: string | null; ingest_queued?: boolean }>(
+      "/api/admin/assets",
+      { method: "POST", body: JSON.stringify(input) },
+    ),
   deleteAdminAsset: (source: string, symbol: string) =>
     req<{ ok: boolean }>(`/api/admin/assets/${encodeURIComponent(source)}/${encodeURIComponent(symbol)}`, { method: "DELETE" }),
   probeAdminAsset: (source: string, symbol: string, extra?: Record<string, unknown>) =>
-    req<{ ok: boolean; rows: number; first_date?: string; last_date?: string; elapsed_ms: number }>(
+    req<{
+      ok: boolean; rows: number; first_date?: string; last_date?: string; elapsed_ms: number;
+      /** 结论类别: ok=读到数据; unreachable=接口可达但本次被反爬/限频挡住; invalid=真实错误 */
+      probe_kind?: "ok" | "unreachable" | "invalid";
+    }>(
       `/api/admin/assets/${encodeURIComponent(source)}/${encodeURIComponent(symbol)}/probe`,
       { method: "POST", body: JSON.stringify({ extra_params: extra ?? {} }) },
     ),

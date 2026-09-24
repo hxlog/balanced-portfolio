@@ -18,6 +18,10 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, AdminAsset, DataSource, ADJUST_LABEL, ASSET_ADJUST_OPTIONS } from "@/lib/api";
+import {
+  ASSET_CREATE_DEFAULTS, buildExtraParams, parseProbeFailure, validateAssetInput,
+  type ProbeFailure,
+} from "@/lib/asset-form";
 import { useAuth } from "@/lib/auth";
 import { BacktestProgressDialog } from "@/components/BacktestProgressDialog";
 
@@ -99,15 +103,9 @@ export default function AdminAssetsPage() {
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [probeOk, setProbeOk] = useState(false);
   const [probeResult, setProbeResult] = useState<string | null>(null);
-  const [probeError, setProbeError] = useState<string | null>(null);
-  const [form, setForm] = useState({
-    symbol: "",
-    source: "cn_index_em",
-    name: "",
-    category: "index",
-    start_date: "2017-01-01",
-    adjust: "hfq",
-  });
+  // probe 失败的结构化结论: canSaveAnyway=true(接口可达但被限频挡住) 时给出「仍要保存」出口
+  const [probeFailure, setProbeFailure] = useState<ProbeFailure | null>(null);
+  const [form, setForm] = useState({ ...ASSET_CREATE_DEFAULTS });
   // 列表筛选/排序
   const [search, setSearch] = useState("");
   const [sourceFilter, setSourceFilter] = useState("all");
@@ -254,64 +252,68 @@ export default function AdminAssetsPage() {
     setForm((f) => ({ ...f, ...patch }));
     setProbeOk(false);
     setProbeResult(null);
-    setProbeError(null);
+    setProbeFailure(null);
   };
 
-  /** 构造与保存落库口径一致的 extra_params(probe 透传用,「测试什么就保存什么」):
-   *  ETF 携带所选复权(落库为 extra_params.adjust), 中债国债固定财富口径(ingest 默认), 其余源为空。 */
-  const buildExtraParams = (
-    source: string,
-    category?: string | null,
-    adjust?: string | null,
-  ): { adjust?: string; indicator?: string } => {
-    if (category === "etf" && adjust) return { adjust };
-    if (source === "bond_csi_treasury") return { indicator: "财富" };
-    return {};
-  };
+  /** 与保存落库口径一致的 extra_params —— 口径定义在 @/lib/asset-form, 与 builder 共用同一份。 */
+  const extraParams = buildExtraParams(form.source, form.category, form.adjust);
 
   const probeForm = async () => {
     const key = `${form.symbol}@${form.source}`;
     setBusyKey(key);
     setProbeOk(false);
     setProbeResult(null);
-    setProbeError(null);
+    setProbeFailure(null);
     try {
-      const res = await api.probeAdminAsset(
-        form.source, form.symbol, buildExtraParams(form.source, form.category, form.adjust),
-      );
+      const res = await api.probeAdminAsset(form.source, form.symbol, extraParams);
       setProbeOk(true);
       setProbeResult(`读取成功：${res.first_date} ~ ${res.last_date}，${res.rows} 行，用时 ${res.elapsed_ms}ms`);
       await load();
     } catch (e) {
-      setProbeError(String(e instanceof Error ? e.message : e));
+      setProbeFailure(parseProbeFailure(e));
       await load();
     } finally {
       setBusyKey(null);
     }
   };
 
-  const save = async () => {
-    if (!probeOk) {
+  /** 真正落库。allowUnreachable=true 时放行「接口可达但被限频挡住」的资产。 */
+  const doSave = async (allowUnreachable: boolean) => {
+    const invalid = validateAssetInput(form);
+    if (invalid) {
+      toast.error(invalid);
+      return;
+    }
+    if (!probeOk && !allowUnreachable) {
       toast.error("请先测试读取成功后再保存");
       return;
     }
-    // adjust 口径与 probe 一致(buildExtraParams 单一来源), 保证「测试口径 == 保存口径」。
-    const extra = buildExtraParams(form.source, form.category, form.adjust);
-    await api.saveAdminAsset({
-      ...form,
-      category: form.category || null,
-      start_date: form.start_date || null,
-      adjust: extra.adjust ?? null,
-      is_deleted: 0,
-    });
-    // 保留表单字段(数据源/分类/起始日/代码/名称)以便连续新增相似标的; 仅清探测状态。
-    setProbeOk(false);
-    setProbeResult(null);
-    setProbeError(null);
-    await load();
-    // 失效 /builder 资产缓存, 让新加标的立即可选(失败不阻断)
-    await api.revalidateAssets().catch(() => {});
+    try {
+      const res = await api.saveAdminAsset({
+        ...form,
+        category: form.category || null,
+        start_date: form.start_date || null,
+        adjust: extraParams.adjust ?? null,
+        is_deleted: 0,
+      });
+      // 保留表单字段(数据源/分类/起始日/代码/名称)以便连续新增相似标的; 仅清探测状态。
+      setProbeOk(false);
+      setProbeResult(null);
+      setProbeFailure(null);
+      if (res.ingest_queued) {
+        toast.success("已保存, 正在后台拉取历史行情(可稍后在列表点「增量」查看进度)");
+      } else {
+        toast.success("已保存");
+      }
+      await load();
+      // 失效 /builder 资产缓存, 让新加标的立即可选(失败不阻断: 非超管调用会被 403 吞掉)
+      await api.revalidateAssets().catch(() => {});
+    } catch (e) {
+      toast.error(String(e instanceof Error ? e.message : e));
+    }
   };
+
+  const save = () => doSave(probeOk);
 
   // 删除确认由行内 AlertDialog 承担; 此处只执行软删除。
   const remove = async (a: AdminAsset) => {
@@ -599,15 +601,31 @@ export default function AdminAssetsPage() {
               {probing ? <RefreshCw className="w-4 h-4 mr-1 animate-spin" /> : <Activity className="w-4 h-4 mr-1" />}
               测试读取
             </Button>
-            <Button onClick={save} disabled={!form.symbol || !form.source || !form.name || !probeOk}>
+            <Button
+              onClick={() => save()}
+              disabled={!form.symbol || !form.source || !form.name || (!probeOk && !probeFailure?.canSaveAnyway)}
+            >
               <Plus className="w-4 h-4 mr-1" /> 保存
             </Button>
-            {(probeResult || probeError) && (
-              <div className={`text-sm ${probeError ? "text-destructive" : "text-muted-foreground"}`}>
-                {probeError || probeResult}
+            {/* 接口可达但本次拉不到(反爬/限频/超时): 放行保存, 落库后由后台 ingest 补拉。
+                这种情况下按钮语义要写清楚, 避免用户以为数据已经就绪。 */}
+            {!probeOk && probeFailure?.canSaveAnyway && (
+              <Button variant="secondary" onClick={() => doSave(true)} disabled={!form.symbol || !form.source || !form.name}>
+                仍要保存并后台补拉
+              </Button>
+            )}
+            {(probeResult || probeFailure) && (
+              <div className={`text-sm ${probeFailure ? "text-destructive" : "text-muted-foreground"}`}>
+                {probeFailure?.message || probeResult}
               </div>
             )}
           </div>
+          {!probeOk && probeFailure?.canSaveAnyway && (
+            <p className="text-xs text-muted-foreground">
+              该数据源本次未返回数据(多为反爬/限频/IP 封锁, 而非代码写错)。可以先保存,
+              系统会在后台重试拉取; 数据到位前该投资品在组合构建器里仍可选, 但回测不含其行情。
+            </p>
+          )}
         </CardContent>
       </Card>
 

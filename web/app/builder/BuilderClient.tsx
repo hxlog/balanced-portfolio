@@ -27,6 +27,7 @@ import { useAuth } from "@/lib/auth";
 import { useIsMobile } from "@/components/ui/use-mobile";
 import { ConfirmRecomputeDialog } from "@/components/ConfirmRecomputeDialog";
 import { BacktestProgressDialog } from "@/components/BacktestProgressDialog";
+import { CreateAssetDialog } from "@/components/CreateAssetDialog";
 import { ChangeDiffDialog, type AssetDiff, type DiffRow } from "@/components/ChangeDiffDialog";
 
 const QUADRANT_ORDER: Quadrant[] = ["overheat", "stagflation", "recovery", "recession"];
@@ -485,8 +486,8 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
 
   return (
     <div className="flex-1 bg-bg-subtle/30 pb-20 sm:pb-24">
-      <div className="bg-background border-b border-border py-3 px-4 sm:px-6 sticky top-14 sm:top-16 z-40">
-        <div className="max-w-4xl mx-auto">
+      <div className="bg-background border-b border-border py-3 md:py-6 lg:py-8 xl:py-10 px-4 sm:px-6 top-14 sm:top-16 z-40">
+        <div className="max-w-5xl mx-auto">
           <h1 className="text-2xl font-semibold mb-8 text-center">
             {isEditMode ? "编辑投资组合" : isCopyMode ? "复制投资组合" : "新增投资组合"}
           </h1>
@@ -515,7 +516,7 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
         </div>
       </div>
 
-      <div className="max-w-4xl mx-auto p-6 mt-8">
+      <div className="max-w-7xl mx-auto p-6 mt-8">
         {error && (
           <div className="mb-6 bg-destructive/10 border border-destructive/30 text-destructive text-sm p-4 rounded-lg">
             {error}
@@ -525,7 +526,7 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
         {step === 1 && (
           <div className="space-y-6">
             <div className="text-center mb-8">
-              <h2 className="text-xl font-medium">配置你的四象限矩阵</h2>
+              <h2 className="text-xl font-medium py-2"><b>配置</b>你的四象限矩阵</h2>
               <p className="text-muted-foreground mt-2">
                 从资产库中选择标的放入对应的宏观环境象限中。同一品种可配置在多个象限, 回测时权重会自动加权整合。
                 已配置 {totalPlacements} 项 · {uniqueCount} 个品种。
@@ -564,13 +565,19 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
                         </Badge>
                       ))}
                       {selected[q].length === 0 && (
-                        <p className="text-xs text-muted-foreground w-full text-center">该象限为空。</p>
+                        <p className="text-xs text-muted-foreground w-full text-center py-12">该象限为空。</p>
                       )}
                     </div>
                     <AssetPicker
                       assets={assets}
                       usedInQuadrant={selected[q].map(keyOf)}
                       onPickMany={(list) => addAssets(q, list)}
+                      onAssetCreated={(a) => {
+                        // 新建的资产立刻进本地清单, 并直接选入当前象限 —— 用户刚为这个标的
+                        // 走完了一遍新增流程, 再让他回到列表里手动找一遍是多余的。
+                        setAssets((prev) => (prev.some((x) => keyOf(x) === keyOf(a)) ? prev : [...prev, a]));
+                        addAssets(q, [a]);
+                      }}
                       quadrantLabel={QUADRANT_LABELS[q]}
                     />
                   </CardContent>
@@ -586,7 +593,7 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
               <h2 className="text-xl font-medium">选择默认的优化方法</h2>
               <p className="text-muted-foreground mt-2">不同的最优化目标会产生不同的权重分配方案。</p>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 py-1">
               {METHOD_OPTIONS.map((m) => {
                 const active = m.value === method;
                 return (
@@ -607,15 +614,21 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
             </div>
             <div className="mt-5 pt-5 border-t border-border">
               <h3 className="font-medium mb-4">附属参数</h3>
-              <div className="flex items-center justify-between p-4 bg-card border border-border rounded-lg">
+              
+              {/* 修改了这里的 className */}
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 bg-card border border-border rounded-lg">
+                
                 <div>
                   <div className="font-medium text-sm mb-1">优化指标</div>
                   <div className="text-sm text-muted-foreground">选择最大化夏普比率还是 Sortino 比率</div>
                 </div>
-                <div className="bg-bg-subtle p-1 rounded-md flex border border-border">
+                
+                {/* 建议此处也可加上 w-full md:w-auto，避免手机端按钮太窄 */}
+                <div className="bg-bg-subtle p-1 rounded-md flex border border-border w-full md:w-auto">
                   {(["sharpe", "sortino"] as const).map((r) => (
                     <div key={r} onClick={() => setRatio(r)}
-                      className={`px-4 py-1.5 text-sm font-medium rounded cursor-pointer ${ratio === r ? "bg-background border border-border" : "text-muted-foreground"}`}>
+                      /* 建议加上 flex-1 text-center，让手机端两个按钮平分宽度，点击区域更大 */
+                      className={`flex-1 text-center px-4 py-1.5 text-sm font-medium rounded cursor-pointer whitespace-nowrap ${ratio === r ? "bg-background border border-border" : "text-muted-foreground"}`}>
                       {r === "sharpe" ? "夏普比率" : "Sortino 比率"}
                     </div>
                   ))}
@@ -632,7 +645,7 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
               <p className="text-muted-foreground mt-2">调整风险因子的计算窗口与回测起止时间。</p>
             </div>
             <Card>
-              <CardContent className="p-5 sm:p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-5">
+              <CardContent className="p-5 sm:p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-8">
                 <div className="space-y-1.5">
                   <label className="block text-sm font-medium">组合名称</label>
                   <Input value={portfolioName} onChange={(e) => setPortfolioName(e.target.value)} className="w-full" />
@@ -648,7 +661,7 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
                   <div className="flex items-center gap-4">
                     <Input type="number" value={lookback} onChange={(e) => setLookback(Number(e.target.value))}
                       className="w-full font-mono" />
-                    <span className="text-sm text-muted-foreground">个交易日</span>
+                    <span className="text-sm text-muted-foreground whitespace-nowrap">个交易日</span>
                   </div>
                   <p className="text-xs text-muted-foreground">用过去 N 个交易日的日收益率方差作为风险因子进行计算。</p>
                 </div>
@@ -663,7 +676,7 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
                     className="w-full bg-input-background border border-border rounded-md px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50">
                     {BENCHMARK_OPTIONS.map((b) => <option key={b.key} value={b.key}>{b.name}</option>)}
                   </select>
-                  <p className="text-xs text-muted-foreground">净值对比所用基准（信息比率固定以沪深300为基准）。</p>
+                  <p className="text-xs text-muted-foreground">净值对比所用基准</p>
                 </div>
                 <div className="space-y-1.5">
                   <label className="block text-sm font-medium">单资产最大权重</label>
@@ -681,7 +694,7 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
                   <div className="flex items-center gap-4">
                     <Input type="number" step="0.5" value={band} onChange={(e) => setBand(Number(e.target.value))}
                       className="w-full font-mono" />
-                    <span className="text-sm text-muted-foreground">个百分点（绝对值）</span>
+                    <span className="text-sm text-muted-foreground">%</span>
                   </div>
                   <p className="text-xs text-muted-foreground">任一品种实际权重偏离当日最优目标超过该百分点时触发整体再平衡。默认 5。</p>
                 </div>
@@ -786,7 +799,7 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
       />
 
       <div className="fixed bottom-0 left-0 w-full bg-background border-t border-border p-4 z-40">
-        <div className="max-w-4xl mx-auto flex items-center justify-between gap-2">
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-2">
           <Button variant="ghost" className="flex-1 sm:flex-none" onClick={() => setStep((s) => Math.max(1, s - 1))} disabled={step === 1 || submitting || savingMeta}>
             上一步
           </Button>
@@ -838,11 +851,13 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
 }
 
 function AssetPicker({
-  assets, usedInQuadrant, onPickMany, quadrantLabel,
+  assets, usedInQuadrant, onPickMany, onAssetCreated, quadrantLabel,
 }: {
   assets: Asset[];
   usedInQuadrant: string[];
   onPickMany: (list: Asset[]) => void;
+  /** 在「无可选资产」处新建标的后回调(由 BuilderInner 加入本地清单并选入象限)。 */
+  onAssetCreated: (asset: Asset) => void;
   quadrantLabel: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -855,6 +870,9 @@ function AssetPicker({
   const [pane, setPane] = useState<"list" | "recommended">("list");
   // 待确认的非 CNY 批次: null=无弹窗; 确认后整批(含 CNY 项)一起添加, 取消则整批不添加。
   const [pendingNonCny, setPendingNonCny] = useState<Asset[] | null>(null);
+  // 「新增投资品」对话框。canManageAssets 才可用(后端 require_asset_editor 同口径)。
+  const { canManageAssets } = useAuth();
+  const [createOpen, setCreateOpen] = useState(false);
   const usedSet = useMemo(() => new Set(usedInQuadrant), [usedInQuadrant]);
   const vendors = useMemo(
     () => Array.from(new Set(assets.map((a) => a.vendor).filter(Boolean))) as string[],
@@ -1064,7 +1082,38 @@ function AssetPicker({
                   </div>
                 );
               })}
-              {filtered.length === 0 && <p className="text-xs text-muted-foreground px-3 py-4">无可选资产</p>}
+              {/* 空态分三种: 搜索无果 / 筛掉 / 真没东西。只有「搜索无果」才给新增入口 ——
+                  前两者是用户在筛选, 冒出一个"新建"按钮只会误导。 */}
+              {filtered.length === 0 && (
+                q.trim() !== "" ? (
+                  <div className="px-3 py-6 text-center space-y-2">
+                    <p className="text-sm text-muted-foreground">
+                      库中找不到「{q.trim()}」对应的标的
+                    </p>
+                    {canManageAssets ? (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="border-dashed"
+                          onClick={() => setCreateOpen(true)}
+                        >
+                          <Plus className="w-4 h-4 mr-1" /> 新增该标的
+                        </Button>
+                        <p className="text-xs text-muted-foreground">
+                          填写数据源与代码, 保存后系统自动拉取并清洗历史行情。
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        新增标的需要资产编辑权限，请联系管理员。
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground px-3 py-4">无可选资产</p>
+                )
+              )}
             </div>
           </div>
 
@@ -1142,6 +1191,19 @@ function AssetPicker({
           </div>
         </DialogFooter>
       </DialogContent>
+      {/* 新增投资品: 与 /admin/assets 的新增表单同口径(共享 @/lib/asset-form + 同一端点)。
+          用组件里的 state 控制开合, 不用 DialogTrigger —— 入口在空态里, 不在页脚。
+          新建成功后直接关闭本 picker: 该资产已被选入象限, 让用户看到 chip 落位。 */}
+      <CreateAssetDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        defaultQuery={q}
+        onCreated={(a) => {
+          onAssetCreated(a);
+          handleOpenChange(false);
+        }}
+      />
+
       {/* 非 CNY 资产二次确认: 已按每日汇率折算为 CNY, 但仍提示跨市场交易日历差异 */}
       <AlertDialog open={pendingNonCny != null} onOpenChange={(v) => { if (!v) setPendingNonCny(null); }}>
         <AlertDialogContent>
