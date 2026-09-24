@@ -10,7 +10,7 @@ Balanced Portfolio 是基于桥水风险平价理论的投资组合管理与回�
 AKShare → bp_ingest → PostgreSQL 18 + TimescaleDB → bp_api/quant → Next.js web
 ```
 
-生产环境在 API 与耗时计算之间插入 Redis + Celery；本地开发用 `BP_TASK_MODE=inline` 走 FastAPI `BackgroundTasks`，无需 Redis/worker。详细架构见 `docs/architecture.md`。
+生产环境在 API 与耗时计算之间插入 Redis + Celery；本地开发用 `BP_TASK_MODE=inline` 走 FastAPI `BackgroundTasks`，无需 Redis/worker。分层图与部署拓扑见 `README.md` 的「系统架构」与「部署说明」；行情口径见 `docs/data-sources.md`，前端设计规范见 `docs/design-system.md`（仓库**没有** `docs/architecture.md`）。
 
 ## Common commands
 
@@ -21,8 +21,9 @@ uvicorn bp_api.main:app --host 127.0.0.1 --port 8000 --reload
 # 前端 (Next.js 16 + Turbopack, port 3000)
 cd web && npm install --legacy-peer-deps   # --legacy-peer-deps 必须
 cd web && npm run dev
-cd web && npm run build                    # CI 也跑这个
+cd web && npm run build                    # CI 也跑这个 (next build --turbopack)
 cd web && npm run typecheck                # tsc --noEmit
+cd web && npm test                         # vitest run; 用例只收 web/lib/**/*.test.ts (目前仅 rebalance-calc)
 
 # 测试 (后端, 合成 GBM 行情夹具, 见 bp_api/tests/conftest.py)
 python -m pytest bp_api/tests -q
@@ -47,7 +48,7 @@ celery -A bp_api.workers.celery_app.celery_app beat
 psql -h localhost -U postgres -d balanced_portfolio -f ddl/schema.sql
 ```
 
-提交前必跑：`python -m pytest bp_api/tests -q` 且 `cd web && npm run build`（CI 同口径，见 `.github/workflows/ci.yml`，Python 3.11 / Node 24）。
+提交前必跑：`python -m pytest bp_api/tests -q`、`cd web && npm test`、`cd web && npm run build`（CI 同口径，见 `.github/workflows/ci.yml`，Python 3.11 / Node 24；CI 另跑 `python -m bp_ingest --help` 与 app 路由导入冒烟）。
 
 ## 数据流与行情口径（修改回测/行情前必读）
 
@@ -67,7 +68,18 @@ psql -h localhost -U postgres -d balanced_portfolio -f ddl/schema.sql
 - **无未来函数**：`backtest.py` 用前缀和(cum1/cum2)做滚动增量矩，把每日窗口预算从 O(window·n²) 降到 O(n²)；当日 NAV 用当日收益更新，次日才用新权重。`test_backtest.py` 固定约束：篡改某日之后的收益不得改变该日之前的净值/持仓。
 - 成分逐步纳入：不足 `min_window` 历史的品种权重为 0，不拖后整体 effective_start。
 - 再平衡：任一品种漂移偏离目标 > `rebalance_band`(绝对值，默认 5pp) → 整体回到当日最优目标。
-- 对比基准注册表在 `repositories.BENCHMARKS`：bond6040 / HSI / 000300 / 000510 / 000905 + 三只人民币计价 QDII ETF 基准 `sp500_etf`(513500) / `ndx100_etf`(513100) / `n225_etf`(513520)。回测内部基准按注册表全腿**按日再平衡合成**（与展示/归因同口径）；落库时预计算全部注册基准净值（`bp_backtest_benchmark`）与 method×benchmark 归因。前端 `web/lib/api.ts` 的 `BENCHMARK_OPTIONS/COMPOSITION` 必须与之同步。
+- 对比基准注册表在 `repositories.BENCHMARKS`：bond6040 / HSI / 000300 / 000510 / 000905 + 三只人民币计价 QDII ETF 基准 `sp500_etf`(513500) / `ndx100_etf`(513100) / `n225_etf`(513520)。回测内部基准按注册表全腿**按日再平衡合成**（与展示/归因同口径）；落库时预计算全部注册基准净值（`bp_backtest_benchmark`）与 method×benchmark 归因。前端 `web/lib/api.ts` 的 `BENCHMARK_OPTIONS` / `BENCHMARK_COMPOSITION` 必须与之同步。
+
+## 预计算看板子系统（`/cffex`、`/crypto`）
+
+两个看板同一套形态，**请求路径永不计算**：`bp_ingest` 定时/钩子任务算出结果 → 落预计算表 → 失效缓存 → API 只读表组装。
+
+- `/cffex`：`bp_cffex_contract_daily` / `bp_cffex_premium_daily`，路由自注册在 `bp_api/cffex.py`。
+- `/crypto`：`bp_ingest/crypto_corr.py:compute_and_store_crypto_corr` 全量重算 4 方法 × 4 窗口（3M/6M/9M/12M）× 4 资产对，写 `bp_crypto_corr_daily`（一行 = 一日×一对×一方法，4 窗口作列）+ `bp_crypto_price_daily`（6 资产 NYSE 对齐收盘）+ `bp_crypto_meta`，再 `cache.invalidate_crypto_cache()`；`bp_api/crypto.py` 只读表组装、请求路径永不计算。滚动相关第 d 日依赖 [d−window+1, d]，任一底层新数据都会影响其后所有日 → **每次调用都全量重算并幂等 upsert**（`trade_dates`/`full` 只是预留参数，不改变全量语义）。
+- **effective_td 原子性（两个看板共用规则）**：`pick_effective_trade_date` 要求当日标的齐全才推进（NaN 过滤），否则 hold-back 卡在上一个完整日。放宽它会制造「假新鲜」——曾因此修过一次（放宽后又反转恢复）。
+- **缓存失效链**：`cacheLife("hours")` + `cacheTag`（`assets` / `crypto` / `demo-result`）在 `web/lib/cached-data.ts`；后端重算后 `POST /api/revalidate/crypto`（`X-Internal-Token` = `BP_INTERNAL_REVALIDATE_TOKEN`）触发 Next `revalidateTag`。**文件系统路由优先于 `next.config.mjs` 的 `/api/:path*` rewrite**，故这两个 Route Handler 不会被转给 FastAPI；Next 16 的 `revalidateTag(tag, profile)` 第二参数必须与 `cacheLife` profile 一致（两处都传 `"hours"`），否则失效不到。
+- `/crypto` 与 `/cffex` 表恒用原生 USD 口径，不参与 CNY 折算（见上节清洗规则）。
+- `scripts/backfill_btc_cme.py` 是**一次性缺口修补**脚本（非日常任务）：Yahoo 限流致 BTC-USD 停更时，用 `btc_cme_sina` 期货价重锚到库中最后现货收盘，`ON CONFLICT DO NOTHING` 只补缺失日期。日常仍由 ingest 的聚合链兜底。
 
 ## 任务模型（`bp_api/tasking.py` / `workers/` / `tasks.py`）
 
@@ -75,6 +87,7 @@ psql -h localhost -U postgres -d balanced_portfolio -f ddl/schema.sql
 - `enqueue_task` 在 `BP_TASK_MODE=inline` 或 `send_task` 失败时返回 `None`，调用方降级到 `BackgroundTasks`（`tasks.run_*_background`）。Redis/Celery 全程是「可选增强」，缺失不阻断核心功能。
 - Celery 任务：`bp_api.backtest`、`bp_api.ingest_all`、`bp_api.price_otc`、`bp_api.refresh_calendar`、`bp_api.enqueue_ready`。
 - beat 每 20 分钟巡检排队就绪组合的 T-1 更新（`bp_api.enqueue_ready`），与 bp_ingest 的 6h 调度解耦；每周刷新交易日历。
+- `bp_api/daily_update.py` 是**行情刷新后的 T-1 组合自动更新编排**（`refresh_all_asset_status` + `enqueue_ready_portfolios`），被 ingest 收尾、Celery jobs 与管理端共用；它也是上面 COUNT 不变式的默认入口（默认 `with_count=False`）。
 - worker 启动时硬化 HTTP 会话 + 预热 EM 代码映射（`worker_process_init`），否则 ingest 走 Celery 时 push2his 会被掐断。
 - 组合状态：`pending → running → done/error`；`running` 时编辑返回 409。结果按 `method`/`benchmark` 维度用 `cache.set_json` 缓存（带 result version 的 ETag）。
 - 免重算编辑：`PATCH /api/portfolios/{id}/meta` 接受完整参数（只落定义、不触发回测；running 且含回测字段变更→409，仅 name/description 任何状态可改）；回测成功时写参数快照 `bp_portfolio.last_run_params`，与当前参数不一致即 `params_stale`（前端提示待重算）。
@@ -109,7 +122,7 @@ psql -h localhost -U postgres -d balanced_portfolio -f ddl/schema.sql
 - Next.js 16 App Router + React 19 + TanStack Query + Tailwind v4 + Radix UI + ECharts + KaTeX。
 - `web/lib/api.ts` 是类型化 API 客户端，**也是方法/基准/OTC 产品的常量源**，改动需与后端注册表同步（`METHOD_OPTIONS`、`BENCHMARK_OPTIONS`、`OTC_PRODUCTS`、`OTC_ENGINES` 等）。
 - `web/lib/auth.tsx`（AuthProvider）、`web/lib/session-server.ts`（Cookie 读写）、`web/components/`（Navbar、RiskMatrixSection、MiniTradingCalendar 等）、`web/components/ui/`（shadcn 风格基础组件）。
-- 主要路由：`/dashboard`（回测）、`/builder`（组合构建）、`/cffex`、`/otc-pricing` & `/otc-derivatives-pricing`、`/admin`、`/methodology`、`/docs`。
+- 主要路由：`/dashboard`（回测）、`/builder`（组合构建）、`/cffex`、`/crypto`、`/otc-pricing` & `/otc-derivatives-pricing`（同页两入口）、`/admin/assets` & `/admin/users`、`/methodology`。**没有 `/docs` 路由**（`mdx.tsx`/`docs-toc.tsx` 只被 `/methodology` 使用）；导航链接表在 `web/components/Navbar.tsx` 的 `NAV_LINKS`。
 - 设计规范见 `docs/design-system.md`：sky 主色、绿涨红跌（`text-up`/`text-down` 仅限方向性涨跌）、success/warning 语义色、四象限色（过热=warning/滞胀=destructive/复苏=success/衰退=weak）；图表颜色一律经 `web/lib/chart-theme.ts`；反馈用 sonner toast、危险确认用 AlertDialog（禁止 window.alert/confirm）。
 
 ## 数据源与 ingest（`bp_ingest/`）
