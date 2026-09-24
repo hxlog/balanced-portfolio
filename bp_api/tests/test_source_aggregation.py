@@ -164,3 +164,42 @@ def test_crypto_yfinance_chain_falls_back_on_rate_limit(raiser):
         )
     # 库中锚点重锚: 期货 close 111000 → 现货口径 222000 (ratio=2)
     assert abs(float(df["close"].iloc[-1]) - 222000.0) < 1e-6
+
+
+# ---------------------------------------------------------------------
+# 「全链空表」≠「全链被掐断」: 前者是代码不存在, 后者是限频(见 SymbolNotFoundError)
+# ---------------------------------------------------------------------
+def _empty_fetch(symbol, start, end, extra):
+    return pd.DataFrame(columns=src.STANDARD_COLUMNS)
+
+
+def _conn_error_fetch(symbol, start, end, extra):
+    raise requests.exceptions.ConnectionError("curl: (52) Empty reply from server")
+
+
+def test_all_sources_empty_raises_symbol_not_found():
+    """东财对未知 secid 返回 HTTP 200 + 空 klines, 降级源同样空 —— 没有任何源报连接错,
+    结论只能是「代码不存在」。若与限频共用 UnreachableSourceError, 写错的代码会被放行落库。"""
+    empty = dataclasses.replace(src.SOURCES["etf_em"], fetch=_empty_fetch)
+    empty_fb = dataclasses.replace(src.SOURCES["etf_tx"], fetch=_empty_fetch)
+    with patch.dict(src.SOURCES, {"etf_em": empty, "etf_tx": empty_fb}):
+        with pytest.raises(src.SymbolNotFoundError) as ei:
+            src.fetch_with_fallback("etf_em", "999999", date(2026, 8, 1), date(2026, 9, 1), {})
+    assert src.classify_probe_error(ei.value) == "invalid"
+
+
+def test_primary_unreachable_with_empty_fallback_is_unreachable():
+    """主源被反爬掐断、降级源恰好好好应答却没数据 —— 仍归 unreachable(重试有意义),
+    不能因为降级源「没报错」就把限频误判成代码错误。"""
+    down = dataclasses.replace(src.SOURCES["etf_em"], fetch=_conn_error_fetch)
+    empty_fb = dataclasses.replace(src.SOURCES["etf_tx"], fetch=_empty_fetch)
+    with patch.dict(src.SOURCES, {"etf_em": down, "etf_tx": empty_fb}):
+        with pytest.raises(src.UnreachableSourceError) as ei:
+            src.fetch_with_fallback("etf_em", "510300", date(2026, 8, 1), date(2026, 9, 1), {})
+    assert src.classify_probe_error(ei.value) == "unreachable"
+
+
+def test_symbol_not_found_is_not_unreachable_subclass():
+    """两个异常必须是兄弟而非父子 —— 归错一边就会把死标的放行。"""
+    assert not issubclass(src.SymbolNotFoundError, src.UnreachableSourceError)
+    assert not issubclass(src.UnreachableSourceError, src.SymbolNotFoundError)

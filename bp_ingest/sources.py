@@ -17,9 +17,29 @@ from typing import Callable, NoReturn, Optional
 
 import akshare as ak
 import pandas as pd
+import requests
 import yfinance as yf
 
 logger = logging.getLogger(__name__)
+
+
+class UnreachableSourceError(RuntimeError):
+    """主源与整条降级链都拿不到数据 —— 与「未知数据源 / 代码不存在」区分开。
+
+    这一类的共同特征是**重试有意义**: 反爬掐断、限频(429)、超时、上游抽风。
+    保存资产的门禁靠它放行(见 classify_probe_error), 所以必须与
+    「代码写错了」这种真实错误区分, 不能混用一个 RuntimeError。
+    """
+
+
+class SymbolNotFoundError(RuntimeError):
+    """每个源都**正常应答**却一致返回空表 —— 代码不存在, 重试没有任何意义。
+
+    与 UnreachableSourceError 的分界是「有没有源抛过连接级异常」:
+      - 东财对未知 secid 返回 HTTP 200 + rc=100 + data=null(空表), 不是报错;
+      - 真被反爬时会抛连接级异常(curl_cffi http:000 / RemoteDisconnected / 429)。
+    两者若共用 UnreachableSourceError, 一个写错的代码就会被当成限频而放行落库。
+    """
 
 STANDARD_COLUMNS = [
     "trade_date",
@@ -926,6 +946,9 @@ def fetch_with_fallback(
     adapter = get_adapter(source)
     chain = AGGREGATE_CHAINS.get(source, [])
     last_df: pd.DataFrame | None = None
+    # 只要**任一个源**抛出过连接级异常, 「全链拿不到数据」就归因于可达性(可重试);
+    # 反之若每个源都正常应答却一致为空, 那是代码不存在 —— 见 SymbolNotFoundError。
+    saw_conn_error = False
 
     try:
         last_df = adapter.fetch(symbol, start, end, extra)
@@ -938,6 +961,7 @@ def fetch_with_fallback(
     except _conn_exc as exc:
         if not chain:
             raise
+        saw_conn_error = True
         logger.warning(
             "源 %s 拉取 %s 被掐断(%s), 降级链 %s",
             source, symbol, type(exc).__name__, chain,
@@ -947,6 +971,10 @@ def fetch_with_fallback(
         try:
             df = get_adapter(fb).fetch(symbol, start, end, extra)
         except Exception as exc:  # noqa: BLE001
+            # 判据与 probe 端点同源(classify_probe_error), 避免两处各写一份而分叉:
+            # 429/5xx/超时/掐断都算「重试有意义」, 上游 4xx 与未知异常不算。
+            if classify_probe_error(exc) == "unreachable":
+                saw_conn_error = True
             logger.warning("降级源 %s 拉取 %s 失败: %s", fb, symbol, exc)
             continue
         if df is None or df.empty:
@@ -968,7 +996,45 @@ def fetch_with_fallback(
 
     if last_df is not None and not last_df.empty:
         return last_df
-    raise RuntimeError(f"源 {source} 及降级链均无法拉取 {symbol}")
+    if not saw_conn_error:
+        # 所有源都好好应答了, 只是都没有这个代码的数据 —— 重试无意义, 别放行落库。
+        raise SymbolNotFoundError(f"源 {source} 及降级链均无 {symbol} 的行情数据")
+    raise UnreachableSourceError(f"源 {source} 及降级链均无法拉取 {symbol}")
+
+
+def classify_probe_error(exc: BaseException) -> str:
+    """把一次测试读取的异常归类成 probe 结论 —— 「接口可达但本次取不到」vs「真实错误」。
+
+    调用点: bp_api.main.probe_admin_asset(写入 bp_asset_data_status.last_probe_kind)。
+    保存资产的门禁据此放行: unreachable 允许保存(由后台 ingest 补拉), invalid 拦截。
+
+    判据是**错误形状**而非「哪个源」, 因为限频/反爬的形态在不同源下是一样的:
+      - 'invalid'     未知数据源(KeyError: get_adapter)、代码不存在(SymbolNotFoundError)
+                      或上游 4xx —— 这些重试一万次也不会变, 必须让用户改输入。
+      - 'unreachable' 连接被掐断/超时/RemoteDisconnected/SSL/429 限流/整条降级链全灭。
+                      接口本身没问题, 换个时间或换出口 IP 就能拉到, 因此不能卡住交互。
+    """
+    if isinstance(exc, KeyError):
+        # get_adapter: "未知 source: <x>" —— 数据源在注册表里不存在, 属配置错误。
+        return "invalid"
+    if isinstance(exc, SymbolNotFoundError):
+        # 每个源都正常应答却一致为空 —— 代码不存在, 放行只会落一个永远没数据的死标的。
+        return "invalid"
+    if isinstance(exc, UnreachableSourceError):
+        return "unreachable"
+    if isinstance(exc, requests.exceptions.HTTPError):
+        # 上游明确返回的状态码: 4xx(除 408/429)说明请求本身不对(代码不存在/参数非法);
+        # 429 与 5xx 是服务端侧限频/抽风, 归入可重试。
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if status is not None and 400 <= status < 500 and status not in (408, 429):
+            return "invalid"
+        return "unreachable"
+    if type(exc).__name__ == "YFRateLimitError":
+        return "unreachable"
+    if _is_conn_error(exc):
+        return "unreachable"
+    # 未知异常: 保守判为 invalid —— 宁可让用户看到错误信息, 也不放行一个真写错的代码。
+    return "invalid"
 
 
 
