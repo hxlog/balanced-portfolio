@@ -93,6 +93,86 @@ def _ytd_return(nav: pd.Series) -> Optional[float]:
     return float(nav.iloc[-1] / base - 1.0)
 
 
+def _year_base(nav: pd.Series, year: int) -> float:
+    """某年的收益基准净值: 该年首个交易日前一天的净值(年初前最后一个)。
+
+    起始年没有「前一年末」净值时退化为该年首个净值 —— 此时区间收益率即该年内涨幅。
+    """
+    year_start = date(year, 1, 1)
+    prior = [d for d in nav.index if d < year_start]
+    return float(nav.loc[prior[-1]]) if prior else float(nav.iloc[0])
+
+
+def annual_returns(nav: pd.Series, trading_days: int = DEFAULT_TRADING_DAYS) -> dict:
+    """按自然年切分的收益率 + ytd(**全部折算年化**)。
+
+    不完整年份(起始年、当年 YTD)**也折算年化**: 时长 <1 年时直接看累计涨幅会系统性
+    偏低(只有 2 个月的数据自然只涨 2 个月的量), 折算后各列才横向可比。折算口径与
+    `_annualized_return` 一致: growth^(trading_days/n) - 1, n 为该年内实际样本点数。
+
+    注意与 `_ytd_return`(period_returns["ytd"], 「年初至今」的**累计**涨幅)语义不同 ——
+    那是既有的滚动窗口列, 保持累计; 这里的 ytd 是年度表的一列, 与相邻年份同尺度。
+
+    键: 'ytd' + 各年字符串('2025' 等), 年份倒序。
+    """
+    nav = nav.dropna()
+    if nav.empty:
+        return {}
+    idx_years = [pd.Timestamp(d).year for d in nav.index]
+    years = sorted(set(idx_years), reverse=True)
+    if not years:
+        return {}
+
+    def _annualize(seg, base: float) -> float:
+        if seg.empty:
+            return 0.0
+        growth = float(seg.iloc[-1] / base) if base > 0 else 0.0
+        n = len(seg)
+        # growth<=0 时幂运算会炸, 退化为累计涨幅(nav 归零的极端情形, 年化无意义)。
+        return float(growth ** (trading_days / n) - 1.0) if n > 0 and growth > 0 else growth - 1.0
+
+    out: dict[str, Optional[float]] = {}
+    for y in years:
+        seg = nav[[g == y for g in idx_years]]
+        out[str(y)] = _annualize(seg, _year_base(nav, y))
+    # ytd: 与「今年」那一列同段同基, 只是年份取末个样本所在年。
+    this_year = years[0]
+    out["ytd"] = _annualize(
+        nav[[g == this_year for g in idx_years]], _year_base(nav, this_year)
+    )
+    return out
+
+
+def annual_vols(nav: pd.Series, trading_days: int = DEFAULT_TRADING_DAYS) -> dict:
+    """按自然年切分的波动率(年内日收益标准差 × √年交易日数)。
+
+    取 nav 而非 rets 作为入参, 是为了让**键集与 `annual_returns` 完全一致**
+    (年度表的行/列要对齐; 首年只有 1 个净值点时收益仍应有该列, 波动率显示为 None)。
+
+    与现有 `_period_vol` 同尺度(恒年化), 便于与「区间波动率」横向对照。
+    年内少于 2 个收益样本的年份返回 None。
+    键: 'ytd' + 各年字符串; 不含 'annualized' —— 全区间年化由调用方从
+    `annualized_vol` 直接取, 避免同一口径算两遍(且那是「全区间」不是「某一年」)。
+    """
+    nav = nav.dropna()
+    if nav.empty:
+        return {}
+    rets = nav.pct_change().dropna()
+    idx_years = [pd.Timestamp(d).year for d in nav.index]
+    years = sorted(set(idx_years), reverse=True)
+    if not years:
+        return {}
+    ret_years = [pd.Timestamp(d).year for d in rets.index]
+
+    def _vol(y: int) -> Optional[float]:
+        seg = rets[[g == y for g in ret_years]]
+        return _annualized_vol(seg, trading_days) if len(seg) > 1 else None
+
+    out: dict[str, Optional[float]] = {str(y): _vol(y) for y in years}
+    out["ytd"] = _vol(years[0])
+    return out
+
+
 def daily_expected_return(rets: pd.Series) -> float:
     """日收益率期望（算术平均）。"""
     return float(rets.mean()) if len(rets) > 0 else 0.0
@@ -186,6 +266,13 @@ def compute_metrics(
     period_vols = {k: _period_vol(rets, w, trading_days) for k, w in PERIOD_WINDOWS.items()}
     period_vols["annualized"] = ann_vol
 
+    # 年度表(自然年 + YTD + 全区间年化)。'annualized' 直接复用上面已算好的值,
+    # 前端据此把该列与「区间收益率与波动率」表的 annualized 列对齐(同一个数)。
+    ann_ret_map = annual_returns(nav, trading_days)
+    ann_ret_map["annualized"] = ann_ret
+    ann_vol_map = annual_vols(nav, trading_days)
+    ann_vol_map["annualized"] = ann_vol
+
     return {
         "annualized_return": ann_ret,
         "annualized_vol": ann_vol,
@@ -200,6 +287,8 @@ def compute_metrics(
         "end_date": str(nav.index[-1]),
         "period_returns": period_returns,
         "period_vols": period_vols,
+        "annual_returns": ann_ret_map,
+        "annual_vols": ann_vol_map,
         "daily_expected_return": daily_expected_return(rets),
         "annualized_expected_return": annualized_expected_return(rets, trading_days),
         "daily_volatility": daily_volatility(rets),
