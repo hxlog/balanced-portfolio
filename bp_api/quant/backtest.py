@@ -22,6 +22,7 @@ from typing import Callable, Optional
 import numpy as np
 import pandas as pd
 
+from .coverage import available_at, effective_min_window, union_calendar
 from .optimizer import optimize
 
 
@@ -57,11 +58,9 @@ class BacktestResult:
 
 
 def _union_calendar(prices: pd.DataFrame) -> list:
-    """各成分有效交易日的并集(排序)。"""
-    all_dates: set = set()
-    for col in prices.columns:
-        all_dates.update(prices[col].dropna().index)
-    return sorted(all_dates)
+    """各成分有效交易日的并集(排序)。实现下沉到 coverage.union_calendar —— 那里是
+    「未覆盖」判定与回测准入条件的共同事实源(UI 与引擎必须逐字一致)。"""
+    return union_calendar(prices)
 
 
 def _filter_quadrants(
@@ -100,13 +99,8 @@ def run_backtest(
         raise ValueError("无成分资产")
     n = len(assets)
 
-    if min_window < 2:
-        min_window = 2
-    # 滚动窗口实际长度 m = min(end_idx, lookback) ≤ lookback; 若 min_window > lookback,
-    # available_assets() 永远因 m < min_window 返回空, 短窗口回测(如 lookback=55)
-    # 会一直报"数据不足以从指定开始日回测"。允许 lookback < min_window, 自动收紧。
-    if min_window > lookback:
-        min_window = lookback
+    # 窗口收紧口径与 coverage.py 同源(那边也要用同一套判据算「未覆盖」)。
+    min_window = effective_min_window(min_window, lookback)
 
     price_dates = _union_calendar(prices)
     if len(price_dates) < min_window + 2:
@@ -133,14 +127,8 @@ def run_backtest(
         return max(1, end_idx - lookback + 1), end_idx
 
     def available_assets(end_idx: int) -> list[str]:
-        if end_idx < 1:
-            return []
-        a, b = _win_bounds(end_idx)
-        m = b - a + 1
-        if m < min_window:
-            return []
-        cnt = cum_valid[b] - (cum_valid[a - 1] if a > 0 else 0)
-        return [asset for i, asset in enumerate(assets) if cnt[i] == m]
+        # 判据与 coverage.available_at 同源(UI 的「未覆盖」提示必须与引擎准入一致)。
+        return available_at(assets, cum_valid, end_idx, lookback, min_window)
 
     def _moments(end_idx: int, avail: list[str]) -> tuple[np.ndarray, np.ndarray]:
         a, b = _win_bounds(end_idx)

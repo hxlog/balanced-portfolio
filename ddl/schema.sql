@@ -21,6 +21,10 @@
 -- 49 merged: bp_asset_data_status.last_probe_kind —— probe 结论分三类(ok/unreachable/invalid),
 --            让「接口可达但本次被反爬/限频挡住」的品种也能保存, 由后台 ingest 补拉。
 --            已部署环境见 ddl/49_asset_probe_kind.sql。
+-- 50 merged: bp_asset_data_status.first_clean_date(最早清洗日) + bp_backtest_coverage
+--            (每次回测的成分覆盖判定: 引擎的真实准入条件是「窗口内攒够 min_window 个
+--            真实收盘日」, 不能用 first_clean_date > effective_start 近似, 故算好落库)。
+--            已部署环境的建列/建表/回填见 ddl/50_asset_date_coverage.sql。
 -- =====================================================================
 
 CREATE EXTENSION IF NOT EXISTS timescaledb;
@@ -366,6 +370,18 @@ CREATE TABLE IF NOT EXISTS bp_backtest_attribution (
     CONSTRAINT pk_bp_backtest_attribution PRIMARY KEY (portfolio_id, method, benchmark_key)
 );
 
+-- 50: 成分覆盖判定(与 method 无关 —— 四种方法共用同一价格面板与同一 effective_start)。
+CREATE TABLE IF NOT EXISTS bp_backtest_coverage (
+    portfolio_id       BIGINT  NOT NULL REFERENCES bp_portfolio(portfolio_id) ON DELETE CASCADE,
+    symbol             TEXT    NOT NULL,
+    source             TEXT    NOT NULL,
+    first_date         DATE,
+    last_date          DATE,
+    first_covered_date DATE,
+    covered_at_start   BOOLEAN NOT NULL,
+    CONSTRAINT pk_bp_backtest_coverage PRIMARY KEY (portfolio_id, symbol, source)
+);
+
 CREATE TABLE IF NOT EXISTS bp_task (
     task_id          UUID        PRIMARY KEY,
     celery_id        TEXT,
@@ -404,6 +420,9 @@ CREATE TABLE IF NOT EXISTS bp_asset_data_status (
     source          TEXT        NOT NULL REFERENCES bp_data_source(code),
     last_raw_date   DATE,
     last_clean_date DATE,
+    -- 50: 最早一条清洗行情日。与 last_clean_date 一样只在 with_count=True 的刷新分支
+    -- 随 MAX/COUNT 一起写(同一次扫描), 热路径不覆盖 —— 守住 COUNT 分级不变式。
+    first_clean_date DATE,
     raw_rows        BIGINT      NOT NULL DEFAULT 0,
     clean_rows      BIGINT      NOT NULL DEFAULT 0,
     last_success_at TIMESTAMPTZ,
