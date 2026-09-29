@@ -21,6 +21,7 @@ from .schemas import (
     AssetSelectableIn,
     ChangePasswordIn,
     CopyPortfolioIn,
+    CoveragePreviewIn,
     CreatePortfolioIn,
     CreateUserIn,
     DisableTotpIn,
@@ -252,6 +253,34 @@ def get_assets() -> dict:
     with db.get_conn() as conn:
         assets = repo.list_assets(conn)
     return {"assets": assets}
+
+
+@app.post("/api/coverage/preview")
+def preview_coverage(
+    payload: CoveragePreviewIn,
+    user: auth.UserContext = Depends(auth.require_user),
+) -> dict:
+    """「保存并重算」前的行情覆盖预览(只读, 不落库)。
+
+    判定口径与回测落库路径、/dashboard 完全同源(`repositories.preview_coverage`
+    → `quant.coverage.compute_coverage`), 因为「未覆盖」的判据是引擎的准入条件
+    (窗口内攒够 min_window 个真实收盘日), 不是「有没有数据」—— 前端若自行用
+    日期大小近似就会漏报。
+
+    尚无清洗行情的资产(新加标的的典型状态)不报错, 以 first_date=None 返回。
+    """
+    pairs: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for a in payload.assets:
+        t = (a.symbol, a.source)
+        if t not in seen:
+            seen.add(t)
+            pairs.append(t)
+    with db.get_conn() as conn:
+        rows = repo.preview_coverage(
+            conn, pairs, payload.start_date, payload.lookback_days, settings
+        )
+    return {"assets": rows, "start_date": payload.start_date, "lookback_days": payload.lookback_days}
 
 
 @app.get("/api/portfolios")

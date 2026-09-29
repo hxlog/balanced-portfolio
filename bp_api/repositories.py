@@ -21,6 +21,7 @@ from psycopg.types.json import Json
 
 from .quant.attribution import compute_attribution
 from .quant.backtest import BacktestResult, run_backtest
+from .quant.coverage import compute_coverage
 from .quant.metrics import compute_metrics
 from .quant.optimizer import build_quadrant_assets
 from .schemas import CreatePortfolioIn, UpdatePortfolioIn
@@ -290,7 +291,8 @@ def list_assets(conn: psycopg.Connection) -> list[dict]:
                    COALESCE(s.logical_source, c.source) AS logical_source,
                    st.last_clean_date,
                    c.currency,
-                   {lag_sql} AS lag_trading_days
+                   {lag_sql} AS lag_trading_days,
+                   st.first_clean_date
             FROM bp_index_config c
             JOIN bp_data_source s ON s.code = c.source
             LEFT JOIN bp_asset_data_status st
@@ -315,6 +317,9 @@ def list_assets(conn: psycopg.Connection) -> list[dict]:
                 # 与 list_admin_assets 同门槛: 永不产出行(NULL)不算滞后。/
                 # builder 的资产池只含在售资产, 软删除/停用的本就不在此列表。
                 "is_lagging": bool(r[10] is not None and r[10] >= LAG_TRADING_DAYS_THRESHOLD),
+                # 50: 最早清洗日 —— builder 展示「起始日 - 截止日」区间用。
+                # 只在 with_count 分支刷新, 故老行可能为 NULL(展示层降级为只显示截止日)。
+                "first_clean_date": r[11],
             }
             for r in cur.fetchall()
         ]
@@ -784,6 +789,9 @@ def run_and_save(
 
         default_method = pdef.method if pdef.method in computed else next(iter(computed))
         eff = computed[default_method][0].effective_start
+        # 50: 成分覆盖判定(「回测开始日是否覆盖该标的」)。与 method 无关 —— 四种方法共用
+        # 同一价格面板与同一 effective_start, 故只算一次、只落一行/成分。
+        coverage = _compute_coverage(pdef, prices, settings, eff)
         # 预计算候选基准净值(method 无关, 用默认方法的 nav 日期)
         dates = list(computed[default_method][0].nav.index)
         bench_navs = _compute_benchmark_navs(conn, dates)
@@ -809,6 +817,7 @@ def run_and_save(
                     logger.exception("绩效归因计算失败 pid=%s method=%s benchmark=%s", pid, method, bkey)
 
         _save_benchmarks(conn, pid, bench_navs)
+        _save_coverage(conn, pid, coverage)
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE bp_portfolio SET status='done', error=NULL, effective_start_date=%s, "
@@ -841,6 +850,91 @@ def run_and_save(
             )
         conn.commit()
         raise
+
+
+def _coverage_rows(prices: pd.DataFrame, lookback: int, min_window: int,
+                   user_start, effective_start) -> list[dict]:
+    """把 compute_coverage 的结果摊成落库行(带 symbol/source 拆分)。
+
+    资产 key 形如 `symbol@source`; source 自身不含 '@', 故 rsplit 是安全的
+    (与 _build_actual_holdings 里的既有写法一致)。
+    """
+    cov = compute_coverage(prices, lookback=lookback, min_window=min_window, user_start=user_start)
+    # 自检: 覆盖判定用的起点必须与引擎实际采用的起点一致, 否则 UI 会报出引擎不认可的风险。
+    if cov["effective_start"] is not None and effective_start is not None:
+        assert cov["effective_start"] == effective_start, (
+            f"coverage.effective_start={cov['effective_start']} != engine={effective_start}"
+        )
+    rows = []
+    for a in cov["assets"]:
+        symbol, _, source = a["key"].rpartition("@")
+        rows.append({
+            "symbol": symbol, "source": source,
+            "first_date": a["first_date"], "last_date": a["last_date"],
+            "first_covered_date": a["first_covered_date"],
+            "covered_at_start": a["covered_at_start"],
+        })
+    return rows
+
+
+def _compute_coverage(
+    pdef: PortfolioDef, prices: pd.DataFrame, settings: ApiSettings, effective_start
+) -> list[dict]:
+    """回测落库路径用的覆盖判定(口径与变更对话框的 preview 端点完全同一份)。"""
+    return _coverage_rows(
+        prices, pdef.lookback_days, settings.min_window, pdef.start_date, effective_start
+    )
+
+
+def preview_coverage(
+    conn: psycopg.Connection,
+    pairs: list[tuple[str, str]],
+    start_date,
+    lookback_days: int,
+    settings: ApiSettings,
+) -> list[dict]:
+    """变更对话框用: 尚**未**落库的一批资产在给定回测起点下是否被行情覆盖。
+
+    与回测落库路径调用同一个 `compute_coverage`, 故前端拿到的判定与 /dashboard
+    严格一致(含「有数据但攒不够 min_window」这种靠 first_clean_date 近似会漏报的情形)。
+
+    容忍「尚无清洗行情」的资产: `load_price_panel` 对这类资产会 raise, 但那恰恰是
+    本次新增标的的典型状态 —— 必须能提示用户而不是 500。故把这类资产从面板里摘出去
+    (面板只剩有数据的), 最后再补上 `first_date=None` 的占位行; 这样既不影响其余
+    资产的窗口判定, 也不会丢掉「这个标的还没数据」这条信息。
+    """
+    seen: list[tuple[str, str]] = []
+    for pair in pairs:
+        if pair not in seen:
+            seen.append(pair)
+
+    loaded: dict[str, pd.Series] = {}
+    missing: list[tuple[str, str]] = []
+    for symbol, source in seen:
+        try:
+            s = _load_series(conn, symbol, source)
+        except Exception:  # noqa: BLE001 - 单个资产读取失败不应使整次预览失败
+            logger.exception("preview_coverage 读取失败 symbol=%s source=%s", symbol, source)
+            s = pd.Series(dtype="float64")
+        if s.empty:
+            missing.append((symbol, source))
+        else:
+            loaded[asset_key(symbol, source)] = s
+
+    by_key: dict[str, dict] = {}
+    if loaded:
+        panel = pd.DataFrame(loaded).sort_index()
+        for r in _coverage_rows(panel, lookback_days, settings.min_window, start_date, None):
+            by_key[asset_key(r["symbol"], r["source"])] = r
+    for symbol, source in missing:
+        by_key[asset_key(symbol, source)] = {
+            "symbol": symbol, "source": source,
+            "first_date": None, "last_date": None,
+            "first_covered_date": None, "covered_at_start": False,
+        }
+
+    # 保持入参顺序(与前端列表顺序一致, 便于逐行对照)
+    return [by_key[asset_key(s, src)] for s, src in seen]
 
 
 def _compute(
@@ -987,6 +1081,27 @@ def _save_benchmarks(
                 "VALUES (%s,%s,%s,%s,%s)",
                 rows,
             )
+
+
+def _save_coverage(conn: psycopg.Connection, pid: int, coverage: list[dict]) -> None:
+    """落库成分覆盖判定(50)。与 method 无关, 故每次回测整体替换一次。"""
+    if not coverage:
+        return
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM bp_backtest_coverage WHERE portfolio_id=%s", (pid,))
+        cur.executemany(
+            "INSERT INTO bp_backtest_coverage "
+            "  (portfolio_id, symbol, source, first_date, last_date, first_covered_date, covered_at_start) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s) "
+            "ON CONFLICT (portfolio_id, symbol, source) DO UPDATE SET "
+            "  first_date=EXCLUDED.first_date, last_date=EXCLUDED.last_date, "
+            "  first_covered_date=EXCLUDED.first_covered_date, covered_at_start=EXCLUDED.covered_at_start",
+            [
+                (pid, r["symbol"], r["source"], r["first_date"], r["last_date"],
+                 r["first_covered_date"], r["covered_at_start"])
+                for r in coverage
+            ],
+        )
 
 
 def _save_attribution(conn: psycopg.Connection, pid: int, method: str, benchmark_key: str, attribution: dict) -> None:
@@ -1370,6 +1485,14 @@ def get_result(
         )
         cov_row = cur.fetchone()
 
+        # 50: 成分行情覆盖判定(与 method 无关, 全组合一行/成分)。请求路径只读表。
+        cur.execute(
+            "SELECT symbol, source, first_date, last_date, first_covered_date, covered_at_start "
+            "FROM bp_backtest_coverage WHERE portfolio_id=%s ORDER BY covered_at_start, first_date NULLS LAST, symbol",
+            (pid,),
+        )
+        coverage_rows = cur.fetchall()
+
         cur.execute(
             "SELECT payload FROM bp_backtest_attribution WHERE portfolio_id=%s AND method=%s AND benchmark_key=%s",
             (pid, sel, bsel),
@@ -1462,6 +1585,17 @@ def get_result(
                 as_of_date,
             )
 
+    coverage = [
+        {
+            "key": asset_key(r[0], r[1]),
+            "symbol": r[0], "source": r[1],
+            "name": name_map.get(asset_key(r[0], r[1]), {}).get("display_name") or r[0],
+            "first_date": r[2], "last_date": r[3],
+            "first_covered_date": r[4], "covered_at_start": bool(r[5]),
+        }
+        for r in coverage_rows
+    ]
+
     return {
         "portfolio": portfolio, "nav": nav, "rebalances": rebalances,
         "metrics": metrics, "holdings": holdings,
@@ -1469,6 +1603,7 @@ def get_result(
         "actual_holdings": actual_holdings,
         "quadrant_weights": quadrant_weights, "corr": corr,
         "attribution": attribution,
+        "coverage": coverage,
         "method": sel, "available_methods": available,
         "method_summaries": summaries,
         "benchmark": bsel,
@@ -1555,7 +1690,8 @@ def list_admin_assets(conn: psycopg.Connection) -> list[dict]:
                       c.is_selectable, c.extra_params->>'adjust' AS adjust,
                       COALESCE(s.logical_source, c.source) AS logical_source,
                       c.currency,
-                      {lag_sql} AS lag_trading_days
+                      {lag_sql} AS lag_trading_days,
+                      st.first_clean_date
                FROM bp_index_config c
                JOIN bp_data_source s ON s.code = c.source
                LEFT JOIN bp_asset_data_status st
@@ -1600,6 +1736,8 @@ def list_admin_assets(conn: psycopg.Connection) -> list[dict]:
                     and r[19] is not None
                     and r[19] >= LAG_TRADING_DAYS_THRESHOLD
                 ),
+                # 50: 最早清洗日(管理端「状态」列展示日期区间用)
+                "first_clean_date": r[20],
             }
             for r in cur.fetchall()
         ]
@@ -1736,9 +1874,10 @@ def refresh_asset_status(
     - with_count=False(默认, 热路径): 只跑两条 MAX(trade_date)(hypertable 的 PK 是
       per-chunk 索引, 无时间谓词的 MAX 需跨 chunk 聚合——比 COUNT 便宜, 但并非
       index-cheap 的单索引点查);
-      upsert 的 INSERT 列表与 DO UPDATE SET 均不含 raw_rows/clean_rows ——
-      既有行保留库中上次校准值(如 999 不被清零), 新行靠 DEFAULT 0。
-    - with_count=True(数据推进后/管理端手动刷新): MAX+COUNT 一起查, 写回真实行数。
+      upsert 的 INSERT 列表与 DO UPDATE SET 均不含 raw_rows/clean_rows/first_clean_date ——
+      既有行保留库中上次校准值(如 999 不被清零), 新行靠 DEFAULT/NULL。
+    - with_count=True(数据推进后/管理端手动刷新): MIN+MAX+COUNT 一起查(同一次扫描,
+      零额外查询), 写回真实行数与最早清洗日(50 号)。
     last_success_at 的 COALESCE 语义(失败刷新不清空上次成功时间)两条分支一致。
 
     probe_kind(49 号)同样用 COALESCE 保留: 它描述的是「(symbol, source) 这个接口能不能用」,
@@ -1754,19 +1893,22 @@ def refresh_asset_status(
                 (symbol, source),
             )
             raw_date, raw_rows = cur.fetchone()
+            # 50: MIN 与 MAX/COUNT 同一次扫描随身取回, 不给热路径增加查询。
             cur.execute(
-                "SELECT MAX(trade_date), COUNT(*) FROM bp_quote_clean WHERE symbol=%s AND source=%s",
+                "SELECT MIN(trade_date), MAX(trade_date), COUNT(*) FROM bp_quote_clean WHERE symbol=%s AND source=%s",
                 (symbol, source),
             )
-            clean_date, clean_rows = cur.fetchone()
+            clean_first, clean_date, clean_rows = cur.fetchone()
             cur.execute(
                 """INSERT INTO bp_asset_data_status
-                     (symbol, source, last_raw_date, last_clean_date, raw_rows, clean_rows,
+                     (symbol, source, last_raw_date, last_clean_date, first_clean_date,
+                      raw_rows, clean_rows,
                       last_success_at, last_error, last_probe_ms, last_probe_kind)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                    ON CONFLICT (symbol, source) DO UPDATE SET
                      last_raw_date=EXCLUDED.last_raw_date,
                      last_clean_date=EXCLUDED.last_clean_date,
+                     first_clean_date=EXCLUDED.first_clean_date,
                      raw_rows=EXCLUDED.raw_rows,
                      clean_rows=EXCLUDED.clean_rows,
                      last_success_at=COALESCE(EXCLUDED.last_success_at, bp_asset_data_status.last_success_at),
@@ -1774,7 +1916,7 @@ def refresh_asset_status(
                      last_probe_ms=EXCLUDED.last_probe_ms,
                      last_probe_kind=COALESCE(EXCLUDED.last_probe_kind, bp_asset_data_status.last_probe_kind),
                      updated_at=now()""",
-                (symbol, source, raw_date, clean_date, raw_rows or 0, clean_rows or 0, success_at, error, probe_ms, probe_kind),
+                (symbol, source, raw_date, clean_date, clean_first, raw_rows or 0, clean_rows or 0, success_at, error, probe_ms, probe_kind),
             )
         else:
             cur.execute(

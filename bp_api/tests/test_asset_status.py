@@ -77,26 +77,45 @@ def test_refresh_asset_status_without_count_upsert_preserves_existing_rows():
 
 
 def test_refresh_asset_status_with_count_writes_real_counts():
-    """with_count=True: MAX+COUNT 都查, upsert 含 raw_rows/clean_rows 写回真实行数(现状行为)。"""
+    """with_count=True: MIN+MAX+COUNT 都查, upsert 含 raw_rows/clean_rows/first_clean_date。"""
     from bp_api.repositories import refresh_asset_status
 
     with _mock_conn() as (conn, cur):
         cur.fetchone.side_effect = [
-            (date(2026, 9, 4), 1500),   # raw MAX + COUNT
-            (date(2026, 9, 4), 1498),   # clean MAX + COUNT
+            (date(2026, 9, 4), 1500),                        # raw MAX + COUNT
+            (date(2021, 3, 1), date(2026, 9, 4), 1498),      # clean MIN + MAX + COUNT
         ]
         refresh_asset_status(conn, "510300", "etf_em", with_count=True)
     sqls = _execs(cur)
     assert len(sqls) == 3
     assert "COUNT(*)" in sqls[0] and "MAX(trade_date)" in sqls[0]
-    assert "COUNT(*)" in sqls[1] and "MAX(trade_date)" in sqls[1]
+    # 50: MIN 与 MAX/COUNT 同一次扫描取回(不给热路径加查询)
+    assert "MIN(trade_date)" in sqls[1] and "MAX(trade_date)" in sqls[1] and "COUNT(*)" in sqls[1]
     upsert = sqls[2]
     assert "raw_rows=EXCLUDED.raw_rows" in upsert
     assert "clean_rows=EXCLUDED.clean_rows" in upsert
+    assert "first_clean_date=EXCLUDED.first_clean_date" in upsert
     params = cur.execute.call_args_list[2][0][1]
-    assert params[:6] == ("510300", "etf_em", date(2026, 9, 4), date(2026, 9, 4), 1500, 1498)
-    assert params[6] is not None  # success_at(error=None → now)
-    assert params[7] is None and params[8] is None  # error / probe_ms
+    assert params[:7] == (
+        "510300", "etf_em", date(2026, 9, 4), date(2026, 9, 4), date(2021, 3, 1), 1500, 1498,
+    )
+    assert params[7] is not None  # success_at(error=None → now)
+    assert params[8] is None and params[9] is None  # error / probe_ms
+
+
+def test_refresh_asset_status_without_count_preserves_first_clean_date():
+    """热路径不得触碰 first_clean_date: INSERT 列表与 DO UPDATE SET 都无该列, 既有值原样保留。
+
+    与 raw_rows/clean_rows 同一分级原则 —— 老库若因一次 probe 就把校准值抹成 NULL,
+    builder 的「起始日」会整列退化成只显示截止日。
+    """
+    from bp_api.repositories import refresh_asset_status
+
+    with _mock_conn() as (conn, cur):
+        cur.fetchone.side_effect = [(date(2026, 9, 4),), (date(2026, 9, 4),)]
+        refresh_asset_status(conn, "510300", "etf_em", with_count=False)
+    upsert = _execs(cur)[2]
+    assert "first_clean_date" not in upsert
 
 
 def test_refresh_asset_status_default_is_without_count():
@@ -116,7 +135,7 @@ def test_refresh_asset_status_count_queries_are_parameterized():
 
     for kwargs in ({}, {"with_count": True}):
         with _mock_conn() as (conn, cur):
-            cur.fetchone.side_effect = [(date(2026, 1, 1), 1), (date(2026, 1, 1), 1)]
+            cur.fetchone.side_effect = [(date(2026, 1, 1), 1), (date(2026, 1, 1), date(2026, 1, 1), 1)]
             refresh_asset_status(conn, "A;b", "src", **kwargs)
         for call in cur.execute.call_args_list:
             sql, params = call[0]
@@ -195,19 +214,23 @@ def test_list_assets_returns_currency():
         cur.fetchone.return_value = (date(2026, 9, 4),)  # _stale_frontier 前沿日
         cur.fetchall.return_value = [
             # symbol, source, category, name, asset_class, vendor, adjust,
-            # logical_source, last_clean_date, currency, lag_trading_days
+            # logical_source, last_clean_date, currency, lag_trading_days, first_clean_date
             ("513500", "etf_em", "etf", "标普500ETF", "equity", "东财", "hfq",
-             "etf_em", date(2026, 9, 4), "USD", 0),
+             "etf_em", date(2026, 9, 4), "USD", 0, date(2013, 12, 6)),
             ("510300", "etf_em", "etf", "沪深300ETF", "equity", "东财", "hfq",
-             "etf_em", date(2026, 9, 4), "CNY", 3),
+             "etf_em", date(2026, 9, 4), "CNY", 3, date(2012, 5, 28)),
         ]
         out = list_assets(conn)
     sql = " ".join(cur.execute.call_args[0][0].split())
     assert "c.currency" in sql
+    assert "st.first_clean_date" in sql
     assert "bp_trading_calendar" in sql  # 落后交易日数来自 A 股交易日历
     by_symbol = {a["symbol"]: a for a in out}
     assert by_symbol["513500"]["currency"] == "USD"
     assert by_symbol["510300"]["currency"] == "CNY"
+    # 50: 最早清洗日透出(builder 展示「起始日 - 截止日」区间)
+    assert by_symbol["513500"]["first_clean_date"] == date(2013, 12, 6)
+    assert by_symbol["510300"]["first_clean_date"] == date(2012, 5, 28)
     # 滞后语义: 落后 >= 2 个交易日才算「滞后」(差 1 日是正常增量节奏)
     assert by_symbol["513500"]["lag_trading_days"] == 0
     assert by_symbol["513500"]["is_lagging"] is False
@@ -222,10 +245,10 @@ def test_list_assets_lagging_boundary():
     with _mock_conn() as (conn, cur):
         cur.fetchone.return_value = (date(2026, 9, 4),)
         cur.fetchall.return_value = [
-            ("A", "s", None, "a", "equity", "v", None, "s", None, "CNY", None),
-            ("B", "s", None, "b", "equity", "v", None, "s", date(2026, 9, 3), "CNY", 1),
-            ("C", "s", None, "c", "equity", "v", None, "s", date(2026, 9, 2), "CNY", 2),
-            ("D", "s", None, "d", "equity", "v", None, "s", date(2026, 9, 1), "CNY", 0),
+            ("A", "s", None, "a", "equity", "v", None, "s", None, "CNY", None, None),
+            ("B", "s", None, "b", "equity", "v", None, "s", date(2026, 9, 3), "CNY", 1, None),
+            ("C", "s", None, "c", "equity", "v", None, "s", date(2026, 9, 2), "CNY", 2, None),
+            ("D", "s", None, "d", "equity", "v", None, "s", date(2026, 9, 1), "CNY", 0, None),
         ]
         out = list_assets(conn)
     by = {a["symbol"]: a for a in out}
@@ -244,20 +267,22 @@ def test_list_admin_assets_returns_currency():
             # symbol, source, category, name, start_date, is_deleted, asset_class, vendor,
             # last_raw_date, last_clean_date, raw_rows, clean_rows,
             # last_success_at, last_error, last_probe_ms, is_selectable, adjust,
-            # logical_source, currency, lag_trading_days
+            # logical_source, currency, lag_trading_days, first_clean_date
             ("000300", "cn_index_em", "index", "沪深300", None, 0, "equity", "东财",
              date(2026, 9, 4), date(2026, 9, 4), 2200, 2190,
              None, None, None, True, None,
-             "cn_index_em", "CNY", 0),
+             "cn_index_em", "CNY", 0, date(2005, 4, 8)),
         ]
         out = list_admin_assets(conn)
     sql = " ".join(cur.execute.call_args[0][0].split())
     assert "c.currency" in sql
+    assert "st.first_clean_date" in sql
     assert "bp_trading_calendar" in sql
     assert out[0]["currency"] == "CNY"
     assert out[0]["raw_rows"] == 2200  # 既有字段不回归
     assert out[0]["lag_trading_days"] == 0
     assert out[0]["is_lagging"] is False
+    assert out[0]["first_clean_date"] == date(2005, 4, 8)
 
 
 # ---------------------------------------------------------------------

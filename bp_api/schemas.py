@@ -162,6 +162,27 @@ class AssetProbeIn(BaseModel):
     extra_params: dict = Field(default_factory=dict)
 
 
+class CoverageAssetIn(BaseModel):
+    """覆盖预览的最小资产标识(只有 key 两件套)。
+
+    刻意不复用 `AssetIn`: 它的 `quadrant` 是必填, 而覆盖判定与象限无关 ——
+    复用会逼前端为「只是预览一下」而补一个无意义的象限字段。
+    """
+    symbol: str
+    source: str
+
+
+class CoveragePreviewIn(BaseModel):
+    """「保存并重算」前预览: 这批资产在给定回测起点下是否已被行情覆盖。
+
+    lookback 与组合编辑表单里的一致(默认 156); min_window 不对外暴露 —— 它是
+    服务端参数(BP_MIN_WINDOW), 由端点自己注入, 免得两个口径。
+    """
+    assets: list[CoverageAssetIn]
+    start_date: date
+    lookback_days: int = Field(default=156, ge=2)
+
+
 class TaskOut(BaseModel):
     task_id: str
     task_type: str

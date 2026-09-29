@@ -109,3 +109,34 @@ def test_asset_portfolio_refs_repository_shape():
     ]
     # 同一资产在组合里多行(不同象限)只应出现一次 —— SQL 侧已 DISTINCT, 这里固化返回形状
     assert len(by_key) == 2
+
+
+def test_coverage_preview_route_registered():
+    """DDL 50: POST /api/coverage/preview 必须存在且挂 require_user。"""
+    import inspect
+
+    from bp_api import auth, main
+
+    assert "POST" in _route_methods("/api/coverage/preview")
+    sig = inspect.signature(main.preview_coverage)
+    dep = sig.parameters["user"].default
+    assert getattr(dep, "dependency", None) is auth.require_user
+
+
+def test_coverage_preview_body_takes_minimal_asset_identity():
+    """请求体只要 (symbol, source) —— 覆盖判定与象限无关, 不逼前端补 quadrant。
+
+    曾经用 AssetIn 导致真实调用 422(quadrant 必填), 这里锁死最小体。
+    """
+    from bp_api.schemas import CoverageAssetIn, CoveragePreviewIn
+
+    assert set(CoverageAssetIn.model_fields) == {"symbol", "source"}
+    body = CoveragePreviewIn.model_validate(
+        {
+            "assets": [{"symbol": "159611", "source": "etf_em"}],
+            "start_date": "2020-01-01",
+            "lookback_days": 156,
+        }
+    )
+    assert body.assets[0].symbol == "159611"
+    assert body.lookback_days == 156
