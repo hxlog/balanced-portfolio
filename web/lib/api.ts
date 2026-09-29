@@ -288,6 +288,8 @@ export interface Asset {
   adjust?: string;   // 复权: bfq/qfq/hfq(仅 ETF; 缺省视为不复权)
   logical_source?: string;  // 逻辑源分组(etf/cn_index/hk_index/global_index/...), 用于隐藏物理 vendor
   last_clean_date?: string | null;  // 该资产最新清洗日
+  /** 该资产**最早**清洗日(DDL 50); 仅 with_count 校正路径与回填迁移写入, 老库可能为 null */
+  first_clean_date?: string | null;
   is_stale?: boolean;  // 是否落后于平台最新清洗日(断更/未到最新)
   /** 相对平台最新清洗日落后的**交易日数**(按 CN 交易日历数); 字段缺失(旧后端)视为 null */
   lag_trading_days?: number | null;
@@ -302,6 +304,32 @@ export interface NavPoint {
   benchmark_nav?: number | null;
   ret?: number | null;
   bench_ret?: number | null;
+}
+
+/**
+ * 成分行情覆盖判定(DDL 50)。语义见 web/lib/asset-range.ts —— 判定一律由后端
+ * `quant.coverage.compute_coverage` 给出, 前端不做近似。
+ */
+export interface AssetCoverage {
+  key: string;              // symbol@source
+  symbol: string;
+  source: string;
+  name: string;             // 组合内展示名(display_name 优先)
+  first_date?: string | null;        // 首个清洗日(无清洗行时为 null)
+  last_date?: string | null;         // 末个清洗日
+  /** 首个「真正拿到权重」的交易日(引擎准入: 窗口内攒够 min_window 个真实收盘日) */
+  first_covered_date?: string | null;
+  /** 回测起点时该成分是否已参与; 为 false 即「回测开始日期未覆盖该标的」 */
+  covered_at_start: boolean;
+}
+
+export interface CoveragePreviewItem {
+  symbol: string;
+  source: string;
+  first_date?: string | null;
+  last_date?: string | null;
+  first_covered_date?: string | null;
+  covered_at_start: boolean;
 }
 
 export interface Rebalance {
@@ -347,6 +375,14 @@ export interface Metrics {
   end_date: string;
   period_returns: Record<string, number | null>;
   period_vols: Record<string, number | null>;
+  /**
+   * 按自然年切分的收益率/波动率(键: 'ytd' + 各年字符串, 年份倒序 + 'annualized')。
+   * **不完整年份也折算年化**, 故与 period_returns 的累计口径不同 —— 年度表是同尺度横向可比
+   * (见 bp_api/quant/metrics.annual_returns 的说明)。'annualized' 与 annualized_return /
+   * annualized_vol 同值。旧后端/未重算的组合可能缺这两个字段。
+   */
+  annual_returns?: Record<string, number | null>;
+  annual_vols?: Record<string, number | null>;
   daily_expected_return?: number | null;
   annualized_expected_return?: number | null;
   daily_volatility?: number | null;
@@ -447,6 +483,8 @@ export interface BacktestResult {
   quadrant_weights?: Record<string, number> | null;
   corr: { labels: string[]; matrix: number[][]; cov?: number[][] };
   attribution?: Attribution | null;
+  /** 成分行情覆盖判定(DDL 50); 缺省 = 该组合尚未用新版本重算过 */
+  coverage?: AssetCoverage[];
   method?: string;
   available_methods?: string[];
   method_summaries?: MethodSummary[];
@@ -552,6 +590,8 @@ export interface AdminAsset {
   logical_source?: string | null;
   last_raw_date?: string | null;
   last_clean_date?: string | null;
+  /** 该资产**最早**清洗日(DDL 50); 仅 with_count 校正路径与回填迁移写入, 老库可能为 null */
+  first_clean_date?: string | null;
   raw_rows: number;
   clean_rows: number;
   last_success_at?: string | null;
@@ -685,6 +725,19 @@ function sleep(ms: number) {
 
 export const api = {
   getAssets: () => req<{ assets: Asset[] }>("/api/assets"),
+  /**
+   * 「保存并重算」前的行情覆盖预览(DDL 50)。判定与 /dashboard 同源(后端 compute_coverage),
+   * 故前端拿到的「未覆盖」与回测引擎真实采用的准入条件一致。
+   */
+  previewCoverage: (body: {
+    assets: Array<{ symbol: string; source: string }>;
+    start_date: string;
+    lookback_days: number;
+  }) =>
+    req<{ assets: CoveragePreviewItem[]; start_date: string; lookback_days: number }>(
+      "/api/coverage/preview",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
   listPortfolios: () => req<{ portfolios: PortfolioInfo[] }>("/api/portfolios"),
   getDemo: (portfolioId?: number, method?: string, benchmark?: string) =>
     req<BacktestResult>(

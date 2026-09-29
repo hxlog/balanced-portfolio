@@ -846,7 +846,12 @@ export default function AdminAssetsPage() {
                             <span className="text-muted-foreground">—</span>
                           )}
                         </div>
-                        <div className="text-muted-foreground">{a.last_clean_date || "-"}</div>
+                        <div className="text-muted-foreground">
+                          {/* 50 号新增最早清洗日: 与截止日一起给出区间, 便于判断该标的历史够不够。
+                              老行可能为 NULL(该列仅 with_count 校正路径与回填迁移写入)。 */}
+                          {a.first_clean_date ? `${a.first_clean_date} ~ ` : ""}
+                          {a.last_clean_date || "-"}
+                        </div>
                       </TableCell>
                       <TableCell className="w-10 px-2 text-center" title={a.last_error ?? ""}>
                         {a.last_error ? (
