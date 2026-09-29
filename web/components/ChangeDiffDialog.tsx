@@ -1,10 +1,13 @@
 "use client";
 
+import { AlertTriangle } from "lucide-react";
+
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { NO_DATA_LABEL } from "@/lib/asset-range";
 
 export interface DiffRow {
   label: string;
@@ -16,6 +19,22 @@ export interface AssetDiff {
   added: { label: string; quadrant: string }[];
   removed: { label: string; quadrant: string }[];
   moved: { label: string; from: string; to: string }[];
+}
+
+/**
+ * 「行情覆盖提示」的一行 —— 由 /builder 计算好(格式化与色调判据统一在 lib/asset-range.ts),
+ * 弹窗只负责渲染, 免得这里再写一份判据。
+ */
+export interface CoverageNotice {
+  key: string;
+  /** 展示名 `名称（代码）` */
+  label: string;
+  /** `2020年1月4日 - 2026年9月25日`, 无数据时为 null */
+  range: string | null;
+  /** lagging=数据滞后 / uncovered=回测起点未覆盖 / nodata=暂无行情数据 */
+  tone: "lagging" | "uncovered" | "nodata";
+  /** 风险说明文案(如「滞后 3 个交易日」) */
+  note: string;
 }
 
 function AssetGroup({ title, className, children }: {
@@ -32,12 +51,14 @@ function AssetGroup({ title, className, children }: {
 }
 
 export function ChangeDiffDialog({
-  open, onOpenChange, diffs, assetDiff, canRecompute, busy, onMetaSave, onRecompute,
+  open, onOpenChange, diffs, assetDiff, coverage, canRecompute, busy, onMetaSave, onRecompute,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   diffs: DiffRow[];
   assetDiff: AssetDiff | null;
+  /** 行情覆盖风险项; 空数组/undefined = 无风险, 该区块不渲染 */
+  coverage?: CoverageNotice[];
   canRecompute: boolean;   // 有回测参数变更时允许重算入口
   busy: boolean;
   onMetaSave: () => void;
@@ -126,6 +147,30 @@ export function ChangeDiffDialog({
           <p className="text-xs text-warning">
             含回测参数变更：仅保存不会更新回测结果，组合将标记为「待重算」。
           </p>
+        )}
+        {/* 行情覆盖提示(DDL 50): 只在有风险项时渲染 —— 全部覆盖时不占位、不制造焦虑。
+            判定与文案均来自后端 compute_coverage(经 /api/coverage/preview), 与 /dashboard 同口径。 */}
+        {coverage && coverage.length > 0 && (
+          <div className="border border-warning/40 bg-warning/5 rounded-lg p-3 space-y-1.5">
+            <div className="text-sm font-medium flex items-center gap-1.5 text-warning">
+              <AlertTriangle className="h-4 w-4" />
+              行情覆盖提示
+            </div>
+            <p className="text-xs text-muted-foreground">
+              以下标的的清洗行情不足以真实反映回测区间, 结果可能失真:
+            </p>
+            <ul className="text-sm space-y-1">
+              {coverage.map((c) => (
+                <li key={c.key} className="flex flex-wrap items-baseline gap-x-2">
+                  <span className="font-medium">{c.label}</span>
+                  <span className="text-muted-foreground tabular-nums">{c.range ?? NO_DATA_LABEL}</span>
+                  <span className={c.tone === "lagging" ? "text-destructive" : "text-warning"}>
+                    {c.note}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>取消</Button>

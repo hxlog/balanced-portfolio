@@ -67,6 +67,7 @@ psql -h localhost -U postgres -d balanced_portfolio -f ddl/schema.sql
 - 求解器：ERC/风险预算用 Spinu 循环坐标下降(CCD)；最大比率用 SLSQP（支持 cov/mean 预算入参 + 上次权重热启动 `x0`）。
 - **无未来函数**：`backtest.py` 用前缀和(cum1/cum2)做滚动增量矩，把每日窗口预算从 O(window·n²) 降到 O(n²)；当日 NAV 用当日收益更新，次日才用新权重。`test_backtest.py` 固定约束：篡改某日之后的收益不得改变该日之前的净值/持仓。
 - 成分逐步纳入：不足 `min_window` 历史的品种权重为 0，不拖后整体 effective_start。
+- **「行情未覆盖」判定的唯一来源是 `quant/coverage.py`**（`compute_coverage`/`_coverage_rows`）：某标的首个「真正拿到权重」的交易日 = 其滚动窗口攒够 `min_window` 个真实收盘日的那天，`covered_at_start = first_covered_date <= effective_start`。它复用 `backtest.py` 的 `_union_calendar` + 窗口判据，`_coverage_rows` 里有一条断言锁死「自己算的 effective_start == 引擎算的」——**禁止**在前端或别处用 `first_clean_date > effective_start` 近似（会漏报「有数据但没攒够 min_window」）。三处消费：落库写 `bp_backtest_coverage`（`run_and_save`，在 method 循环之外，coverage 与 method 无关）、`GET /api/portfolios/{id}` 结果体顶层 `coverage`、变更对话框的 `POST /api/coverage/preview`（同步判定，不落库）。
 - 再平衡：任一品种漂移偏离目标 > `rebalance_band`(绝对值，默认 5pp) → 整体回到当日最优目标。
 - 对比基准注册表在 `repositories.BENCHMARKS`：bond6040 / HSI / 000300 / 000510 / 000905 + 三只人民币计价 QDII ETF 基准 `sp500_etf`(513500) / `ndx100_etf`(513100) / `n225_etf`(513520)。回测内部基准按注册表全腿**按日再平衡合成**（与展示/归因同口径）；落库时预计算全部注册基准净值（`bp_backtest_benchmark`）与 method×benchmark 归因。前端 `web/lib/api.ts` 的 `BENCHMARK_OPTIONS` / `BENCHMARK_COMPOSITION` 必须与之同步。
 
@@ -123,6 +124,7 @@ psql -h localhost -U postgres -d balanced_portfolio -f ddl/schema.sql
 - `web/lib/api.ts` 是类型化 API 客户端，**也是方法/基准/OTC 产品的常量源**，改动需与后端注册表同步（`METHOD_OPTIONS`、`BENCHMARK_OPTIONS`、`OTC_PRODUCTS`、`OTC_ENGINES` 等）。
 - `web/lib/auth.tsx`（AuthProvider）、`web/lib/session-server.ts`（Cookie 读写）、`web/components/`（Navbar、RiskMatrixSection、MiniTradingCalendar 等）、`web/components/ui/`（shadcn 风格基础组件）。
 - 主要路由：`/dashboard`（回测）、`/builder`（组合构建）、`/cffex`、`/crypto`、`/otc-pricing` & `/otc-derivatives-pricing`（同页两入口）、`/admin/assets` & `/admin/users`、`/methodology`。**没有 `/docs` 路由**（`mdx.tsx`/`docs-toc.tsx` 只被 `/methodology` 使用）；导航链接表在 `web/components/Navbar.tsx` 的 `NAV_LINKS`。
+- `web/lib/asset-range.ts` 是**行情日期区间文案与配色的唯一来源**（/builder 资产行、变更对话框、/dashboard 未覆盖提示三处共用）：`formatRangeCN` 出「2020年1月4日 - 2026年9月25日」，`rangeTone` 出四种语气 —— 滞后=`text-destructive`、未覆盖=`text-warning`、无数据/正常=`text-muted-foreground`。各调用点只传自己有的字段（/builder 无组合上下文故判不出 `uncovered`）。`web/lib/annual-columns.ts` 是年度收益表的列推导（`YTD → 各年降序 → 年化`，当年由 YTD 列承担以免重复）。两处都有 vitest。
 - 设计规范见 `docs/design-system.md`：sky 主色、绿涨红跌（`text-up`/`text-down` 仅限方向性涨跌）、success/warning 语义色、四象限色（过热=warning/滞胀=destructive/复苏=success/衰退=weak）；图表颜色一律经 `web/lib/chart-theme.ts`；反馈用 sonner toast、危险确认用 AlertDialog（禁止 window.alert/confirm）。
 
 ## 数据源与 ingest（`bp_ingest/`）
@@ -136,9 +138,10 @@ psql -h localhost -U postgres -d balanced_portfolio -f ddl/schema.sql
 
 ## 数据库迁移纪律
 
-- `ddl/schema.sql` 是**合并后基线**（= 旧编号迁移 01-32 + 34-48），全新环境只执行它。
+- `ddl/schema.sql` 是**合并后基线**（= 旧编号迁移 01-32 + 34-50），全新环境只执行它。
 - 40-42 新增 `bp_index_config.currency`、`bp_data_source.is_addable`、两索引（demo_order / premium variety+type+date）、`btc_cme_sina` 源；42 删除了冗余的 `bp_asset_data_status.row_count`。43-47 见下表。
 - **43-48 迁移一览**：43 `bp_quote_clean.fx_rate` + `fx_sina` 源 + 3 个汇率对；44 推荐 ETF 名称纠正 + 17 只种子（**已取代 38 号**：38 里的 18 个名称是错的，全新环境不要重跑 38）；45 补齐 10 个币种人民币汇率对；46 从 `bp_index_config.name` 回填组合侧 `display_name`；47 资产池对账（补 16 个只在生产存在的资产、修正 `HSSCI`→`HSMSI`、软删除只在 schema 里存在的幽灵资产、按 `category='etf'` 而非 source 判 `adjust`）；48 修正 `bp_index_config.currency` 的列注释（原文仍写着「无外汇数据换算」，与 43-45 后的口径矛盾）。**判据口径**：全新环境只执行 schema.sql，无需再跑 43-48；已部署环境只跑未应用的编号。生产库实测 47 号四段全部改 0 行（生产已是目标态），并在全新临时库验证「schema.sql ×3 + 47 ×3」后可选池 278 键与生产完全一致、字段零差异；48 号是纯注释变更，在临时库重复执行 4 次均 exit 0。
+- **49-50 迁移一览**：49 `bp_asset_data_status.last_probe_kind`（builder/管理端新增标的时区分 `ok`/`unreachable`/`invalid` 三类探测结果）；50 行情日期区间可见性 —— `bp_asset_data_status.first_clean_date`（清洗后最早交易日，**仅 `refresh_asset_status(with_count=True)` 写**，热路径 `with_count=False` 的 INSERT/DO UPDATE 均不含该列，与 COUNT 分级不变式同辙）+ 新表 `bp_backtest_coverage`（PK `(portfolio_id, symbol, source)`，无 method 维度，ON DELETE CASCADE）。已部署环境升级时只跑未应用的编号；**`deploy/deploy.sh` 不跑迁移**。
 - **`start_date` 不是 schema 可 seed 的列**：生产库该列来自 ingest 首拉成功后的回写（`ingest.py:264`，`start_date IS NULL` 时写入该标的首个行情日），schema.sql 不跑 ingest 故全新环境为 NULL。实测 239 个共有可选键呈本地 NULL / 生产有日期的**单向**差异，无反向覆盖。不要为此在 schema/迁移里硬编码日期（那是编造），也不要用 `MIN(trade_date)` 回填 —— 全新库没有行情数据，回填不解决任何问题，ingest 自己会在首拉时补上。
 - 已部署环境升级时，只执行尚未应用的新编号迁移（`NN_description.sql`）；不要重跑历史迁移，不要改已应用脚本。`deploy/deploy.sh` **不**执行迁移。
 - 主要表：行情(`bp_index_quote_daily`/`bp_quote_clean`)、组合(`bp_portfolio`/`bp_portfolio_asset`/`bp_backtest_*`)、任务(`bp_task`)、资产状态(`bp_asset_data_status`)、CFFEX(`bp_cffex_contract_daily`/`bp_cffex_premium_daily`)、交易日历(`bp_trading_calendar`)、OTC(`bp_otc_deal`/`bp_otc_deal_price_history`)、鉴权(`bp_admin_user`/`bp_user`)。`bp_index_quote_daily` 是 TimescaleDB hypertable。

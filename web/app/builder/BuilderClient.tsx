@@ -24,11 +24,14 @@ import {
   DEFAULT_DESCRIPTION, ASSET_CATEGORY_OPTIONS, ASSET_CATEGORY_LABELS, ADJUST_LABEL,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import {
+  NO_DATA_LABEL, RANGE_TONE_CLASS, formatRangeCN, rangeTone,
+} from "@/lib/asset-range";
 import { useIsMobile } from "@/components/ui/use-mobile";
 import { ConfirmRecomputeDialog } from "@/components/ConfirmRecomputeDialog";
 import { BacktestProgressDialog } from "@/components/BacktestProgressDialog";
 import { CreateAssetDialog } from "@/components/CreateAssetDialog";
-import { ChangeDiffDialog, type AssetDiff, type DiffRow } from "@/components/ChangeDiffDialog";
+import { ChangeDiffDialog, type AssetDiff, type CoverageNotice, type DiffRow } from "@/components/ChangeDiffDialog";
 
 const QUADRANT_ORDER: Quadrant[] = ["overheat", "stagflation", "recovery", "recession"];
 const QUADRANT_COLOR: Record<Quadrant, string> = {
@@ -463,6 +466,57 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [portfolioName, portfolioDescription, method, benchmarkKey, lookback, startDate, maxWeightPct, band, riskFreePct, feePct, slippagePct, stampDutyPct, selected]);
 
+  // 变更对话框的「行情覆盖提示」(DDL 50): 仅当弹窗打开时打一次 preview 请求。
+  // 不挂在 diffs 的 useMemo 上 —— 那会让每次改权重/参数都发一次网络请求(输一个数字一次),
+  // 而用户此刻还没打算保存。也不复用 diffs.assetDiff 反查资产: 它的 label 已经丢了 symbol/source。
+  const [coverageNotices, setCoverageNotices] = useState<CoverageNotice[]>([]);
+  useEffect(() => {
+    if (!diffOpen) return;
+    const picked = QUADRANT_ORDER.flatMap((q) => selected[q]);
+    if (picked.length === 0) {
+      setCoverageNotices([]);
+      return;
+    }
+    let cancelled = false;
+    api.previewCoverage({
+      assets: picked.map((a) => ({ symbol: a.symbol, source: a.source })),
+      start_date: startDate,
+      lookback_days: lookback,
+    }).then((res) => {
+      if (cancelled) return;
+      const byKey = new Map(assets.map((a) => [keyOf(a), a]));
+      const notices: CoverageNotice[] = [];
+      for (const c of res.assets) {
+        const k = `${c.symbol}@${c.source}`;
+        const a = byKey.get(k);
+        const tone = rangeTone({
+          firstDate: c.first_date,
+          lastDate: c.last_date,
+          isLagging: a ? (a.is_lagging ?? a.is_stale) : undefined,
+          coveredAtStart: c.covered_at_start,
+        });
+        if (tone === "none") continue;   // 正常标的列出来只会稀释风险信息
+        notices.push({
+          key: k,
+          label: a?.name ? `${a.name}（${a.symbol}）` : c.symbol,
+          range: formatRangeCN(c.first_date, c.last_date),
+          tone,
+          note:
+            tone === "nodata"
+              ? "暂无行情数据，不参与回测"
+              : tone === "lagging"
+                ? (a?.lag_trading_days != null ? `滞后 ${a.lag_trading_days} 个交易日` : "行情滞后")
+                : "回测开始日期未覆盖该标的",
+        });
+      }
+      setCoverageNotices(notices);
+    }).catch(() => {
+      // 预览失败(离线/未登录)时静默降级: 弹窗不渲染该区块, 不阻断保存流程。
+      if (!cancelled) setCoverageNotices([]);
+    });
+    return () => { cancelled = true; };
+  }, [diffOpen, selected, startDate, lookback, assets]);
+
   if (!ready) {
     return <div className="p-12 text-center text-muted-foreground">加载中...</div>;
   }
@@ -778,6 +832,7 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
         onOpenChange={setDiffOpen}
         diffs={diffs.rows}
         assetDiff={diffs.assetDiff}
+        coverage={coverageNotices}
         canRecompute={diffs.hasBacktestChange}
         busy={savingMeta || submitting}
         onMetaSave={handleMetaSave}
@@ -976,7 +1031,11 @@ function AssetPicker({
           <Plus className="w-4 h-4 mr-1" /> 添加资产
         </Button>
       </DialogTrigger>
-      <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-4xl max-h-[85vh] flex flex-col gap-3 overflow-hidden">
+      {/* 6xl 而非 4xl: 资产行新增了固定 200px 的「行情日期区间」列(右对齐、不折行),
+          4xl(896px) 下名称列被压到 ~90px, 实测 280 行里 186 行名称被省略号截断
+          (加列之前只有 1 行)。宽到 6xl 后名称列回到 ~450px, 截断消失; 窄视口下
+          `w-[calc(100vw-2rem)]` 仍然优先, 不会溢出。 */}
+      <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-6xl max-h-[85vh] flex flex-col gap-3 overflow-hidden">
         <DialogHeader className="shrink-0">
           <DialogTitle>添加资产到「{quadrantLabel}」</DialogTitle>
         </DialogHeader>
@@ -1055,18 +1114,31 @@ function AssetPicker({
                     >
                       {checked && <Check className="w-3 h-3" />}
                     </div>
-                    <span className="text-sm flex-1">{a.name || a.symbol}</span>
+                    <span className="text-sm flex-1 min-w-0 truncate">{a.name || a.symbol}</span>
                     {(a.currency ?? "CNY") !== "CNY" && (
-                      <Badge variant="outline" className="text-xs px-1 py-0 text-muted-foreground">{a.currency}</Badge>
+                      <Badge variant="outline" className="text-xs px-1 py-0 text-muted-foreground shrink-0">{a.currency}</Badge>
                     )}
-                    {/* 滞后徽章: 落后 >= 2 个交易日才提示(is_lagging)。差 1 日是正常增量节奏,
-                        旧实现用 is_stale 判据 → 130/278 个资产全挂「停更」红标, 噪声掩盖真问题。
-                        字段缺失(旧后端)时回退 is_stale, 与 rank() 的判据一致。 */}
-                    {(a.is_lagging ?? a.is_stale) && (
-                      <Badge variant="outline" className="font-normal px-1.5 text-xs text-destructive border-destructive/40">
-                        {a.lag_trading_days != null ? `滞后 ${a.lag_trading_days} 日` : "滞后"}
-                      </Badge>
-                    )}
+                    {/* 行情日期区间(取代原「滞后 N 日」徽章): 显示清洗后行情的「起始日 - 截止日」,
+                        滞后=红字, 无清洗数据=「暂无行情数据」灰字, 正常=灰字。
+                        判据与文案统一在 lib/asset-range.ts(三处 UI 共用, 不各写一份)。
+                        窄屏(手机)隐藏: 一行已容不下「币种 + 区间 + ETF 徽章 + 代码」,
+                        强行挤会把代码挤没 —— 保留原有窄屏布局。 */}
+                    {(() => {
+                      const tone = rangeTone({
+                        firstDate: a.first_clean_date,
+                        lastDate: a.last_clean_date,
+                        isLagging: a.is_lagging ?? a.is_stale,
+                      });
+                      const text = formatRangeCN(a.first_clean_date, a.last_clean_date);
+                      return (
+                        <span
+                          title={text ?? NO_DATA_LABEL}
+                          className={`hidden sm:inline-block w-[12.5rem] shrink-0 text-right text-xs tabular-nums whitespace-nowrap ${RANGE_TONE_CLASS[tone]}`}
+                        >
+                          {text ?? NO_DATA_LABEL}
+                        </span>
+                      );
+                    })()}
                     {a.logical_source === "etf" ? (
                       <Badge variant="secondary" className="font-normal px-1.5 text-xs">ETF{typeof a.adjust === "string" && a.adjust ? ` · ${ADJUST_LABEL[a.adjust] ?? a.adjust}` : ""}</Badge>
                     ) : a.logical_source === "cn_index" ? (

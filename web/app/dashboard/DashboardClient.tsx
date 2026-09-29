@@ -14,6 +14,7 @@ import {
   Copy,
   ArrowUpDown,
   GripVertical,
+  AlertTriangle,
 } from "lucide-react";
 import {
   Card,
@@ -87,6 +88,8 @@ import {
   methodLabel,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { formatDateCN, formatRangeCN } from "@/lib/asset-range";
+import { annualColumns, annualLabel } from "@/lib/annual-columns";
 import { getChartTheme, withAlpha, type ChartTheme } from "@/lib/chart-theme";
 import { selectSortablePortfolios } from "@/lib/portfolio-order";
 import { useQueryClient } from "@tanstack/react-query";
@@ -453,6 +456,20 @@ function DashboardView({
   const fg = theme.text;
   const primary = theme.palette[0];
   const benchName = data.benchmark_name || benchmarkName(portfolio);
+  // 「回测起点未覆盖」的成分(DDL 50, 后端 compute_coverage 判定)。含两类: 起点时还没
+  // 攒够 min_window 个真实收盘日的, 以及**完全没有清洗行情**的(两种都拿不到权重,
+  // 都在四象限里缺席, 都必须提示 —— 文案在渲染处按 first_date 有无分岔)。
+  const uncoveredAssets = useMemo(
+    () => (data.coverage ?? []).filter((c) => !c.covered_at_start),
+    [data.coverage],
+  );
+  // 年度表的列键: YTD → 各年降序 → 年化(当年由 YTD 列承担, 细节与单测见 lib/annual-columns.ts)。
+  // 以组合的 annual_returns 为准(基准的键集与其一致, 后端 annual_vols 刻意取 nav 入参以保证
+  // 键集完全对齐), 故两个 dict 的列不会错位。
+  const annualKeys = useMemo(
+    () => annualColumns(mPort?.annual_returns),
+    [mPort?.annual_returns],
+  );
   const bandPct =
     portfolio.rebalance_band != null
       ? +(portfolio.rebalance_band * 100).toFixed(1)
@@ -917,6 +934,7 @@ function DashboardView({
     { id: "nav", label: "净值走势" },
     { id: "rebalance", label: "调仓变动" },
     { id: "period", label: "区间收益率与波动率" },
+    { id: "annual", label: "年度收益与波动率" },
     { id: "metrics", label: "绩效指标对比" },
     { id: "distribution", label: "日收益率分布" },
     { id: "attribution", label: "绩效归因" },
@@ -1222,6 +1240,38 @@ function DashboardView({
                         预期通胀
                       </div>
                     </div>
+                    {/* 行情覆盖提示: 回测起点未覆盖的成分。这些标的在四象限里可能压根不出现
+                        (权重恒为 0), 不说一句用户只会以为组合选漏了。
+                        判定来自后端 compute_coverage(DDL 50), 前端不做近似; 无未覆盖成分时不渲染。
+                        这里不显示「滞后」—— 组合回测只跑到全体成分齐全的那天, 结果页不存在滞后。 */}
+                    {uncoveredAssets.length > 0 && (
+                      <div className="mt-3 rounded-lg border border-warning/40 bg-warning/5 p-3 space-y-1">
+                        <div className="text-xs font-medium flex items-center gap-1.5 text-warning">
+                          <AlertTriangle className="h-3.5 w-3.5" />
+                          行情覆盖提示
+                        </div>
+                        <ul className="text-xs text-muted-foreground space-y-0.5">
+                          {uncoveredAssets.map((c) => (
+                            <li key={c.key}>
+                              {c.name}（{c.symbol}）
+                              {formatDateCN(c.first_date) ? (
+                                <>
+                                  的开始日期是
+                                  <span className="tabular-nums">
+                                    {formatRangeCN(c.first_date, c.last_date)}
+                                  </span>
+                                  ，回测开始日期未覆盖该标的，影响回测真实性
+                                </>
+                              ) : (
+                                // 完全没有清洗行情的标的: 不是「起点没覆盖」而是压根没参与
+                                // (引擎无从取值), 不能套用「开始日期未覆盖」的措辞。
+                                <>暂无清洗行情数据，未参与本次回测</>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
 
@@ -1688,6 +1738,64 @@ function DashboardView({
                 </CardContent>
               </Card>
 
+              {/* 年度收益与波动率(自然年切分)。列顺序: YTD → 各年降序 → 年化(全区间)。
+                  基准行与「区间收益率与波动率」同源(mPort/mBench), 故切换基准下拉时一起变。
+                  旧后端/未重算的组合没有 annual_* 字段 → 整块不渲染。 */}
+              {annualKeys.length > 0 && (
+                <Card id="annual" className="min-w-0 scroll-mt-24">
+                  <CardHeader>
+                    <CardTitle>年度收益与波动率</CardTitle>
+                    <CardDescription>
+                      按自然年切分，YTD 与不完整年份均折算年化，便于逐年横向对比；「年化」列为全区间年化。
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="overflow-x-auto min-w-0 pt-0 sm:pt-0">
+                    <Table className="min-w-[640px]">
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="pl-0 whitespace-nowrap">
+                            指标
+                          </TableHead>
+                          {annualKeys.map((k) => (
+                            <TableHead
+                              key={k}
+                              className="text-right whitespace-nowrap"
+                            >
+                              {annualLabel(k)}
+                            </TableHead>
+                          ))}
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        <PeriodRow
+                          label="组合收益率"
+                          data={mPort?.annual_returns}
+                          keys={annualKeys}
+                          primary
+                        />
+                        <PeriodRow
+                          label={`${benchName}收益率`}
+                          data={mBench?.annual_returns}
+                          keys={annualKeys}
+                        />
+                        <PeriodRow
+                          label="组合波动率"
+                          data={mPort?.annual_vols}
+                          keys={annualKeys}
+                          muted
+                        />
+                        <PeriodRow
+                          label={`${benchName}波动率`}
+                          data={mBench?.annual_vols}
+                          keys={annualKeys}
+                          muted
+                        />
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+              )}
+
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Metrics table */}
                 <Card id="metrics" className="min-w-0 scroll-mt-24">
@@ -1876,18 +1984,21 @@ function DashboardView({
 function PeriodRow({
   label,
   data,
+  keys = PERIOD_KEYS,
   primary,
   muted,
 }: {
   label: string;
   data?: Record<string, number | null>;
+  /** 列键; 缺省为「区间收益率与波动率」的 PERIOD_KEYS, 年度表传入自己的键集 */
+  keys?: string[];
   primary?: boolean;
   muted?: boolean;
 }) {
   return (
     <TableRow>
       <TableCell className="pl-0 font-medium">{label}</TableCell>
-      {PERIOD_KEYS.map((k) => {
+      {keys.map((k) => {
         const v = data?.[k];
         const cls = muted
           ? "text-foreground"
