@@ -16,3 +16,7 @@ enabled = true
 # [[routes]]
 # pattern = "binance-proxy.xushilu.com/*"
 # zone_name = "xushilu.com"
+
+# 让 Worker 靠近上游（Binance API）执行，避免在运营受限地域（如荷兰 AMS）出网被 WAF 拦截。
+[placement]
+mode = "smart"

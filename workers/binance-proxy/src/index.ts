@@ -20,6 +20,21 @@
 import type { ExecutionContext } from "@cloudflare/workers-types";
 
 export const BINANCE_BASE = "https://fapi.binance.com";
+
+/**
+ * 上游主机候选列表。
+ *
+ * 背景：Binance 的 WAF 会按出口 IP 所属地域/机房封禁部分请求（Cloudflare 网络出口
+ * 曾对 fapi.binance.com 返回 403）。Binance 官方提供 fapi1~fapi4 作为等价备用域名，
+ * 因此逐个尝试，任一成功即返回；全部失败才透传最后一个错误。
+ */
+export const UPSTREAM_HOSTS: readonly string[] = [
+  BINANCE_BASE,
+  "https://fapi1.binance.com",
+  "https://fapi2.binance.com",
+  "https://fapi3.binance.com",
+  "https://fapi4.binance.com",
+];
 export const DEFAULT_ALLOWED_ORIGIN = "https://xushilu.com";
 export const CACHE_SECONDS = 300;
 export const RATE_LIMIT_PER_MINUTE = 120;
@@ -38,7 +53,13 @@ const OI_HIST = "/futures/data/openInterestHist";
  * exchangeInfo / ticker/24hr 是 `fetch_contracts()` 筛选 Top 30 USDT 永续
  * 的必需输入；生产服务器无法直连 Binance，故必须一并经本 Worker 转发。
  */
+const BYBIT_PREFIX = "/bybit/";
+
 export const ALLOWED_PATHS: ReadonlySet<string> = new Set([
+  "/bybit/market/tickers",
+  "/bybit/market/open-interest",
+  "/okx/public/open-interest",
+  "/okx/rubik/stat/taker-volume",
   EXCHANGE_INFO,
   TICKER_24H,
   PREMIUM_INDEX,
@@ -134,14 +155,25 @@ export function pathRequiresSymbol(path: string): boolean {
 }
 
 /** 把 `?path=` 与其余 query 重组成上游 URL（path 参数本身不透传）。 */
-export function buildUpstreamUrl(path: string, params: URLSearchParams): string {
+export function buildUpstreamUrl(
+  path: string,
+  params: URLSearchParams,
+  base: string = BINANCE_BASE,
+): string {
   if (!isAllowedPath(path)) {
     throw new Error(`path not allowed: ${path}`);
   }
   const forwarded = new URLSearchParams(params);
   forwarded.delete("path");
   const query = forwarded.toString();
-  return `${BINANCE_BASE}${path}${query ? `?${query}` : ""}`;
+  // /bybit/x -> https://api.bybit.com/v5/x（用于验证其他交易所出口，与 Binance 白名单隔离）
+  if (path.startsWith(BYBIT_PREFIX)) {
+    return `https://api.bybit.com/v5${path.slice(BYBIT_PREFIX.length - 1)}${query ? `?${query}` : ""}`;
+  }
+  if (path.startsWith("/okx/")) {
+    return `https://www.okx.com/api/v5${path.slice("/okx".length)}${query ? `?${query}` : ""}`;
+  }
+  return `${base}${path}${query ? `?${query}` : ""}`;
 }
 
 export function corsHeaders(
@@ -181,6 +213,8 @@ async function withCors(
   cors: Record<string, string>,
 ): Promise<Response> {
   const headers = new Headers(response.headers);
+  // 缓存按 URL 共享，不区分 Origin：先清掉旧 ACAO，再按本次请求重写。
+  headers.delete("Access-Control-Allow-Origin");
   for (const [key, value] of Object.entries(cors)) headers.set(key, value);
   return new Response(response.body, { status: response.status, headers });
 }
@@ -231,9 +265,9 @@ export async function handleRequest(
     return jsonError(400, "missing_symbol", cors);
   }
 
-  const upstreamUrl = buildUpstreamUrl(path, url.searchParams);
   const cache = deps.cache ?? defaultCache();
-  const cacheKey = new Request(upstreamUrl, { method: "GET" });
+  const primaryUrl = buildUpstreamUrl(path, url.searchParams);
+  const cacheKey = new Request(primaryUrl, { method: "GET" });
   if (cache) {
     try {
       const hit = await cache.match(cacheKey);
@@ -244,13 +278,33 @@ export async function handleRequest(
   }
 
   const fetchImpl = deps.fetchImpl ?? fetch;
-  let upstream: Response;
-  try {
-    upstream = await fetchImpl(upstreamUrl, {
-      method: "GET",
-      headers: { Accept: "application/json" },
-    });
-  } catch {
+  const headers = {
+    Accept: "application/json",
+    // Binance 的 WAF 会拦截无 UA 的数据中心请求（Cloudflare Worker 默认 UA 易被 403）。
+    // 显式伪装成浏览器，与项目 http_session 的硬化思路一致。
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  };
+  let upstream: Response | undefined;
+  let servedBy = BINANCE_BASE;
+  for (const host of UPSTREAM_HOSTS) {
+    try {
+      const candidate = await fetchImpl(
+        buildUpstreamUrl(path, url.searchParams, host),
+        { method: "GET", headers },
+      );
+      if (candidate.ok) {
+        upstream = candidate;
+        servedBy = host;
+        break;
+      }
+      upstream = candidate;
+    } catch {
+      // 单个主机失败继续下一个
+    }
+  }
+  if (!upstream) {
     return jsonError(502, "upstream_unreachable", cors);
   }
 
@@ -262,6 +316,7 @@ export async function handleRequest(
         ...cors,
         "Content-Type":
           upstream.headers.get("Content-Type") || "application/json; charset=utf-8",
+        "x-proxy-host": servedBy,
       },
     });
   }
