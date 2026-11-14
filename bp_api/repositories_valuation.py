@@ -531,10 +531,20 @@ def get_index_list(
                 END AS change_pct,
                 qp.high_52w,
                 qp.low_52w,
+                COALESCE(
+                    CASE
+                        WHEN qp.close_last > 0 AND qp.close_7d_ago > 0
+                        THEN ((qp.close_last / qp.close_7d_ago) - 1) * 100
+                    END,
+                    CASE
+                        WHEN (v.raw ->> 'rise_week') ~ '^-?[0-9.]+$'
+                        THEN (v.raw ->> 'rise_week')::numeric
+                    END
+                ) AS change_7d_pct,
                 CASE
-                    WHEN qp.close_last > 0 AND qp.close_7d_ago > 0
-                    THEN ((qp.close_last / qp.close_7d_ago) - 1) * 100
-                END AS change_7d_pct,
+                    WHEN (v.raw ->> 'rise_year') ~ '^-?[0-9.]+$'
+                    THEN (v.raw ->> 'rise_year')::numeric
+                END AS change_52w_pct,
                 CASE
                     WHEN qp.high_52w > 0 AND qp.close_last IS NOT NULL
                     THEN ((qp.close_last / qp.high_52w) - 1) * 100

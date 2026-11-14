@@ -53,7 +53,7 @@ export function mapIndexRow(raw: Record<string, unknown>): IndexQuoteRow {
     // 后端当前只提供当日涨跌；若后续补充 7 日字段则优先使用，不改契约。
     change_7d_pct:
       num(raw.change_7d_pct) ?? num(raw.change_7d) ?? num(raw.change_7d_pct_5),
-    change_52w_pct: null,
+    change_52w_pct: num(raw.change_52w_pct),
     distance_from_high_pct: num(raw.dist_from_high_pct),
     high_52w: num(raw.high_52w),
     low_52w: num(raw.low_52w),

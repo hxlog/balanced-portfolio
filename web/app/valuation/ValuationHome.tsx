@@ -448,9 +448,11 @@ function IndexTable({
                         />
                       </div>
                       <span className="w-10 text-right font-mono text-xs tabular-nums text-muted-foreground">
-                        {row.position_52w_pct == null
-                          ? "—"
-                          : `${row.position_52w_pct.toFixed(0)}%`}
+                        {row.position_52w_pct != null
+                          ? `${row.position_52w_pct.toFixed(0)}%`
+                          : row.change_52w_pct != null
+                            ? formatSignedPct(row.change_52w_pct)
+                            : "—"}
                       </span>
                     </div>
                   </td>
