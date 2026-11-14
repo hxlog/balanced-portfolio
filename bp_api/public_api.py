@@ -109,6 +109,8 @@ class ApiError(Exception):
         self.code = code
         self.message = message
         self.meta = meta
+        # 401 需携 WWW-Authenticate、429 需携 Retry-After，转换时必须原样透传。
+        self.headers: Optional[dict[str, str]] = None
 
 
 def _http_to_api_error(exc: HTTPException, *, scope: Optional[str] = None) -> ApiError:
@@ -135,7 +137,9 @@ def _http_to_api_error(exc: HTTPException, *, scope: Optional[str] = None) -> Ap
         message = str(detail)
     if status == 403 and scope:
         meta.setdefault("required_scope", scope)
-    return ApiError(status, code, message, **meta)
+    error = ApiError(status, code, message, **meta)
+    error.headers = dict(exc.headers or {})
+    return error
 
 
 def _api_safe(obj: Any) -> Any:
@@ -187,6 +191,7 @@ async def _api_error_handler(_request: Request, exc: ApiError) -> JSONResponse:
     meta = _api_safe(exc.meta)
     return JSONResponse(
         status_code=exc.status_code,
+        headers=getattr(exc, "headers", None) or None,
         content={
             "data": None,
             "meta": meta,

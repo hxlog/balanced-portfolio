@@ -62,3 +62,27 @@ def test_reset_clears_window(monkeypatch):
         rate_limit.check("t3")
     rate_limit.reset()
     rate_limit.check("t3")
+
+
+# ---------------------------------------------------------------------------
+# 429 响应的 Retry-After 头必须保留（信封不能吞掉 headers）
+# ---------------------------------------------------------------------------
+def test_retry_after_header_survives_envelope(monkeypatch):
+    import asyncio
+
+    from fastapi import HTTPException
+
+    from bp_api import public_api
+
+    monkeypatch.setenv("BP_API_RATE_LIMIT_RPM", "1")
+    rate_limit.check("t-429")
+    with pytest.raises(HTTPException) as exc_info:
+        rate_limit.check("t-429")
+
+    error = public_api._http_to_api_error(exc_info.value)
+    response = asyncio.run(public_api._api_error_handler(None, error))
+
+    assert response.status_code == 429
+    assert response.headers.get("retry-after") is not None
+    body = response.body.decode("utf-8")
+    assert "rate_limited" in body
