@@ -343,7 +343,7 @@ def _build_fund_rows(
             "name": _text(row.get("ommName")) or code,
             "company_name": _text(row.get("companyName")),
             "risk_grade": _text(row.get("riskGrade")),
-            "aum": _to_float(position.get("fnvsum")) if position else None,
+            "aum": _float(position.get("fnvsum")) if position else None,
         }
 
     master_rows: list[dict] = []
