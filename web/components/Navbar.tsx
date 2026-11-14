@@ -22,6 +22,7 @@ const NAV_LINKS = [
   { href: "/dashboard", label: "风险平价回测" },
   { href: "/cffex", label: "股指期货看板" },
   { href: "/crypto", label: "加密货币看板" },
+  { href: "/crypto-futures", label: "加密合约看板" },
   { href: "/otc-derivatives-pricing", label: "场外衍生品定价 · Experiment" },
   { href: "/methodology", label: "方法论" },
 ] as const;
