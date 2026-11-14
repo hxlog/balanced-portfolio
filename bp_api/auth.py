@@ -9,7 +9,7 @@ from typing import Callable, Optional
 import bcrypt
 import jwt
 import pyotp
-from fastapi import Header, HTTPException
+from fastapi import Header, HTTPException, Request
 
 from . import cache
 from . import db
@@ -504,10 +504,11 @@ def require_api_token(scope: str | None = None) -> Callable[..., dict]:
     """
 
     def dependency(
+        request: Request,
         authorization: str = Header(default=""),
         x_api_key: str = Header(default=""),
     ) -> dict:
-        from . import api_tokens
+        from . import api_tokens, rate_limit
 
         plain = _extract_api_token(authorization, x_api_key)
         with db.get_conn() as conn:
@@ -522,11 +523,16 @@ def require_api_token(scope: str | None = None) -> Callable[..., dict]:
             conn.commit()
         if scope is not None and scope not in info["scopes"]:
             raise HTTPException(403, f"API token 缺少 {scope} 权限")
-        return {
+        # 令牌级限流：超限直接 429，不进入业务逻辑与数据库查询。
+        rate_limit.check(info["token_id"])
+        payload = {
             "token_id": info["token_id"],
             "name": info["name"],
             "scopes": info["scopes"],
         }
+        # 供请求日志中间件读取（main.py 的 /api/v1 中间件）。
+        request.state.api_token = payload
+        return payload
 
     return dependency
 

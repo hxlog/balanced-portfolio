@@ -19,7 +19,19 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import psycopg
+from types import SimpleNamespace
+
 import pytest
+
+
+class _ReqStub:
+    """直接调用依赖函数时用的最小 Request 替身。"""
+
+    def __init__(self) -> None:
+        self.state = SimpleNamespace()
+
+
+_REQ_STUB = _ReqStub()
 from fastapi import HTTPException
 
 from bp_api import api_tokens, auth, db as db_module, main
@@ -290,8 +302,8 @@ def test_require_api_token_accepts_bearer_and_x_api_key(fixed_db):
     _, plain = _create(conn, name="dependency", scopes=("quotes", "portfolio"))
     dependency = auth.require_api_token("quotes")
 
-    via_bearer = dependency(authorization=f"Bearer {plain}", x_api_key="")
-    via_header = dependency(authorization="", x_api_key=plain)
+    via_bearer = dependency(_REQ_STUB, authorization=f"Bearer {plain}", x_api_key="")
+    via_header = dependency(_REQ_STUB, authorization="", x_api_key=plain)
 
     for info in (via_bearer, via_header):
         assert set(info) == {"token_id", "name", "scopes"}
@@ -308,7 +320,7 @@ def test_require_api_token_401_when_missing_or_invalid(fixed_db):
         {"authorization": "", "x_api_key": "bp_live_" + "f" * 32},
     ):
         with pytest.raises(HTTPException) as exc:
-            dependency(**kwargs)
+            dependency(_REQ_STUB, **kwargs)
         assert exc.value.status_code == 401
 
 
@@ -318,7 +330,7 @@ def test_require_api_token_403_when_scope_missing(fixed_db):
     dependency = auth.require_api_token("valuation")
 
     with pytest.raises(HTTPException) as exc:
-        dependency(authorization=f"Bearer {plain}", x_api_key="")
+        dependency(_REQ_STUB, authorization=f"Bearer {plain}", x_api_key="")
     assert exc.value.status_code == 403
 
 
@@ -329,7 +341,7 @@ def test_require_api_token_401_after_revoke(fixed_db):
     conn.commit()
     dependency = auth.require_api_token("quotes")
     with pytest.raises(HTTPException) as exc:
-        dependency(authorization=f"Bearer {plain}", x_api_key="")
+        dependency(_REQ_STUB, authorization=f"Bearer {plain}", x_api_key="")
     assert exc.value.status_code == 401
 
 

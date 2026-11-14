@@ -500,11 +500,23 @@ def _fetch_market_daily(
         conditions.append("trade_date <= %(end)s")
         params["end"] = end
 
+    # 同一 (symbol, trade_date) 可能有多源（东财/新浪/腾讯）重复行。对外 API 必须去重，
+    # 否则 Excel 侧会双计。优先级：非备份源优先（bp_data_source.is_backup），再按源码排序。
+    data_conditions = ["q.symbol = ANY(%(codes)s)", "q.adjust = %(adjust)s"]
+    if start is not None:
+        data_conditions.append("q.trade_date >= %(start)s")
+    if end is not None:
+        data_conditions.append("q.trade_date <= %(end)s")
+
     data_sql = (
-        "SELECT symbol, source, trade_date, open, high, low, close, ret "
-        "FROM bp_quote_clean WHERE "
-        + " AND ".join(conditions)
-        + " ORDER BY trade_date, symbol, source LIMIT %(limit)s"
+        "SELECT symbol, source, trade_date, open, high, low, close, ret FROM ("
+        "  SELECT DISTINCT ON (q.symbol, q.trade_date)"
+        "         q.symbol, q.source, q.trade_date, q.open, q.high, q.low, q.close, q.ret"
+        "  FROM bp_quote_clean q"
+        "  LEFT JOIN bp_data_source d ON d.code = q.source"
+        "  WHERE " + " AND ".join(data_conditions) +
+        "  ORDER BY q.symbol, q.trade_date, COALESCE(d.is_backup, FALSE) ASC, q.source"
+        ") dedup ORDER BY trade_date, symbol LIMIT %(limit)s"
     )
     known_sql = (
         "SELECT DISTINCT symbol FROM bp_quote_clean "
@@ -762,6 +774,8 @@ def register_routes(app: FastAPI) -> None:
             limit=row_limit,
             truncated=truncated,
             source="bp_quote_clean",
+            # 同一 (code, date) 多源重复时按来源优先级取一条：非备份源优先（东财 > 新浪/腾讯）。
+            collapse="dedup_by_symbol_date_source_priority",
         )
 
     # ---- 指数估值 --------------------------------------------------------

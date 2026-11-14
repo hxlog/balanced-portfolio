@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import random
 import time
 from contextlib import asynccontextmanager
@@ -158,6 +159,36 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def log_public_api_requests(request: Request, call_next):
+    """对外 API 请求审计：/api/v1/* 落 bp_api_request_log（失败不影响业务）。
+
+    关闭方式：BP_API_LOG_REQUESTS=0。
+    """
+    import time as _time
+
+    started = _time.perf_counter()
+    response = await call_next(request)
+    if request.url.path.startswith("/api/v1/") and os.environ.get("BP_API_LOG_REQUESTS", "1") != "0":
+        token = getattr(request.state, "api_token", None)
+        try:
+            with db.get_conn() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO bp_api_request_log (token_id, path, status, latency_ms)"
+                    " VALUES (%s, %s, %s, %s)",
+                    (
+                        token["token_id"] if isinstance(token, dict) else None,
+                        request.url.path,
+                        response.status_code,
+                        int((_time.perf_counter() - started) * 1000),
+                    ),
+                )
+                conn.commit()
+        except Exception:  # noqa: BLE001 - 审计失败绝不阻断响应
+            pass
+    return response
 
 
 @app.get("/api/health")
