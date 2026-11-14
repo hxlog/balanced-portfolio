@@ -108,3 +108,28 @@
 - Choice 智能金融终端使用指南：https://choice.eastmoney.com/choicewebfile/UserGuide.pdf
 - iFinD 产品介绍（内蒙古工业大学培训资料）：http://lib.imut.edu.cn:8083/ContentDelivery/20230113/
 - etf.run 指数估值：https://www.etf.run/
+
+## 八、用户确认结论（2026-11-15 01:40）
+
+| 决策项 | 结论 |
+|---|---|
+| 视觉风格 | **A 浅色工作台**（Linear/OpenAI 风）；详情页可借鉴 C 的双栏结构 |
+| 全市场口径 | 宽基代理 + 真实分位；东财截面快照保留并逐日积累；增加行业分位热力图；代表性宽基：**上证50、沪深300、中证A500、中证1000、中证全指** |
+| 历史窗口 | 先做 1/3/5 年 + 全历史（现约 5 年），10 年列入下一阶段 |
+| 详情页指标 | PE/PB/股息率/ERP + ROE（PB/PE）+ 指数 EPS（点位/PE）+ 波动率/最大回撤/夏普 + 跟踪基金规模与费率 |
+| PCF | **本期不做**，用 ERP/股息率/ROE 替代并在页面注明 |
+| 加密货币 | 合约实时指标立即上线；回补 Binance 历史（资金费率/OI 30 天 + 长 K 线）；BTC 相关性页补图表与数据表；无历史模块显示「积累进度」 |
+| 实施顺序 | **按页面逐个交付** |
+| 验收基准 | **超越 etf.run**（在 etf.run 基础上增加 Band/分位带、成分披露、跟踪基金、相关性） |
+
+### 交付顺序（逐页确认）
+1. `/valuation` 总览：5 张宽基卡（真实分位）+ 东财截面卡（进度）+ PE-Band + 行业热力图 + 四象限 + 指数表（指标×窗口筛选、列设置、修空值、删按钮、删长文案）
+2. `/valuation/[code]` 详情：指标×窗口×分位/1-3σ 联动 + 成分披露日 + 简介 + 指标卡 + 收益风险 + 跟踪基金
+3. `/crypto-futures` + `/crypto`：实时指标立即上线 + 历史回补 + 相关性图表
+4. 数据补齐：指数简介回填、行业分类、历史最高/52 周涨跌计算、Binance 历史
+
+### 数据准备清单（页面 1 依赖）
+- `bp_market_valuation_daily` 增加「宽基代理」口径与分位计算（用 bp_index_valuation_series 的 000016/000300/000510/000852/000985）
+- 指数表补 `high_all` / `dist_from_high_pct` / `change_52w_pct`（用 bp_index_quote_daily 全历史）
+- 多窗口分位（1/3/5 年 + all）写入 `bp_index_percentile`（含 PE/PB/股息率/ERP）
+- 行业分类：`bp_index_master.industry` 回填（按名称/中证行业映射）
