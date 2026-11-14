@@ -55,6 +55,27 @@ def start(app: AppConfig) -> None:
         except Exception as exc:  # noqa: BLE001
             logger.exception("CFFEX 增量同步异常: %s", exc)
 
+    def valuation_job() -> None:
+        """估值抓取门控：21:00 起每 15 分钟尝试，直到数据完备或达上限。"""
+        try:
+            from . import valuation_job as _vj
+
+            result = _vj.gate(app)
+            logger.info("估值门控结果: %s", result.get("status"))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("估值抓取异常: %s", exc)
+
+    def valuation_backfill_job() -> None:
+        """次日 09:00 兜底：夜间未完备则再补一次。"""
+        try:
+            from . import valuation_job as _vj
+
+            _vj.reset_attempts()
+            result = _vj.gate(app)
+            logger.info("估值兜底结果: %s", result.get("status"))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("估值兜底异常: %s", exc)
+
     def crypto_sync_job() -> None:
         """每日兜底重算 crypto 相关性 (ingest 钩子未覆盖/无新数据时兜底)。
 
@@ -99,6 +120,8 @@ def start(app: AppConfig) -> None:
 
     # 注意: 勿传 next_run_time=None — APScheduler 会将其视为 paused, 周期永不触发。
     # 启动立即执行由下方 job()/cffex_job() 负责; interval 从 start() 后按间隔调度。
+    scheduler.add_job(valuation_job, "cron", hour="21-23", minute="*/15", id="valuation")
+    scheduler.add_job(valuation_backfill_job, "cron", hour="9", minute="0", id="valuation-backfill")
     scheduler.add_job(
         job,
         "interval",

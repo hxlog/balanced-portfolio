@@ -23,7 +23,7 @@ from .repositories import _json_safe
 
 CALC_SRC_PINGAN = "pingan_index"
 
-INDEX_MARKETS = frozenset({"CSI", "SH", "SZ", "CNI", "HK", "US"})
+INDEX_MARKETS = frozenset({"CSI", "SH", "SZ", "CNI", "HK", "US", "BJ", "GLOBAL"})
 SERIES_METRICS = frozenset(
     {
         "pe_ttm",

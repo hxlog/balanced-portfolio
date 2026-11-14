@@ -280,7 +280,8 @@ def test_ingest_is_idempotent(conn):
 def test_ingest_isolates_single_index_failure(conn):
     details = [
         _detail_row("T3ING1", "Good One"),
-        {"code": "BADCODE", "indexName": "Bad Index", "updateDate": "20261114"},
+        # 未知字母前缀现在归入 GLOBAL（不再丢弃），因此用「缺名称」的行验证失败隔离。
+        {"code": "SH600000", "indexName": "", "updateDate": "20261114"},
         _detail_row("T3ING2", "Good Two"),
     ]
     summary = run_valuation_ingest(
@@ -290,9 +291,9 @@ def test_ingest_isolates_single_index_failure(conn):
     assert summary["indices"] == 2
     assert summary["valuation_rows"] == 2
     assert len(summary["errors"]) == 1
-    assert summary["errors"][0].startswith("BADCODE")
+    assert summary["errors"][0].startswith("600000")
     assert _count(conn, "bp_index_master", f"{TEST_PREFIX}%") == 2
-    assert _count(conn, "bp_index_master", "BADCODE") == 0
+    assert _count(conn, "bp_index_master", "600000") == 0
     assert _count(conn, "bp_index_valuation_daily", "BADCODE") == 0
     assert _count(conn, "bp_index_valuation_daily", "T3ING1") == 1
     assert _count(conn, "bp_index_valuation_daily", "T3ING2") == 1

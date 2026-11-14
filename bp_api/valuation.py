@@ -168,7 +168,7 @@ def register_routes(app: FastAPI) -> None:
         index_type: str | None = Query(None, alias="type", max_length=20, description="指数类别"),
         with_etf: bool = Query(False, description="仅看有跟踪 ETF 的指数"),
         with_val: bool = Query(False, description="仅看有估值的指数"),
-        limit: int = Query(100, ge=1, le=500, description="每页条数, 上限 500"),
+        limit: int = Query(100, ge=1, le=1000, description="每页条数, 上限 500"),
         offset: int = Query(0, ge=0, description="偏移量"),
         _user: auth.UserContext | None = Depends(auth.optional_user),
     ) -> dict:

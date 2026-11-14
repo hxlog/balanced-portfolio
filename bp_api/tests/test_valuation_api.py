@@ -190,11 +190,11 @@ def test_unknown_index_returns_404_index_not_found(client, monkeypatch):
     assert resp.json() == {"detail": "index_not_found"}
 
 
-def test_limit_above_500_returns_422_without_querying_repo(client, monkeypatch):
+def test_limit_above_cap_returns_422_without_querying_repo(client, monkeypatch):
     test_client, _ = client
     repo = _install_repo(monkeypatch, get_index_list=([], 0))
 
-    resp = test_client.get("/api/valuation/indices", params={"limit": 501})
+    resp = test_client.get("/api/valuation/indices", params={"limit": 1001})
 
     assert resp.status_code == 422
     repo.get_index_list.assert_not_called()
