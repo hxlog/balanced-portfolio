@@ -13,7 +13,7 @@ import { Toaster } from "@/components/ui/sonner";
 const geistSans = Geist({ subsets: ["latin"], variable: "--font-geist-sans", display: "swap" });
 const geistMono = Geist_Mono({ subsets: ["latin"], variable: "--font-geist-mono", display: "swap" });
 
-const SITE_URL = process.env.BP_SITE_URL || "http://localhost:3000";
+const SITE_URL = process.env.BP_SITE_URL || "https://xushilu.com";
 const SITE_NAME = "Balanced Portfolio";
 const SITE_DESC =
   "面向机构与专业投资者的风险平价指数投资组合管理与回测平台，基于桥水达利欧四象限框架。";
