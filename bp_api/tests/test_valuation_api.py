@@ -57,6 +57,11 @@ def _install_repo(monkeypatch, **return_values) -> MagicMock:
     repo = MagicMock()
     for name, value in return_values.items():
         getattr(repo, name).return_value = value
+    # detail 端点会额外查成分股与跟踪基金；默认返回空列表，避免 mock 未配置时抛错。
+    if "get_index_constituents" not in return_values:
+        repo.get_index_constituents.return_value = []
+    if "get_index_tracker_funds" not in return_values:
+        repo.get_index_tracker_funds.return_value = []
     monkeypatch.setattr(valuation, "repositories_valuation", repo)
     return repo
 
@@ -137,7 +142,9 @@ def test_detail_returns_detail_payload(client, monkeypatch):
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body["data"] == detail
+    # detail 端点会追加成分股与跟踪基金（无数据时为空列表）
+    expected = {**detail, "constituents": [], "tracker_funds": []}
+    assert body["data"] == expected
     assert body["meta"]["rows"] == 1
     assert body["meta"]["as_of"] == "2026-11-13"
     assert body["meta"]["cached"] is False

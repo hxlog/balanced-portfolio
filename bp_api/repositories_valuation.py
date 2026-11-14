@@ -818,3 +818,136 @@ def get_index_history(
             }
         )
     return result
+
+
+# ---------------------------------------------------------------------------
+# P1: 成分股 / 跟踪基金
+# ---------------------------------------------------------------------------
+
+
+def upsert_stock_master(conn: psycopg.Connection, rows: list[dict]) -> int:
+    """写入股票主数据（仅身份字段，不覆盖行业等人工维护字段）。"""
+    if not rows:
+        return 0
+    sql = """
+        INSERT INTO bp_stock_master (stock_code, market, name)
+        VALUES (%(stock_code)s, %(market)s, %(name)s)
+        ON CONFLICT (stock_code) DO UPDATE SET
+            market = EXCLUDED.market,
+            name = EXCLUDED.name,
+            updated_at = now()
+    """
+    with conn.cursor() as cur:
+        cur.executemany(sql, rows)
+    return len(rows)
+
+
+def upsert_constituents(conn: psycopg.Connection, rows: list[dict]) -> int:
+    """写入某指数某生效日的成分股权重（幂等）。"""
+    if not rows:
+        return 0
+    sql = """
+        INSERT INTO bp_index_constituent
+            (index_code, effective_date, stock_code, weight, rank, source)
+        VALUES (%(index_code)s, %(effective_date)s, %(stock_code)s, %(weight)s, %(rank)s, %(source)s)
+        ON CONFLICT (index_code, effective_date, stock_code) DO UPDATE SET
+            weight = EXCLUDED.weight,
+            rank = EXCLUDED.rank,
+            source = EXCLUDED.source,
+            captured_at = now()
+    """
+    with conn.cursor() as cur:
+        cur.executemany(sql, rows)
+    return len(rows)
+
+
+def upsert_fund_master(conn: psycopg.Connection, rows: list[dict]) -> int:
+    if not rows:
+        return 0
+    sql = """
+        INSERT INTO bp_fund_master (fund_code, name, company_name, risk_grade)
+        VALUES (%(fund_code)s, %(name)s, %(company_name)s, %(risk_grade)s)
+        ON CONFLICT (fund_code) DO UPDATE SET
+            name = EXCLUDED.name,
+            company_name = COALESCE(EXCLUDED.company_name, bp_fund_master.company_name),
+            risk_grade = COALESCE(EXCLUDED.risk_grade, bp_fund_master.risk_grade),
+            updated_at = now()
+    """
+    with conn.cursor() as cur:
+        cur.executemany(sql, rows)
+    return len(rows)
+
+
+def upsert_tracker_funds(conn: psycopg.Connection, rows: list[dict]) -> int:
+    if not rows:
+        return 0
+    sql = """
+        INSERT INTO bp_index_tracker_fund
+            (index_code, fund_code, trade_date, aum, source)
+        VALUES (%(index_code)s, %(fund_code)s, %(trade_date)s, %(aum)s, %(source)s)
+        ON CONFLICT (index_code, fund_code, trade_date) DO UPDATE SET
+            aum = EXCLUDED.aum,
+            source = EXCLUDED.source,
+            captured_at = now()
+    """
+    with conn.cursor() as cur:
+        cur.executemany(sql, rows)
+    return len(rows)
+
+
+def get_index_constituents(
+    conn: psycopg.Connection, index_code: str, limit: int = 60
+) -> list[dict]:
+    """最新生效日的成分股权重（前 N 大）。"""
+    sql = """
+        WITH latest AS (
+            SELECT max(effective_date) AS d
+            FROM bp_index_constituent WHERE index_code = %(code)s
+        )
+        SELECT c.stock_code, COALESCE(s.name, c.stock_code) AS name,
+               s.industry_l1, c.weight, c.rank, c.effective_date, c.source
+        FROM bp_index_constituent c
+        LEFT JOIN bp_stock_master s USING (stock_code)
+        WHERE c.index_code = %(code)s AND c.effective_date = (SELECT d FROM latest)
+        ORDER BY c.rank NULLS LAST, c.weight DESC NULLS LAST
+        LIMIT %(limit)s
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql, {"code": index_code, "limit": max(1, int(limit))})
+        columns = [desc.name for desc in cur.description]
+        records = cur.fetchall()
+    out: list[dict] = []
+    for record in records:
+        item = dict(zip(columns, record))
+        item["weight"] = _to_float(item.get("weight"))
+        item["rank"] = _to_int(item.get("rank"))
+        out.append(item)
+    return out
+
+
+def get_index_tracker_funds(
+    conn: psycopg.Connection, index_code: str
+) -> list[dict]:
+    """最新交易日的跟踪基金与规模。"""
+    sql = """
+        WITH latest AS (
+            SELECT max(trade_date) AS d
+            FROM bp_index_tracker_fund WHERE index_code = %(code)s
+        )
+        SELECT t.fund_code, COALESCE(f.name, t.fund_code) AS name,
+               f.company_name, f.risk_grade, t.aum, t.trade_date
+        FROM bp_index_tracker_fund t
+        LEFT JOIN bp_fund_master f USING (fund_code)
+        WHERE t.index_code = %(code)s AND t.trade_date = (SELECT d FROM latest)
+        ORDER BY t.aum DESC NULLS LAST
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql, {"code": index_code})
+        columns = [desc.name for desc in cur.description]
+        records = cur.fetchall()
+    out: list[dict] = []
+    for record in records:
+        item = dict(zip(columns, record))
+        item["aum"] = _to_float(item.get("aum"))
+        out.append(item)
+    return out

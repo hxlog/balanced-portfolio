@@ -25,6 +25,10 @@ import psycopg
 from bp_api.quant.valuation import erp as quant_erp
 from bp_api.quant.valuation import summarize, window_slice
 from bp_api.repositories_valuation import (
+    upsert_constituents,
+    upsert_fund_master,
+    upsert_stock_master,
+    upsert_tracker_funds,
     CALC_SRC_PINGAN,
     INDEX_MARKETS,
     fetch_series,
@@ -290,6 +294,75 @@ def _raw_payload(normalized: Mapping[str, Any]) -> dict:
     return {key: normalized.get(key) for key in _RAW_KEYS if key in normalized}
 
 
+def _build_stock_rows(index_code: str, normalized: Mapping[str, Any], trade_date: date) -> tuple[list[dict], list[dict]]:
+    """(股票主数据行, 成分股行)。平安 stockList 只给前 30 大权重。"""
+    stocks = normalized.get("stock_list") or []
+    stock_rows: list[dict] = []
+    constituent_rows: list[dict] = []
+    seen: set[str] = set()
+    for rank, item in enumerate(stocks, start=1):
+        if not isinstance(item, Mapping):
+            continue
+        code = _text(item.get("stock_code"))
+        market = _text(item.get("market"))
+        name = _text(item.get("name"))
+        if not code or market not in ("SH", "SZ", "BJ") or not name:
+            continue
+        if code in seen:
+            continue
+        seen.add(code)
+        stock_rows.append({"stock_code": code, "market": market, "name": name})
+        constituent_rows.append({
+            "index_code": index_code,
+            "effective_date": trade_date,
+            "stock_code": code,
+            "weight": _bounded(item.get("weight"), 0, 100),
+            "rank": rank,
+            "source": CALC_SRC_PINGAN,
+        })
+    return stock_rows, constituent_rows
+
+
+def _build_fund_rows(
+    merged: Mapping[str, Mapping[str, Any]],
+    tracker_raw: Sequence[Mapping[str, Any]],
+    trade_date: date,
+) -> tuple[list[dict], list[dict]]:
+    """(基金主数据行, 指数-基金跟踪关系行)。"""
+    fund_meta: dict[str, dict] = {}
+    for row in tracker_raw:
+        if not isinstance(row, Mapping):
+            continue
+        code = _text(row.get("fundCode"))
+        if not code:
+            continue
+        raw_position = row.get("positionDTO")
+        position = raw_position if isinstance(raw_position, Mapping) else {}
+        fund_meta[code] = {
+            "fund_code": code,
+            "name": _text(row.get("ommName")) or code,
+            "company_name": _text(row.get("companyName")),
+            "risk_grade": _text(row.get("riskGrade")),
+            "aum": _to_float(position.get("fnvsum")) if position else None,
+        }
+
+    master_rows: list[dict] = []
+    tracker_rows: list[dict] = []
+    for index_code, normalized in merged.items():
+        for fund_code in normalized.get("etf_fund") or []:
+            meta = fund_meta.get(str(fund_code))
+            if meta is None:
+                continue
+            master_rows.append({k: meta[k] for k in ("fund_code", "name", "company_name", "risk_grade")})
+            tracker_rows.append({
+                "index_code": index_code,
+                "fund_code": meta["fund_code"],
+                "trade_date": trade_date,
+                "aum": meta["aum"],
+                "source": CALC_SRC_PINGAN,
+            })
+    return master_rows, tracker_rows
+
 def _build_daily(index_code: str, normalized: Mapping[str, Any], trade_date: date) -> dict:
     pe, pb, dividend, bond10y, erp_value = _daily_values(normalized)
     roe = _float(normalized.get("roe_ttm"))
@@ -548,8 +621,25 @@ def run_valuation_ingest(
                 percentile_rows += upsert_percentiles(
                     conn, _build_percentiles(conn, index_code, trade_date)
                 )
+                stock_rows, constituent_rows = _build_stock_rows(
+                    index_code, normalized, trade_date
+                )
+                upsert_stock_master(conn, stock_rows)
+                upsert_constituents(conn, constituent_rows)
         except Exception as exc:  # noqa: BLE001 - 单指数失败隔离
             errors.append(f"{index_code}: {exc}")
+
+    tracker_raw = payload.get("tracker_funds") or []
+    if tracker_raw:
+        try:
+            with _savepoint(conn, "valuation_funds"):
+                fund_master_rows, tracker_rows = _build_fund_rows(
+                    merged, tracker_raw, summary_as_of
+                )
+                upsert_fund_master(conn, fund_master_rows)
+                upsert_tracker_funds(conn, tracker_rows)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"tracker_funds: {exc}")
 
     return _summary(
         summary_as_of,
