@@ -26,6 +26,8 @@ class ConfigRow:
     start_date: Optional[date]
     extra_params: dict
     has_data: bool  # 配置对应行情表是否已有数据(由查询填充)
+    adjust: str = "bfq"  # 回测/展示主口径
+    adjust_modes: tuple[str, ...] = ("bfq",)  # 需要抓取的全部口径
 
 
 @dataclass
@@ -43,6 +45,7 @@ class QuoteRow:
     amount: Optional[Decimal]
     turnover_rate: Optional[Decimal]
     pct_change: Optional[Decimal]
+    adjust: str = "bfq"
 
 
 @contextmanager
@@ -76,7 +79,8 @@ def fetch_active_configs(
     不进 /builder 可选池, 但必须被 6h 调度器增量拉取, 否则折算输入会停更。
     """
     sql = """
-        SELECT config_id, symbol, source, category, name, start_date, extra_params
+        SELECT config_id, symbol, source, category, name, start_date, extra_params,
+               adjust, adjust_modes
         FROM bp_index_config
         WHERE is_deleted = 0
     """
@@ -102,67 +106,69 @@ def fetch_active_configs(
                     start_date=r[5],
                     extra_params=r[6] or {},
                     has_data=False,
+                    adjust=(r[7] or "bfq"),
+                    adjust_modes=tuple(r[8] or ("bfq",)),
                 )
             )
     return rows
 
 
 def get_last_trade_date(
-    conn: psycopg.Connection, symbol: str, source: str
+    conn: psycopg.Connection, symbol: str, source: str, adjust: str = "bfq"
 ) -> Optional[date]:
     with conn.cursor() as cur:
         cur.execute(
             "SELECT max(trade_date) FROM bp_index_quote_daily "
-            "WHERE symbol = %s AND source = %s",
-            (symbol, source),
+            "WHERE symbol = %s AND source = %s AND adjust = %s",
+            (symbol, source, adjust),
         )
         row = cur.fetchone()
         return row[0] if row else None
 
 
 def get_close_at(
-    conn: psycopg.Connection, symbol: str, source: str, trade_date: date
+    conn: psycopg.Connection, symbol: str, source: str, trade_date: date, adjust: str = "bfq"
 ) -> Optional[Decimal]:
     """取某交易日的收盘价; 用于多源降级时把降级源价格重锚到主源口径。"""
     with conn.cursor() as cur:
         cur.execute(
             "SELECT close FROM bp_index_quote_daily "
-            "WHERE symbol = %s AND source = %s AND trade_date = %s",
-            (symbol, source, trade_date),
+            "WHERE symbol = %s AND source = %s AND adjust = %s AND trade_date = %s",
+            (symbol, source, adjust, trade_date),
         )
         row = cur.fetchone()
         return row[0] if row else None
 
 
 def get_quote_updated_at(
-    conn: psycopg.Connection, symbol: str, source: str, trade_date: date
+    conn: psycopg.Connection, symbol: str, source: str, trade_date: date, adjust: str = "bfq"
 ) -> Optional[datetime]:
     """单日行情行的 updated_at; 无行则 None。用于判断盘中脏 close 是否需收盘后重拉。"""
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT updated_at FROM bp_index_quote_daily
-            WHERE symbol = %s AND source = %s AND trade_date = %s
+            WHERE symbol = %s AND source = %s AND adjust = %s AND trade_date = %s
             """,
-            (symbol, source, trade_date),
+            (symbol, source, adjust, trade_date),
         )
         row = cur.fetchone()
         return row[0] if row else None
 
 
 def get_prev_close(
-    conn: psycopg.Connection, symbol: str, source: str, before_date: date
+    conn: psycopg.Connection, symbol: str, source: str, before_date: date, adjust: str = "bfq"
 ) -> Optional[Decimal]:
     """取 before_date 之前最近一个交易日的收盘价, 用于 pct_change 基准。"""
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT close FROM bp_index_quote_daily
-            WHERE symbol = %s AND source = %s AND trade_date < %s
+            WHERE symbol = %s AND source = %s AND adjust = %s AND trade_date < %s
             ORDER BY trade_date DESC
             LIMIT 1
             """,
-            (symbol, source, before_date),
+            (symbol, source, adjust, before_date),
         )
         row = cur.fetchone()
         return row[0] if row else None
@@ -170,13 +176,13 @@ def get_prev_close(
 
 _UPSERT_SQL = """
 INSERT INTO bp_index_quote_daily
-    (trade_date, symbol, source, category, name,
+    (trade_date, symbol, source, adjust, category, name,
      open, high, low, close, volume, amount, turnover_rate, pct_change)
 VALUES
-    (%(trade_date)s, %(symbol)s, %(source)s, %(category)s, %(name)s,
+    (%(trade_date)s, %(symbol)s, %(source)s, %(adjust)s, %(category)s, %(name)s,
      %(open)s, %(high)s, %(low)s, %(close)s, %(volume)s, %(amount)s,
      %(turnover_rate)s, %(pct_change)s)
-ON CONFLICT (symbol, source, trade_date) DO UPDATE SET
+ON CONFLICT (symbol, source, adjust, trade_date) DO UPDATE SET
     category      = EXCLUDED.category,
     name          = EXCLUDED.name,
     open          = EXCLUDED.open,
@@ -198,6 +204,7 @@ def upsert_quotes(conn: psycopg.Connection, rows: Iterable[QuoteRow]) -> int:
             "trade_date": r.trade_date,
             "symbol": r.symbol,
             "source": r.source,
+            "adjust": r.adjust,
             "category": r.category,
             "name": r.name,
             "open": r.open,

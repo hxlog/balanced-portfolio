@@ -29,11 +29,12 @@ logger = logging.getLogger(__name__)
 
 _UPSERT_SQL = """
 INSERT INTO bp_quote_clean
-    (trade_date, symbol, source, close, open, high, low, volume, ret, fx_rate, fill_flag)
+    (trade_date, symbol, source, adjust, close, open, high, low, volume, ret,
+     fx_rate, fill_flag)
 VALUES
-    (%(trade_date)s, %(symbol)s, %(source)s, %(close)s, %(open)s, %(high)s,
-     %(low)s, %(volume)s, %(ret)s, %(fx_rate)s, %(fill_flag)s)
-ON CONFLICT (symbol, source, trade_date) DO UPDATE SET
+    (%(trade_date)s, %(symbol)s, %(source)s, %(adjust)s, %(close)s, %(open)s,
+     %(high)s, %(low)s, %(volume)s, %(ret)s, %(fx_rate)s, %(fill_flag)s)
+ON CONFLICT (symbol, source, adjust, trade_date) DO UPDATE SET
     close     = EXCLUDED.close,
     open      = EXCLUDED.open,
     high      = EXCLUDED.high,
@@ -182,16 +183,18 @@ def _fx_column_value(value, convert: bool, currency: str) -> Optional[float]:
 
 
 
-def _load_raw(conn: psycopg.Connection, symbol: str, source: str) -> pd.DataFrame:
+def _load_raw(
+    conn: psycopg.Connection, symbol: str, source: str, adjust: str = "bfq"
+) -> pd.DataFrame:
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT trade_date, open, high, low, close, volume
             FROM bp_index_quote_daily
-            WHERE symbol = %s AND source = %s
+            WHERE symbol = %s AND source = %s AND adjust = %s
             ORDER BY trade_date
             """,
-            (symbol, source),
+            (symbol, source, adjust),
         )
         rows = cur.fetchall()
     if not rows:
@@ -209,18 +212,27 @@ def _load_raw(conn: psycopg.Connection, symbol: str, source: str) -> pd.DataFram
 def _list_targets(
     conn: psycopg.Connection, symbols: Optional[list[str]]
 ) -> list[tuple[str, str]]:
-    sql = "SELECT DISTINCT symbol, source FROM bp_index_quote_daily"
+    # 清洗只保留每个资产的**回测主口径**(bp_index_config.adjust)；
+    # 多口径原始数据(股票 bfq/qfq/hfq)只服务展示，不进清洗面板。
+    sql = """
+        SELECT DISTINCT q.symbol, q.source, COALESCE(c.adjust, 'bfq') AS adjust
+        FROM bp_index_quote_daily q
+        LEFT JOIN bp_index_config c
+               ON c.symbol = q.symbol AND c.source = q.source AND c.is_deleted = 0
+        WHERE q.adjust = COALESCE(c.adjust, 'bfq')
+    """
     params: list = []
     if symbols:
-        sql += " WHERE symbol = ANY(%s)"
+        sql += " AND q.symbol = ANY(%s)"
         params.append(symbols)
     with conn.cursor() as cur:
         cur.execute(sql, params)
-        return [(r[0], r[1]) for r in cur.fetchall()]
+        return [(r[0], r[1], r[2]) for r in cur.fetchall()]
 
 
 def _clean_natural(
-    raw: pd.DataFrame, symbol: str, source: str, conn: psycopg.Connection
+    raw: pd.DataFrame, symbol: str, source: str, conn: psycopg.Connection,
+    adjust: str = "bfq",
 ) -> int:
     """自然日清洗: 不按交易日历对齐, 保留所有原始日期。
 
@@ -246,6 +258,7 @@ def _clean_natural(
                 "trade_date": d,
                 "symbol": symbol,
                 "source": source,
+                "adjust": adjust,
                 "close": float(c),
                 "open": None if pd.isna(raw["open"].loc[d]) else float(raw["open"].loc[d]),
                 "high": None if pd.isna(raw["high"].loc[d]) else float(raw["high"].loc[d]),
@@ -331,20 +344,24 @@ def needs_conversion(conn: psycopg.Connection, symbol: str, source: str) -> bool
 
 
 def clean_one(
-    conn: psycopg.Connection, symbol: str, source: str, cal: TradingCalendar
+    conn: psycopg.Connection,
+    symbol: str,
+    source: str,
+    cal: TradingCalendar,
+    adjust: str = "bfq",
 ) -> int:
     """清洗单个 (symbol, source) 并写入 bp_quote_clean。返回写入行数。
 
     外币资产(currency 非 CNY)在**插入窗口前**折算: 按日乘真实汇率, 再在折算价上做
     线性插值; 无汇率日不产出清洗行(见模块头口径决策), 并清掉该日可能残留的旧行。
     """
-    raw = _load_raw(conn, symbol, source)
+    raw = _load_raw(conn, symbol, source, adjust)
     if raw.empty:
         return 0
 
     # 加密/外汇/商品(yfinance) 7×24 交易，不按 A 股交易日历对齐，直接透传全量原始数据
     if source == "crypto_yfinance":
-        return _clean_natural(raw, symbol, source, conn)
+        return _clean_natural(raw, symbol, source, conn, adjust)
 
     first, last = raw.index.min(), raw.index.max()
 
@@ -428,6 +445,7 @@ def clean_one(
                 "trade_date": d,
                 "symbol": symbol,
                 "source": source,
+                "adjust": adjust,
                 "close": float(c),
                 "open": None if pd.isna(open_.loc[d]) else float(open_.loc[d]),
                 "high": None if pd.isna(high.loc[d]) else float(high.loc[d]),
@@ -473,9 +491,9 @@ def rebuild_clean(
     targets = _list_targets(conn, symbols)
     targets.sort(key=lambda t: 0 if t[1] == FX_SOURCE else 1)
     total = 0
-    for symbol, source in targets:
+    for symbol, source, adjust in targets:
         try:
-            total += clean_one(conn, symbol, source, cal)
+            total += clean_one(conn, symbol, source, cal, adjust)
             conn.commit()
         except MissingFxRate as exc:
             # 仅对「必须折算」的资产清理: 原生 USD 展示口径资产(BTC/DXY/GC)的 fx_rate 恒为

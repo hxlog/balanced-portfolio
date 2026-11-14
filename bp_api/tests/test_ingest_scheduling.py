@@ -49,7 +49,8 @@ class _Conn:
 
 
 def _row(symbol, source, selectable=None):  # noqa: ARG001 - selectable 只用于可读性
-    return (1, symbol, source, "index", symbol, None, {})
+    # 列序: config_id, symbol, source, category, name, start_date, extra_params, adjust, adjust_modes
+    return (1, symbol, source, "index", symbol, None, {}, "bfq", ["bfq"])
 
 
 def test_scheduler_scope_includes_fx_sources():
@@ -90,7 +91,7 @@ def test_explicit_symbols_still_excludes_soft_deleted():
 
 def test_config_rows_map_extra_params_default():
     """extra_params 为 NULL 时必须落成 {} 而非 None —— 下游到处 .get()。"""
-    conn = _Conn([(7, "513500", "etf_em", "etf", "标普500ETF", None, None)])
+    conn = _Conn([(7, "513500", "etf_em", "etf", "标普500ETF", None, None, "hfq", ["hfq"])])
     out = fetch_active_configs(conn, symbols=None)
 
     assert out[0].extra_params == {}

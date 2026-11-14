@@ -63,12 +63,13 @@ def _needs_post_close_refresh(
     source: str,
     today: date,
     *,
+    adjust: str = "bfq",
     now: datetime | None = None,
 ) -> bool:
     """今日已收盘确认, 但库中今日行仍是 15:10 前写入 → 必须重拉覆盖。"""
     if not is_trade_date_close_confirmed(today, now=now, today=today):
         return False
-    updated_at = db.get_quote_updated_at(conn, symbol, source, today)
+    updated_at = db.get_quote_updated_at(conn, symbol, source, today, adjust)
     if updated_at is None:
         return False
     deadline = close_confirm_deadline(today)
@@ -138,7 +139,7 @@ def _compute_pct_change(
     return df
 
 
-def _build_rows(df: pd.DataFrame, cfg: ConfigRow) -> list[QuoteRow]:
+def _build_rows(df: pd.DataFrame, cfg: ConfigRow, adjust: str = "bfq") -> list[QuoteRow]:
     rows: list[QuoteRow] = []
     for r in df.itertuples(index=False):
         rows.append(
@@ -156,9 +157,22 @@ def _build_rows(df: pd.DataFrame, cfg: ConfigRow) -> list[QuoteRow]:
                 amount=_to_decimal(r.amount),
                 turnover_rate=_to_decimal(r.turnover_rate),
                 pct_change=_to_decimal(r.pct_change),
+                adjust=adjust,
             )
         )
     return rows
+
+
+
+_ADJUST_LABEL = {"bfq": "不复权", "qfq": "前复权", "hfq": "后复权"}
+
+
+def _adjust_modes(cfg: ConfigRow) -> tuple[str, ...]:
+    """该资产需要抓取的口径；股票默认 bfq/qfq/hfq，指数与 ETF 由配置指定。"""
+    modes = tuple(mode for mode in (cfg.adjust_modes or ()) if mode)
+    if not modes:
+        modes = (cfg.adjust or "bfq",)
+    return modes
 
 
 def _sync_one(
@@ -170,10 +184,49 @@ def _sync_one(
     *,
     now: datetime | None = None,
 ) -> SyncResult:
+    """按 adjust_modes 抓取全部口径；单口径失败不影响其他口径。"""
+    modes = _adjust_modes(cfg)
+    if len(modes) == 1:
+        return _sync_one_mode(conn, cfg, cal, app, today, adjust=modes[0], now=now)
+
+    results: list[SyncResult] = []
+    for mode in modes:
+        try:
+            results.append(
+                _sync_one_mode(conn, cfg, cal, app, today, adjust=mode, now=now)
+            )
+        except Exception as exc:  # noqa: BLE001 - 单口径失败降级
+            results.append(
+                SyncResult(cfg.symbol, cfg.source, "error", 0, f"{mode}: {exc}")
+            )
+
+    ok = [r for r in results if r.status in ("ok", "stale")]
+    rows = sum(r.rows for r in ok)
+    advanced = any(r.advanced for r in ok)
+    detail = " / ".join(
+        f"{_ADJUST_LABEL.get(mode, mode)} {r.rows}行" for mode, r in zip(modes, results)
+    )
+    if ok:
+        status = "stale" if any(r.status == "stale" for r in results) else "ok"
+        return SyncResult(cfg.symbol, cfg.source, status, rows, detail, advanced)
+    first_error = next((r.detail for r in results if r.status == "error"), "全部口径失败")
+    return SyncResult(cfg.symbol, cfg.source, "error", 0, first_error)
+
+
+def _sync_one_mode(
+    conn,
+    cfg: ConfigRow,
+    cal: TradingCalendar,
+    app: AppConfig,
+    today: date,
+    *,
+    adjust: str = "bfq",
+    now: datetime | None = None,
+) -> SyncResult:
     adapter = get_adapter(cfg.source)
     wall = now_cst(now)
 
-    last_date = db.get_last_trade_date(conn, cfg.symbol, cfg.source)
+    last_date = db.get_last_trade_date(conn, cfg.symbol, cfg.source, adjust)
     expected_latest = cal.confirmed_expected_latest(today, app.lag_days, now=wall)
 
     # 今日行若写于收盘确认前(盘中脏 close), 不论 lag_days 是否把 expected 挡在 T-1,
@@ -181,7 +234,9 @@ def _sync_one(
     force_refresh = (
         last_date is not None
         and last_date == today
-        and _needs_post_close_refresh(conn, cfg.symbol, cfg.source, today, now=wall)
+        and _needs_post_close_refresh(
+            conn, cfg.symbol, cfg.source, today, adjust=adjust, now=wall
+        )
     )
     if force_refresh:
         logger.info(
@@ -215,7 +270,7 @@ def _sync_one(
     # 避免混入腾讯 hfq 的单位净值口径绝对价污染收益序列(见 sources.py fetch_with_fallback)。
     anchor_close = None
     if last_date is not None:
-        ac = db.get_close_at(conn, cfg.symbol, cfg.source, last_date)
+        ac = db.get_close_at(conn, cfg.symbol, cfg.source, last_date, adjust)
         anchor_close = float(ac) if ac is not None else None
 
     @retry(
@@ -224,8 +279,10 @@ def _sync_one(
         reraise=True,
     )
     def _fetch() -> pd.DataFrame:
+        extra = dict(cfg.extra_params or {})
+        extra["adjust"] = adjust
         return fetch_with_fallback(
-            cfg.source, cfg.symbol, start, end, cfg.extra_params,
+            cfg.source, cfg.symbol, start, end, extra,
             anchor_close=anchor_close, anchor_date=last_date,
         )
 
@@ -254,10 +311,12 @@ def _sync_one(
     if stale:
         logger.warning("STALE %s@%s: %s", cfg.symbol, cfg.source, stale_note)
 
-    prev_close = db.get_prev_close(conn, cfg.symbol, cfg.source, df["trade_date"].min())
+    prev_close = db.get_prev_close(
+        conn, cfg.symbol, cfg.source, df["trade_date"].min(), adjust
+    )
     df = _compute_pct_change(df, prev_close, adapter.provides_pct)
 
-    rows = _build_rows(df, cfg)
+    rows = _build_rows(df, cfg, adjust)
     n = db.upsert_quotes(conn, rows)
 
     # 新品种(原 start_date 为空)首拉成功 -> 回写真实最早日期

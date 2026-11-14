@@ -294,3 +294,45 @@ class ResultOut(BaseModel):
     method: Optional[str] = None
     available_methods: list[str] = []
     method_summaries: list[dict] = []
+
+
+# ---------------------------------------------------------------------------
+# P4 一篮子资产风险平价（/api/basket/*）
+# ---------------------------------------------------------------------------
+class BasketAssetIn(BaseModel):
+    """篮子成分的最小标识。与象限无关，故不含 quadrant 字段。"""
+
+    symbol: str = Field(min_length=1)
+    source: str = Field(min_length=1)
+
+    @field_validator("symbol", "source")
+    @classmethod
+    def _strip_non_empty(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("symbol/source 不能为空")
+        return v
+
+
+class BasketOptimizeIn(BaseModel):
+    """POST /api/basket/optimize 请求体。"""
+
+    assets: list[BasketAssetIn] = Field(min_length=1, max_length=64)
+    method: str = "risk_parity"
+    lookback_days: int = Field(default=156, ge=2, le=5000)
+    risk_free: float = Field(default=0.0, allow_inf_nan=False)
+    risk_budget: Optional[dict[str, float]] = None
+    start: Optional[date] = None
+    end: Optional[date] = None
+
+    @model_validator(mode="after")
+    def _check_date_range(self):
+        if self.start is not None and self.end is not None and self.start > self.end:
+            raise ValueError("start 不能晚于 end")
+        return self
+
+
+class BasketBacktestIn(BasketOptimizeIn):
+    """POST /api/basket/backtest 请求体：优化参数 + 再平衡漂移带。"""
+
+    rebalance_band: float = Field(default=0.05, ge=0.0, le=1.0)

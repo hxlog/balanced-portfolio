@@ -134,6 +134,10 @@ def _compute_method_job(args) -> tuple[str, tuple[BacktestResult, dict], float]:
 
 # 候选基准注册表: legs = [(权重, symbol, source), ...]; 多腿为按日再平衡的组合基准
 # kind: price_return(价格指数,不含派息) / total_return(总收益,含派息/票息再投资) / mixed(混合口径)
+# 个股资产源：默认抓 bfq/qfq/hfq 三口径，回测主口径用 hfq。
+STOCK_SOURCES = frozenset({"stock_sina", "stock_tx"})
+
+
 BENCHMARKS: dict[str, dict] = {
     "000300": {"name": "沪深300", "kind": "price_return", "legs": [(1.0, "000300", "cn_index_em")],
                "note": "价格指数,不含派息; 与含红利再投资(后复权)的组合对比时, 超额/IR 会被高估约指数股息率。"},
@@ -1753,23 +1757,35 @@ def upsert_asset_config(conn: psycopg.Connection, data) -> None:
     # 显式定型, 规避多态推断。
     import json as _json
     extra_patch = _json.dumps({"adjust": data.adjust}) if data.adjust else "{}"
+    # 股票资产默认抓全三口径，回测主口径用后复权(hfq)；其余资产沿用单口径。
+    if data.source in STOCK_SOURCES:
+        primary_adjust = data.adjust or "hfq"
+        adjust_modes = ["bfq", "qfq", "hfq"]
+    else:
+        primary_adjust = data.adjust or "bfq"
+        adjust_modes = [primary_adjust]
     with conn.cursor() as cur:
         cur.execute(
             """INSERT INTO bp_index_config
-                 (symbol, source, category, name, start_date, is_deleted, extra_params)
+                 (symbol, source, category, name, start_date, is_deleted, extra_params,
+                  adjust, adjust_modes)
                VALUES (%(symbol)s, %(source)s, %(category)s, %(name)s, %(start_date)s,
-                       %(is_deleted)s, %(extra_patch)s::jsonb)
+                       %(is_deleted)s, %(extra_patch)s::jsonb,
+                       %(adjust)s, %(adjust_modes)s)
                ON CONFLICT (symbol, source) DO UPDATE SET
                  category = EXCLUDED.category,
                  name = EXCLUDED.name,
                  start_date = EXCLUDED.start_date,
                  is_deleted = EXCLUDED.is_deleted,
                  extra_params = COALESCE(bp_index_config.extra_params, '{}'::jsonb) || %(extra_patch)s::jsonb,
+                 adjust = EXCLUDED.adjust,
+                 adjust_modes = EXCLUDED.adjust_modes,
                  updated_at = now()""",
             {
                 "symbol": data.symbol, "source": data.source, "category": data.category,
                 "name": data.name, "start_date": data.start_date,
                 "is_deleted": data.is_deleted, "extra_patch": extra_patch,
+                "adjust": primary_adjust, "adjust_modes": adjust_modes,
             },
         )
 

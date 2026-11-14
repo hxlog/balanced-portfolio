@@ -517,7 +517,7 @@ def _fetch_tx_kline(
     """
     import requests as _requests
 
-    fq = {"qfq": "qfq", "hfq": "hfq", "": ""}.get(adjust, "")
+    fq = {"bfq": "", "qfq": "qfq", "hfq": "hfq", "": ""}.get(adjust, adjust)
     code = _tx_market_prefix(symbol)
     url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
 
@@ -740,6 +740,50 @@ def _fetch_fx_sina(symbol: str, start: date, end: date, extra: dict) -> pd.DataF
     return _finalize(df, start, end)
 
 
+
+
+# ---------------------------------------------------------------------
+# 个股(A 股): 新浪为主, 腾讯为备(均为「东财之外」的稳定源;
+# 东财 push2his 在批量抓取后会被反爬掐断, 不适合全 A 股批量回填)
+# ---------------------------------------------------------------------
+def _stock_prefix(symbol: str) -> str:
+    """600036 -> sh600036; 000001 -> sz000001; 830799 -> bj830799。"""
+    s = symbol.strip().lower()
+    if s.startswith(("sh", "sz", "bj")):
+        return s
+    if s.startswith(("6", "9")):
+        return f"sh{s}"
+    if s.startswith(("4", "8")):
+        return f"bj{s}"
+    return f"sz{s}"
+
+
+def _fetch_stock_sina(symbol: str, start: date, end: date, extra: dict) -> pd.DataFrame:
+    """新浪个股日线; adjust 空/qfq/hfq, 由资产的 adjust_modes 逐口径抓取。"""
+    adjust = str(extra.get("adjust", "") or "")
+    if adjust == "bfq":
+        adjust = ""  # 新浪用空串表示不复权
+    try:
+        raw = ak.stock_zh_a_daily(
+            symbol=_stock_prefix(symbol),
+            start_date=_fmt(start),
+            end_date=_fmt(end),
+            adjust=adjust,
+        )
+    except Exception:  # noqa: BLE001 - 停牌/退市/参数异常按无数据
+        return pd.DataFrame(columns=STANDARD_COLUMNS)
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=STANDARD_COLUMNS)
+    df = _rename(raw, {"date": "trade_date", "turnover": "turnover_rate"})
+    return _finalize(df, start, end)
+
+
+def _fetch_stock_tx(symbol: str, start: date, end: date, extra: dict) -> pd.DataFrame:
+    """腾讯个股日线(备源); 与新浪同口径可用收盘比值重锚(见 AGGREGATE_CHAINS 注释)。"""
+    adjust = str(extra.get("adjust", "") or "")
+    return _fetch_tx_kline(symbol, start, end, adjust)
+
+
 # ---------------------------------------------------------------------
 # 注册表
 # ---------------------------------------------------------------------
@@ -807,6 +851,13 @@ SOURCES: dict[str, SourceAdapter] = {
     ),
     "gold_comex_em": SourceAdapter(
         "gold_comex_em", "futures_foreign_hist", True, True, False, _fetch_gold_comex_em
+    ),
+    # 个股(A 股): 新浪主源 / 腾讯备源; adjust 由 adjust_modes 驱动
+    "stock_sina": SourceAdapter(
+        "stock_sina", "stock_zh_a_daily", True, True, False, _fetch_stock_sina
+    ),
+    "stock_tx": SourceAdapter(
+        "stock_tx", "tencent_fqkline", True, True, False, _fetch_stock_tx
     ),
     # 汇率(新浪「人民币汇率」口径, 直连 jsonp 日 K; 无成交量)。symbol 形如 USDCNY。
     "fx_sina": SourceAdapter(

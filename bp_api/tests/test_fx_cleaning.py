@@ -80,7 +80,8 @@ class _FakeConn:
 
     def _rows_for(self, sql: str, params):
         if "FROM bp_index_quote_daily" in sql:
-            return list(self.raw.get(tuple(params), []))
+            # _load_raw 现在带 adjust 参数(symbol, source, adjust)，夹具仍按 (symbol, source) 建索引
+            return list(self.raw.get((params[0], params[1]), []))
         if "fill_flag = 'real'" in sql:  # _load_fx_panel
             pair, src, start, end = params[0], params[1], params[2], params[3]
             return [
@@ -313,10 +314,12 @@ def test_rebuild_cleans_fx_sources_first():
 
     orig_targets, orig_one = cleaning._list_targets, cleaning.clean_one
     cleaning._list_targets = lambda conn, symbols: [
-        ("DAX", "global_index_em"), ("USDCNY", "fx_sina"), ("HSI", "hk_index_em"),
-        ("HKDCNY", "fx_sina"),
+        ("DAX", "global_index_em", "hfq"), ("USDCNY", "fx_sina", "bfq"),
+        ("HSI", "hk_index_em", "bfq"), ("HKDCNY", "fx_sina", "bfq"),
     ]
-    cleaning.clean_one = lambda conn, symbol, source, cal: order.append((symbol, source)) or 1
+    cleaning.clean_one = lambda conn, symbol, source, cal, adjust="bfq": (
+        order.append((symbol, source)) or 1
+    )
     try:
         cleaning.rebuild_clean(_Conn(), cal=_Cal([D1]))
     finally:
@@ -336,12 +339,12 @@ def test_rebuild_purges_unconverted_rows_when_conversion_fails():
         def rollback(self):
             pass
 
-    def _fail(conn, symbol, source, cal):
+    def _fail(conn, symbol, source, cal, adjust="bfq"):
         raise MissingFxRate(f"{symbol}@{source}: 测试注入", total=True)
 
     orig = (cleaning._list_targets, cleaning.clean_one,
             cleaning._purge_unconverted_rows, cleaning.needs_conversion)
-    cleaning._list_targets = lambda conn, symbols: [("越南胡志明", "global_index_em")]
+    cleaning._list_targets = lambda conn, symbols: [("越南胡志明", "global_index_em", "hfq")]
     cleaning.clean_one = _fail
     cleaning.needs_conversion = lambda conn, symbol, source: True
     cleaning._purge_unconverted_rows = (
@@ -372,12 +375,12 @@ def test_rebuild_partial_purge_keeps_interp_rows():
         def rollback(self):
             pass
 
-    def _fail(conn, symbol, source, cal):
+    def _fail(conn, symbol, source, cal, adjust="bfq"):
         raise MissingFxRate("尾部停更")  # 默认 total=False
 
     orig = (cleaning._list_targets, cleaning.clean_one,
             cleaning._purge_unconverted_rows, cleaning.needs_conversion)
-    cleaning._list_targets = lambda conn, symbols: [("HSI", "hk_index_em")]
+    cleaning._list_targets = lambda conn, symbols: [("HSI", "hk_index_em", "bfq")]
     cleaning.clean_one = _fail
     cleaning.needs_conversion = lambda conn, symbol, source: True
     cleaning._purge_unconverted_rows = (
@@ -403,11 +406,11 @@ def test_rebuild_never_purges_display_only_usd_assets():
         def rollback(self):
             pass
 
-    def _fail(conn, symbol, source, cal):
+    def _fail(conn, symbol, source, cal, adjust="bfq"):
         raise MissingFxRate("测试注入")
 
     orig = (cleaning._list_targets, cleaning.clean_one, cleaning._purge_unconverted_rows)
-    cleaning._list_targets = lambda conn, symbols: [("BTC-USD", "crypto_yfinance")]
+    cleaning._list_targets = lambda conn, symbols: [("BTC-USD", "crypto_yfinance", "bfq")]
     cleaning.clean_one = _fail
     cleaning._purge_unconverted_rows = (
         lambda conn, symbol, source, total=False: purged.append((symbol, source)) or 0

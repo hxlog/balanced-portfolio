@@ -143,6 +143,7 @@ from . import cffex as _cffex
 from . import crypto as _crypto
 from . import otc_api as _otc
 from . import public_api as _public_api
+from . import stocks as _stocks
 from . import valuation
 
 app = FastAPI(title="Balanced Portfolio API", version="1.0.0", lifespan=lifespan)
@@ -151,6 +152,7 @@ _crypto.register_routes(app)
 _otc.register_routes(app)
 valuation.register_routes(app)
 _public_api.register_routes(app)
+_stocks.register_routes(app)
 
 app.add_middleware(
     CORSMiddleware,

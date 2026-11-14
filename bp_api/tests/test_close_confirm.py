@@ -160,7 +160,7 @@ class TestForceRefreshIndependentOfLag:
         class _FakeConn:
             pass
 
-        def fake_ua(conn, symbol, source, trade_date):
+        def fake_ua(conn, symbol, source, trade_date, adjust="bfq"):
             assert trade_date == today
             return early
 
