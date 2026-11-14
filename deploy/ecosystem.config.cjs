@@ -38,6 +38,8 @@ module.exports = {
         PORT: "3000",
         BP_API_BASE: process.env.BP_API_BASE || "http://127.0.0.1:8000",
         BP_SITE_URL: process.env.BP_SITE_URL || "http://localhost:3000",
+        // 内部缓存失效令牌：估值/加密采集任务落库后调用 /api/revalidate/*
+        BP_INTERNAL_REVALIDATE_TOKEN: process.env.BP_INTERNAL_REVALIDATE_TOKEN || "",
         // umami 埋点: 由 deploy.sh 的 `set -a; source .env` 注入, 此处显式透传便于排查
         BP_UMAMI_WEBSITE_ID: process.env.BP_UMAMI_WEBSITE_ID || "",
         BP_UMAMI_SRC: process.env.BP_UMAMI_SRC || "",
