@@ -25,6 +25,7 @@ import psycopg
 from bp_api.quant.valuation import erp as quant_erp
 from bp_api.quant.valuation import summarize, window_slice
 from bp_api.repositories_valuation import (
+    upsert_macro_series,
     upsert_constituents,
     upsert_fund_master,
     upsert_stock_master,
@@ -238,6 +239,25 @@ def _description_by_code(rows: Sequence[Mapping[str, Any]]) -> dict[str, dict]:
         }
     return result
 
+
+def _build_macro_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict]:
+    """BOND10_TREND -> bp_macro_series 行（十年期国债到期收益率，单位 %）。"""
+    out: list[dict] = []
+    for raw in rows or []:
+        trade_date = _as_date(raw.get("tradeDt"))
+        value = _float(raw.get("bAnalyield"))
+        if trade_date is None or value is None:
+            continue
+        out.append(
+            {
+                "series_code": "cn_10y_yield",
+                "trade_date": trade_date,
+                "value": value,
+                "unit": "%",
+                "source": CALC_SRC_PINGAN,
+            }
+        )
+    return out
 
 def _bond10_by_date(rows: Sequence[Mapping[str, Any]]) -> dict[date, float]:
     result: dict[date, float] = {}
@@ -548,7 +568,15 @@ def run_valuation_ingest(
         payload.get("index_detail") or [],
     )
     descriptions = _description_by_code(payload.get("index_description") or [])
-    bond10_by_date = _bond10_by_date(payload.get("bond10_history") or [])
+    bond10_rows = payload.get("bond10_history") or []
+    bond10_by_date = _bond10_by_date(bond10_rows)
+    # 十年期国债收益率同时落 bp_macro_series，供 /api/v1/market/bond-yield 与前端消费
+    if bond10_rows:
+        try:
+            with _savepoint(conn, "valuation_macro"):
+                upsert_macro_series(conn, _build_macro_rows(bond10_rows))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"macro_series: {exc}")
 
     update_dates = [
         value

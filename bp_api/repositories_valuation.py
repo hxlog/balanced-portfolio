@@ -977,3 +977,21 @@ def get_index_tracker_funds(
         item["aum"] = _to_float(item.get("aum"))
         out.append(item)
     return out
+
+
+def upsert_macro_series(conn: psycopg.Connection, rows: list[dict]) -> int:
+    """写入宏观序列（series_code + trade_date 幂等）。"""
+    if not rows:
+        return 0
+    sql = """
+        INSERT INTO bp_macro_series (series_code, trade_date, value, unit, source)
+        VALUES (%(series_code)s, %(trade_date)s, %(value)s, %(unit)s, %(source)s)
+        ON CONFLICT (series_code, trade_date) DO UPDATE SET
+            value = EXCLUDED.value,
+            unit = EXCLUDED.unit,
+            source = EXCLUDED.source,
+            captured_at = now()
+    """
+    with conn.cursor() as cur:
+        cur.executemany(sql, rows)
+    return len(rows)
