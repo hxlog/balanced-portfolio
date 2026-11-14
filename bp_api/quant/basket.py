@@ -25,7 +25,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
 import numpy as np
@@ -217,6 +217,7 @@ def optimize(
     lookback: int,
     risk_free: float,
     risk_budget: Optional[dict[str, float]] = None,
+    trading_days: int = DEFAULT_TRADING_DAYS,
 ) -> np.ndarray:
     """返回长仓权重（Σ=1），只使用传入窗口的最后 ``lookback`` 行。
 
@@ -268,7 +269,11 @@ def optimize(
     cov = _regularize_cov(np.nan_to_num(cov, nan=0.0, posinf=0.0, neginf=0.0))
 
     mean = np.nan_to_num(sub.mean(axis=0), nan=0.0, posinf=0.0, neginf=0.0)
-    rf_daily = float(risk_free or 0.0) / DEFAULT_TRADING_DAYS
+    try:
+        days_per_year = max(int(trading_days), 1)
+    except (TypeError, ValueError):
+        days_per_year = DEFAULT_TRADING_DAYS
+    rf_daily = float(risk_free or 0.0) / days_per_year
 
     if method == "equal_weight":
         w_sub = np.ones(k, dtype=float) / k
@@ -421,6 +426,8 @@ def run_basket_backtest(
     """
     if method not in METHODS:
         raise ValueError(f"未知优化方法: {method}")
+    if isinstance(user_start, datetime):
+        user_start = user_start.date()
 
     assets = list(prices.columns)
     if not assets:
@@ -471,6 +478,7 @@ def run_basket_backtest(
             lookback=len(sub),
             risk_free=risk_free,
             risk_budget=budgets,
+            trading_days=trading_days,
         )
         w = pd.Series(0.0, index=assets)
         for key, value in zip(avail, w_sub):

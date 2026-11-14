@@ -1,7 +1,7 @@
 # 一篮子资产风险平价（P4）
 
 > 实现：`bp_api/quant/basket.py`（优化器 + 回测引擎）、`bp_api/basket.py`（HTTP 端点）、
-> `bp_api/schemas.py`（请求模型）、`bp_api/tests/test_basket.py`（36 个用例）。
+> `bp_api/schemas.py`（请求模型）、`bp_api/tests/test_basket.py`（38 个用例）。
 > 数据只读 `bp_quote_clean`；端点不落库、不派发任务，属于同步计算接口。
 
 ## 1. 与四象限组合方法的区别
@@ -242,7 +242,7 @@
 
 ```bash
 python -m pytest bp_api/tests/test_basket.py -q
-# 36 passed
+# 38 passed
 ```
 
 覆盖：6 方法合法权重、权重和=1、长仓、单资产/单有效资产、完全相关退化、全零方差、

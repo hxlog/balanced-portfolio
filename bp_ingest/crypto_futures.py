@@ -1,13 +1,14 @@
 """Binance USDT 永续合约微观数据采集与分位预计算（P5）。
 
-数据链路（生产）::
+数据链路::
 
-    Binance FAPI（服务器不可直连）
-        → Cloudflare Worker ``workers/binance-proxy``（``BP_BINANCE_PROXY_URL``）
+    本机 Xray（VLESS → 新加坡出口，仅本地 127.0.0.1:10809）
+        → Binance FAPI（服务器在上海无法直连，故采集在本机执行、只把结果写入生产库）
         → 本模块 → bp_crypto_contract / bp_crypto_futures_snapshot_5m
                  → bp_crypto_futures_percentile（API 只读预计算表）
 
-本地开发未配置 ``BP_BINANCE_PROXY_URL`` 时直连 ``https://fapi.binance.com``。
+采集机需设置 ``HTTPS_PROXY=http://127.0.0.1:10809`` 才能出网到 Binance；
+生产服务器上不安装任何代理，也不参与 Binance 抓取。
 
 口径:
   * 合约池 = ``contractType=PERPETUAL`` + ``quoteAsset=USDT`` + ``status=TRADING``，
@@ -235,8 +236,8 @@ def _select_top_contracts(
 _UPSERT_CONTRACT_SQL = """
 INSERT INTO bp_crypto_contract
     (contract_code, symbol, base_asset, quote_asset, listed_at,
-     is_active, oi_notional_rank)
-VALUES (%s, %s, %s, %s, %s, %s, %s)
+     is_active, oi_notional_rank, provider)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
 ON CONFLICT (contract_code) DO UPDATE SET
     symbol = EXCLUDED.symbol,
     base_asset = EXCLUDED.base_asset,
@@ -244,6 +245,7 @@ ON CONFLICT (contract_code) DO UPDATE SET
     listed_at = COALESCE(EXCLUDED.listed_at, bp_crypto_contract.listed_at),
     is_active = EXCLUDED.is_active,
     oi_notional_rank = EXCLUDED.oi_notional_rank,
+    provider = EXCLUDED.provider,
     updated_at = now()
 """
 
@@ -260,6 +262,7 @@ def _upsert_contracts(conn: psycopg.Connection, contracts: list[dict[str, Any]])
             c.get("listed_at"),
             bool(c.get("is_active", True)),
             c.get("oi_notional_rank"),
+            c.get("provider", "binance"),
         )
         for c in contracts
     ]
@@ -370,8 +373,8 @@ def _parse_snapshot(
 _UPSERT_SNAPSHOT_SQL = """
 INSERT INTO bp_crypto_futures_snapshot_5m
     (contract_code, captured_at, mark_price, index_price, oi_contracts,
-     oi_notional, long_short_ratio, taker_buy_sell_ratio, basis_pct)
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+     oi_notional, long_short_ratio, taker_buy_sell_ratio, basis_pct, provider)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 ON CONFLICT (contract_code, captured_at) DO UPDATE SET
     mark_price = EXCLUDED.mark_price,
     index_price = EXCLUDED.index_price,
@@ -379,7 +382,8 @@ ON CONFLICT (contract_code, captured_at) DO UPDATE SET
     oi_notional = EXCLUDED.oi_notional,
     long_short_ratio = EXCLUDED.long_short_ratio,
     taker_buy_sell_ratio = EXCLUDED.taker_buy_sell_ratio,
-    basis_pct = EXCLUDED.basis_pct
+    basis_pct = EXCLUDED.basis_pct,
+    provider = EXCLUDED.provider
 """
 
 
@@ -397,6 +401,7 @@ def _upsert_snapshots(conn: psycopg.Connection, rows: list[dict[str, Any]]) -> i
             r.get("long_short_ratio"),
             r.get("taker_buy_sell_ratio"),
             r.get("basis_pct"),
+            r.get("provider", "binance"),
         )
         for r in rows
     ]
@@ -508,6 +513,8 @@ WITH daily AS (
     WHERE s.captured_at >= now() - INTERVAL '181 days'
       AND c.is_active
       AND c.oi_notional_rank IS NOT NULL
+      -- provider 不同的历史快照（Binance / Bybit）不可混算分位
+      AND s.provider = c.provider
     GROUP BY s.contract_code, trade_date
 )
 SELECT contract_code, trade_date, mark_price, oi_notional,

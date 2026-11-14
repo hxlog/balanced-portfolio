@@ -107,6 +107,13 @@ def _returns_from_panel(panel: pd.DataFrame) -> pd.DataFrame:
     return panel.ffill().pct_change().iloc[1:]
 
 
+def _iso_date(value) -> str:
+    """日期统一输出为 ISO 字符串（兼容 date/datetime/Timestamp/普通值）。"""
+    if hasattr(value, "isoformat"):
+        return str(value.isoformat())
+    return str(value)
+
+
 def _rounded_weights(weights: dict[str, float], ndigits: int = 10) -> dict[str, float]:
     """输出前清洗 NaN/Inf，并用最大项吸收舍入残差，保证合计≈1。"""
     out: dict[str, float] = {}
@@ -193,6 +200,7 @@ def register_routes(app: FastAPI) -> None:
                 lookback=len(window),
                 risk_free=payload.risk_free,
                 risk_budget=payload.risk_budget,
+                trading_days=trading_days,
             )
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
@@ -207,7 +215,7 @@ def register_routes(app: FastAPI) -> None:
                 "method": payload.method,
                 "lookback": payload.lookback_days,
                 "effective_start": (
-                    str(window.index[0]) if len(window) > 0 else None
+                    _iso_date(window.index[0]) if len(window) > 0 else None
                 ),
                 "n_obs": int(diagnostics["n_obs"]),
                 "volatility": float(diagnostics["annualized_vol"]),
@@ -271,11 +279,16 @@ def register_routes(app: FastAPI) -> None:
 
         nav_rows = [
             {
-                "trade_date": str(index),
+                "trade_date": _iso_date(index),
                 "nav": float(row["nav"]),
                 "ret": float(row["ret"]),
             }
             for index, row in result.nav.iterrows()
+        ]
+
+        rebalance_rows = [
+            {**rb, "trade_date": _iso_date(rb["trade_date"])}
+            for rb in result.rebalances
         ]
 
         weight_rows = _weight_rows(
@@ -284,7 +297,7 @@ def register_routes(app: FastAPI) -> None:
 
         body = {
             "method": payload.method,
-            "effective_start": str(result.effective_start),
+            "effective_start": _iso_date(result.effective_start),
             "lookback": payload.lookback_days,
             "n_obs": int(result.n_obs),
             "nav": nav_rows,
@@ -297,7 +310,7 @@ def register_routes(app: FastAPI) -> None:
             "rebalance_count": len(result.rebalances),
             "weights": weight_rows,
             "contributions": contributions,
-            "rebalances": result.rebalances,
+            "rebalances": rebalance_rows,
             "metrics": result.metrics,
         }
         return _json_safe(body)

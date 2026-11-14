@@ -532,6 +532,43 @@ def test_basket_schema_validates_inputs():
         )
 
 
+def test_optimize_endpoint_end_truncates_and_start_relaxes_window(
+    endpoints, monkeypatch
+):
+    panel = _panel()
+    _patch_quotes(monkeypatch, panel)
+    handler = endpoints["/api/basket/optimize"]
+
+    end = panel.index[-100]
+    body = handler(_optimize_payload(lookback_days=60, end=end), None)
+    assert body["diagnostics"]["n_obs"] == 60
+    # 60 个收益窗口覆盖价格下标 [end-59, end]；end = -100 → 起点 -159。
+    assert body["diagnostics"]["effective_start"] == str(panel.index[-159])
+
+    # 指定 start 后允许窗口短于 lookback_days（用户主动限定区间）。
+    start = panel.index[-30]
+    body2 = handler(_optimize_payload(lookback_days=60, start=start), None)
+    assert body2["diagnostics"]["n_obs"] == 30
+    assert body2["diagnostics"]["effective_start"] == str(start)
+
+
+def test_optimize_endpoint_unknown_risk_budget_asset_returns_400(
+    endpoints, monkeypatch
+):
+    _patch_quotes(monkeypatch, _panel())
+    handler = endpoints["/api/basket/optimize"]
+    with pytest.raises(HTTPException) as exc:
+        handler(
+            _optimize_payload(
+                method="risk_budget",
+                risk_budget={"A@s": 0.5, "MISSING@s": 0.5},
+            ),
+            None,
+        )
+    assert exc.value.status_code == 400
+    assert "risk_budget" in str(exc.value.detail)
+
+
 def test_optimize_endpoint_duplicate_assets_returns_400(endpoints, monkeypatch):
     _patch_quotes(monkeypatch, _panel())
     handler = endpoints["/api/basket/optimize"]
