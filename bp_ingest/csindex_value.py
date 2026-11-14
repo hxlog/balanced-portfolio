@@ -70,14 +70,15 @@ def _num(value) -> float | None:
     return number if number == number else None  # NaN 过滤
 
 
-def run(conn: psycopg.Connection, limit: int | None = None, sleep_seconds: float = 0.35) -> dict:
+def run(conn: psycopg.Connection, limit: int | None = None, sleep_seconds: float = 1.0) -> dict:
     """抓取中证官网估值并落库（第二口径，非主口径）。"""
     install_hardened_session()
     session = requests.Session()
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT index_code FROM bp_index_master WHERE market = %s AND is_tracked ORDER BY index_code",
-            ("CSI",),
+            """SELECT index_code FROM bp_index_master
+               WHERE market IN ('CSI','SH','SZ','CNI') AND is_tracked
+               ORDER BY index_code""",
         )
         codes = [row[0] for row in cur.fetchall()]
     if limit:
