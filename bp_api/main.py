@@ -10,12 +10,15 @@ import random
 import time
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
+from uuid import UUID
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import auth, cache, db, repositories as repo, tasking, tasks
+from . import api_tokens, auth, cache, db, repositories as repo, tasking, tasks
 from .schemas import (
+    ApiTokenCreateIn,
+    ApiTokenOut,
     AssetAdminIn,
     AssetProbeIn,
     AssetSelectableIn,
@@ -138,6 +141,7 @@ async def lifespan(app: FastAPI):
 from . import cffex as _cffex
 from . import crypto as _crypto
 from . import otc_api as _otc
+from . import public_api as _public_api
 from . import valuation
 
 app = FastAPI(title="Balanced Portfolio API", version="1.0.0", lifespan=lifespan)
@@ -145,6 +149,7 @@ _cffex.register_routes(app)
 _crypto.register_routes(app)
 _otc.register_routes(app)
 valuation.register_routes(app)
+_public_api.register_routes(app)
 
 app.add_middleware(
     CORSMiddleware,
@@ -242,6 +247,59 @@ def update_admin_user(email: str, payload: UpdateUserIn, _: auth.UserContext = D
         kwargs["can_manage_assets"] = payload.can_manage_assets
     updated = auth.update_user(email, **kwargs)
     return {"ok": True, **updated}
+
+
+# ---------------------------------------------------------------------
+# 对外 API token 管理（超管）
+# ---------------------------------------------------------------------
+@app.post("/api/admin/api-tokens")
+def create_api_token(
+    payload: ApiTokenCreateIn,
+    user: auth.UserContext = Depends(auth.require_super_admin),
+) -> dict:
+    """签发对外 API token；明文只在本响应中出现一次，服务端仅存 hash。"""
+    with db.get_conn() as conn:
+        try:
+            token_id, plain = api_tokens.create_token(
+                conn,
+                payload.name,
+                payload.scopes,
+                payload.expires_at,
+                user.user_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        conn.commit()
+    return {
+        "token_id": token_id,
+        "plain_text": plain,
+        "name": payload.name,
+        "scopes": payload.scopes,
+        "expires_at": payload.expires_at,
+        "warning": "请立即保存明文；服务端只存 hash，无法再次查看",
+    }
+
+
+@app.get("/api/admin/api-tokens")
+def list_api_tokens(_: auth.UserContext = Depends(auth.require_super_admin)) -> dict:
+    """列出 token 元数据（不含明文/hash）。"""
+    with db.get_conn() as conn:
+        rows = api_tokens.list_tokens(conn)
+    return {"tokens": [ApiTokenOut.model_validate(r).model_dump() for r in rows]}
+
+
+@app.delete("/api/admin/api-tokens/{token_id}")
+def revoke_api_token(
+    token_id: UUID,
+    _: auth.UserContext = Depends(auth.require_super_admin),
+) -> dict:
+    """撤销 token（幂等）；未知 token 返回 404。"""
+    with db.get_conn() as conn:
+        revoked = api_tokens.revoke_token(conn, token_id)
+        conn.commit()
+    if not revoked:
+        raise HTTPException(404, "API token 不存在")
+    return {"ok": True, "token_id": token_id}
 
 
 @app.post("/api/auth/change-password")

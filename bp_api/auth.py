@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 import bcrypt
 import jwt
@@ -467,6 +467,68 @@ def require_asset_editor(authorization: str = Header(default="")) -> UserContext
     if not (user.is_admin or user.can_manage_assets):
         raise HTTPException(403, "需要资产编辑权限")
     return user
+
+
+def _extract_api_token(authorization: str, x_api_key: str) -> str:
+    """从 ``Authorization: Bearer bp_live_...`` 或 ``X-API-Key`` 提取明文。"""
+    authorization = (authorization or "").strip()
+    if authorization:
+        scheme, sep, value = authorization.partition(" ")
+        if not sep or scheme.lower() != "bearer" or not value.strip():
+            raise HTTPException(
+                401,
+                "API token 格式不正确（应为 Authorization: Bearer bp_live_...）",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return value.strip()
+    api_key = (x_api_key or "").strip()
+    if api_key:
+        return api_key
+    raise HTTPException(
+        401,
+        "缺少 API token",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def require_api_token(scope: str | None = None) -> Callable[..., dict]:
+    """对外 API 鉴权依赖工厂（与 ``require_user`` 的 JWT 语义完全隔离）。
+
+    用法::
+
+        @app.get("/api/v1/quotes")
+        def quotes(token: dict = Depends(require_api_token("quotes"))): ...
+
+    缺失/非法/过期/撤销的 token 返回 401；token 有效但缺少所需 scope 返回 403。
+    返回 ``{token_id, name, scopes}``，不暴露 hash 或明文。
+    """
+
+    def dependency(
+        authorization: str = Header(default=""),
+        x_api_key: str = Header(default=""),
+    ) -> dict:
+        from . import api_tokens
+
+        plain = _extract_api_token(authorization, x_api_key)
+        with db.get_conn() as conn:
+            info = api_tokens.verify_token(conn, plain)
+            if info is None:
+                raise HTTPException(
+                    401,
+                    "API token 无效、已过期或已被撤销",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            # verify_token 已刷新 last_used_at；依赖自己掌握事务边界
+            conn.commit()
+        if scope is not None and scope not in info["scopes"]:
+            raise HTTPException(403, f"API token 缺少 {scope} 权限")
+        return {
+            "token_id": info["token_id"],
+            "name": info["name"],
+            "scopes": info["scopes"],
+        }
+
+    return dependency
 
 
 def auth_profile(user: UserContext | str) -> dict:

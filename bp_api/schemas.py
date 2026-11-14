@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
+from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+from .api_tokens import ALLOWED_SCOPES
 
 Quadrant = str  # overheat / stagflation / recovery / recession
 Method = str
@@ -111,6 +114,48 @@ class CreateUserIn(BaseModel):
     password: str
     portfolio_limit: Optional[int] = Field(default=3, ge=0)  # null = 无限
     can_manage_assets: bool = False
+
+
+class ApiTokenCreateIn(BaseModel):
+    """超管签发对外 API token 的请求体。"""
+
+    name: str = Field(min_length=1, max_length=100)
+    scopes: list[str] = Field(default_factory=lambda: ["quotes"])
+    expires_at: Optional[datetime] = None
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("token 名称不能为空")
+        return v
+
+    @field_validator("scopes")
+    @classmethod
+    def _validate_scopes(cls, v: list[str]) -> list[str]:
+        values = [s.strip() for s in v if s.strip()]
+        if not values:
+            raise ValueError("至少选择一个 scope")
+        invalid = sorted(set(values) - ALLOWED_SCOPES)
+        if invalid:
+            raise ValueError(f"非法 scope: {', '.join(invalid)}")
+        return list(dict.fromkeys(values))
+
+
+class ApiTokenOut(BaseModel):
+    """token 元数据（不含明文与 hash）。"""
+
+    token_id: UUID
+    name: str
+    prefix: str
+    scopes: list[str]
+    user_id: Optional[int] = None
+    expires_at: Optional[datetime] = None
+    revoked_at: Optional[datetime] = None
+    last_used_at: Optional[datetime] = None
+    created_by: Optional[int] = None
+    created_at: datetime
 
 
 class UpdateUserIn(BaseModel):
