@@ -26,6 +26,24 @@ UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
+# 已知的「中文名 / 代码 → 雪球符号」映射（主要用于港股与海外指数）
+NAME_TO_XQ = {
+    "HSI": "HKHSI",
+    "恒生指数": "HKHSI",
+    "HSCEI": "HKHSCEI",
+    "恒生中国企业指数": "HKHSCEI",
+    "恒生国企指数": "HKHSCEI",
+    "HSTECH": "HKHSTECH",
+    "恒生科技指数": "HKHSTECH",
+    "纳斯达克100": ".NDX",
+    "纳斯达克100指数": ".NDX",
+    "纳斯达克综合指数": ".IXIC",
+    "标普500": ".INX",
+    "标普500指数": ".INX",
+    "道琼斯工业指数": ".DJI",
+    "道琼斯工业平均指数": ".DJI",
+    "费城半导体指数": ".SOX",
+}
 COUNT = int(os.getenv("BP_XQ_COUNT", "-2000"))
 BUDGET_SECONDS = int(os.getenv("BP_XQ_BUDGET", "2400"))
 ALL_SYMBOLS = os.getenv("BP_XQ_ALL", "").strip() in ("1", "true", "yes")
@@ -39,7 +57,10 @@ def make_session() -> requests.Session:
     return session
 
 
-def candidate_symbols(symbol: str) -> list[str]:
+def candidate_symbols(symbol: str, name: str = "") -> list[str]:
+    mapped = NAME_TO_XQ.get(symbol) or NAME_TO_XQ.get(name)
+    if mapped:
+        return [mapped]
     if symbol.startswith("H") and symbol[1:2].isdigit():
         return [f"CSI{symbol}", symbol]
     if symbol[:1] in ("0", "3") and symbol[:2] not in ("93", "95", "97", "98"):
@@ -113,6 +134,10 @@ def main() -> int:
             ("index",),
         )
         symbols = [row[0] for row in cur.fetchall()]
+        names: dict[str, str] = {}
+        cur.execute("select symbol, name from bp_index_config where is_deleted = 0 and category = %s", ("index",))
+        for row in cur.fetchall():
+            names[row[0]] = row[1] or ""
         cur.execute("select distinct symbol from bp_index_quote_daily where adjust = %s", ("bfq",))
         have = {row[0] for row in cur.fetchall()}
     missing = symbols if ALL_SYMBOLS else [symbol for symbol in symbols if symbol not in have]
@@ -126,7 +151,7 @@ def main() -> int:
             print("budget exhausted", flush=True)
             break
         rows: list[QuoteRow] = []
-        for xq_symbol in candidate_symbols(symbol):
+        for xq_symbol in candidate_symbols(symbol, names.get(symbol, "")):
             try:
                 items = fetch_kline(session, xq_symbol)
             except Exception as exc:  # noqa: BLE001
