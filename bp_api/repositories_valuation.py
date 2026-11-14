@@ -529,8 +529,9 @@ def get_index_list(
                     WHEN qp.close_last > 0 AND qp.close_prev > 0
                     THEN ((qp.close_last / qp.close_prev) - 1) * 100
                 END AS change_pct,
-                qp.high_52w,
-                qp.low_52w,
+                -- 只有样本足够（>=200 个交易日）才宣称 52 周高低，避免用 24 天数据冒充
+                CASE WHEN qp.obs_52w >= 200 THEN qp.high_52w END AS high_52w,
+                CASE WHEN qp.obs_52w >= 200 THEN qp.low_52w END AS low_52w,
                 COALESCE(
                     CASE
                         WHEN qp.close_last > 0 AND qp.close_7d_ago > 0
@@ -546,11 +547,11 @@ def get_index_list(
                     THEN (v.raw ->> 'rise_year')::numeric
                 END AS change_52w_pct,
                 CASE
-                    WHEN qp.high_52w > 0 AND qp.close_last IS NOT NULL
+                    WHEN qp.obs_52w >= 200 AND qp.high_52w > 0 AND qp.close_last IS NOT NULL
                     THEN ((qp.close_last / qp.high_52w) - 1) * 100
                 END AS dist_from_high_pct,
                 CASE
-                    WHEN qp.high_52w > qp.low_52w AND qp.close_last IS NOT NULL
+                    WHEN qp.obs_52w >= 200 AND qp.high_52w > qp.low_52w AND qp.close_last IS NOT NULL
                     THEN ((qp.close_last - qp.low_52w) / (qp.high_52w - qp.low_52w)) * 100
                 END AS position_52w_pct,
                 pe.pct AS pe_percentile,
@@ -599,8 +600,10 @@ def get_index_list(
                     count(*) AS obs_52w,
                     max(t.trade_date) AS trade_date
                 FROM (
+                    -- 指数点位是原币口径，直接读原始行情表即可；清洗表含 CNY 折算，
+                    -- 且只覆盖进入资产池的标的（不会包含 521 只估值指数的全部）。
                     SELECT q.close, q.trade_date
-                    FROM bp_quote_clean q
+                    FROM bp_index_quote_daily q
                     WHERE q.symbol = m.index_code
                       AND q.adjust = 'bfq'
                       AND q.trade_date >= current_date - 400

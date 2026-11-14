@@ -23,9 +23,9 @@
 pe_ttm            457/521   pb               470/521
 dividend_yield    440/521   erp              440/521
 pe_percentile     428/521   pb_percentile    442/521
-close_price       231/521   change_pct       231/521
+close_price       239/521   change_pct       239/521
 change_7d_pct     475/521   change_52w_pct   474/521
-high_52w          231/521   position_52w_pct 231/521
+high_52w          202/521   position_52w_pct 202/521（≥200 交易日样本门槛）
 ```
 - 一致性校验：`position_52w_pct` 与 (close-low)/(high-low) 全部一致；`close` 全在 [low, high] 内；异常 0 条。
 - 7 日/52 周涨幅在行情缺失时回退平安口径 `rise_week` / `rise_year`（91% 覆盖）。
