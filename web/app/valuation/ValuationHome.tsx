@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { Search, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -208,7 +209,7 @@ function IndexTable({
 }) {
   return (
     <div className="overflow-x-auto overscroll-x-contain rounded-xl border border-border bg-card">
-      <table className="w-full min-w-[1080px] border-collapse text-sm">
+      <table className="w-full min-w-[1140px] border-collapse text-sm">
         <caption className="sr-only">{caption}</caption>
         <thead>
           <tr className="whitespace-nowrap border-b border-border bg-muted/40 text-[11px] text-muted-foreground">
@@ -263,6 +264,9 @@ function IndexTable({
               title="股息率 TTM − 十年期国债收益率"
             >
               风险溢价
+            </th>
+            <th scope="col" className="px-3 py-3 text-right font-medium">
+              详情
             </th>
           </tr>
         </thead>
@@ -357,6 +361,15 @@ function IndexTable({
               </td>
               <td className="px-3 py-3 text-right tabular-nums text-muted-foreground">
                 {formatSignedPct(row.risk_premium_pct)}
+              </td>
+              <td className="px-3 py-3 text-right">
+                <Link
+                  href={"/valuation/" + row.index_code}
+                  className="inline-flex items-center rounded-md border border-border px-2 py-1 text-xs text-primary transition-colors hover:bg-primary/5"
+                  aria-label={`查看 ${row.name} 详情`}
+                >
+                  详情
+                </Link>
               </td>
             </tr>
           ))}
