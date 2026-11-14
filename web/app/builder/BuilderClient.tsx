@@ -539,13 +539,18 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
 
   if (!isWhitelisted) {
     return (
-      <div className="max-w-md mx-auto p-12 text-center space-y-4">
-        <Lock className="w-10 h-10 mx-auto text-muted-foreground" />
-        <h1 className="text-xl font-semibold">需要登录</h1>
-        <p className="text-sm text-muted-foreground">
-          仅白名单用户可{isEditMode ? "编辑" : "新建"}组合。请在右上角登录后重试。
-        </p>
-        <Button variant="outline" onClick={() => router.push("/dashboard")}>返回 Dashboard</Button>
+      <div className="p-6">
+        <div className="mb-8 flex justify-center">
+          <ModeSwitch mode="quadrant" />
+        </div>
+        <div className="max-w-md mx-auto p-12 text-center space-y-4">
+          <Lock className="w-10 h-10 mx-auto text-muted-foreground" />
+          <h1 className="text-xl font-semibold">需要登录</h1>
+          <p className="text-sm text-muted-foreground">
+            仅白名单用户可{isEditMode ? "编辑" : "新建"}组合。请在右上角登录后重试。
+          </p>
+          <Button variant="outline" onClick={() => router.push("/dashboard")}>返回 Dashboard</Button>
+        </div>
       </div>
     );
   }

@@ -529,6 +529,20 @@ def get_index_list(
                     WHEN qp.close_last > 0 AND qp.close_prev > 0
                     THEN ((qp.close_last / qp.close_prev) - 1) * 100
                 END AS change_pct,
+                qp.high_52w,
+                qp.low_52w,
+                CASE
+                    WHEN qp.close_last > 0 AND qp.close_7d_ago > 0
+                    THEN ((qp.close_last / qp.close_7d_ago) - 1) * 100
+                END AS change_7d_pct,
+                CASE
+                    WHEN qp.high_52w > 0 AND qp.close_last IS NOT NULL
+                    THEN ((qp.close_last / qp.high_52w) - 1) * 100
+                END AS dist_from_high_pct,
+                CASE
+                    WHEN qp.high_52w > qp.low_52w AND qp.close_last IS NOT NULL
+                    THEN ((qp.close_last - qp.low_52w) / (qp.high_52w - qp.low_52w)) * 100
+                END AS position_52w_pct,
                 pe.pct AS pe_percentile,
                 pe.as_of_date AS pe_pct_as_of,
                 pb.pct AS pb_percentile,
@@ -564,22 +578,22 @@ def get_index_list(
                 ORDER BY p.as_of_date DESC
                 LIMIT 1
             ) pb ON TRUE
-            -- 两日收盘一次取回：bp_quote_clean 是 Timescale chunk 表，
-            -- 每多一个 LATERAL 就多扫一轮 chunk（521 指标 × 2 次曾耗时 79s）。
-            -- 加 90 天时间下界让 chunk 裁剪生效，并一次取最近 2 根。
+            -- 一次扫过去 400 天：最近两根收盘 + 7 日前收盘 + 52 周高低（chunk 裁剪靠时间下界）。
             LEFT JOIN LATERAL (
                 SELECT
                     (array_agg(t.close ORDER BY t.trade_date DESC))[1] AS close_last,
                     (array_agg(t.close ORDER BY t.trade_date DESC))[2] AS close_prev,
+                    (array_agg(t.close ORDER BY t.trade_date DESC))[8] AS close_7d_ago,
+                    max(t.close) AS high_52w,
+                    min(t.close) AS low_52w,
+                    count(*) AS obs_52w,
                     max(t.trade_date) AS trade_date
                 FROM (
                     SELECT q.close, q.trade_date
                     FROM bp_quote_clean q
                     WHERE q.symbol = m.index_code
                       AND q.adjust = 'bfq'
-                      AND q.trade_date >= current_date - 90
-                    ORDER BY q.trade_date DESC
-                    LIMIT 2
+                      AND q.trade_date >= current_date - 400
                 ) t
             ) qp ON TRUE
             WHERE (%(query)s::text IS NULL

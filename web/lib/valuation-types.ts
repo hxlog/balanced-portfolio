@@ -83,6 +83,12 @@ export interface IndexQuoteRow {
   change_52w_pct: number | null;
   /** 距历史最高点的跌幅（百分数点，通常为负）。 */
   distance_from_high_pct: number | null;
+  /** 52 周最高（收盘价口径）。 */
+  high_52w?: number | null;
+  /** 52 周最低（收盘价口径）。 */
+  low_52w?: number | null;
+  /** 当前收盘在 52 周高低区间中的位置，0~100。 */
+  position_52w_pct?: number | null;
   /** 市盈率 TTM。 */
   pe_ttm: number | null;
   /** PE 历史分位，0~100（与 DB/API 同口径）。 */

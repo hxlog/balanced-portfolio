@@ -304,6 +304,13 @@ function IndexTable({
                 onSort={onSort}
                 title="接口提供 7 日涨跌时展示 7 日，否则展示最近交易日涨跌"
               />
+              <th
+                scope="col"
+                className="px-3 py-2 text-right text-[11px] font-medium text-muted-foreground"
+                title="当前收盘在近 52 周高低区间中的位置（0=最低，100=最高）"
+              >
+                52 周位置
+              </th>
               {optionalColumns.close && (
                 <SortHeader
                   label="收盘"
@@ -419,6 +426,33 @@ function IndexTable({
                     )}
                   >
                     {formatSignedPct(change)}
+                  </td>
+                  <td className="px-3 py-2.5">
+                    <div className="flex items-center justify-end gap-2">
+                      <div
+                        className="relative h-1.5 w-16 overflow-hidden rounded-full bg-muted sm:w-20"
+                        title={
+                          row.high_52w != null && row.low_52w != null
+                            ? `52 周区间 ${formatNumber(row.low_52w)} ~ ${formatNumber(row.high_52w)}`
+                            : "52 周区间数据不足"
+                        }
+                      >
+                        <div
+                          className="absolute inset-y-0 left-0 rounded-full bg-primary/70"
+                          style={{
+                            width: `${Math.max(
+                              0,
+                              Math.min(100, row.position_52w_pct ?? 0),
+                            )}%`,
+                          }}
+                        />
+                      </div>
+                      <span className="w-10 text-right font-mono text-xs tabular-nums text-muted-foreground">
+                        {row.position_52w_pct == null
+                          ? "—"
+                          : `${row.position_52w_pct.toFixed(0)}%`}
+                      </span>
+                    </div>
                   </td>
                   {optionalColumns.close && (
                     <td className="px-3 py-2.5 text-right font-mono text-xs tabular-nums">

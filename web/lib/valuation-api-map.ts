@@ -54,7 +54,10 @@ export function mapIndexRow(raw: Record<string, unknown>): IndexQuoteRow {
     change_7d_pct:
       num(raw.change_7d_pct) ?? num(raw.change_7d) ?? num(raw.change_7d_pct_5),
     change_52w_pct: null,
-    distance_from_high_pct: null,
+    distance_from_high_pct: num(raw.dist_from_high_pct),
+    high_52w: num(raw.high_52w),
+    low_52w: num(raw.low_52w),
+    position_52w_pct: num(raw.position_52w_pct),
     pe_ttm: num(raw.pe_ttm),
     pe_percentile: num(raw.pe_percentile),
     pb: num(raw.pb),

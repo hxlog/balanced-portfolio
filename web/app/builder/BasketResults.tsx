@@ -205,10 +205,9 @@ export function BasketResults({
             </div>
           </div>
         </CardHeader>
-        <CardContent>
-          {optimizeError ? (
-            <BasketErrorPanel message={optimizeError} />
-          ) : showWeightsSkeleton ? (
+        <CardContent className="space-y-4">
+          {optimizeError && <BasketErrorPanel message={optimizeError} />}
+          {showWeightsSkeleton ? (
             <div className="grid items-center gap-6 lg:grid-cols-[minmax(0,1fr)_260px]">
               <div className="space-y-4">
                 {Array.from({ length: 5 }).map((_, index) => (
@@ -224,11 +223,13 @@ export function BasketResults({
               <Pulse className="mx-auto h-[220px] w-[220px] rounded-full" />
             </div>
           ) : rows.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border bg-bg-subtle/40 px-4 py-10 text-center text-sm text-muted-foreground">
-              {assetCount === 0
-                ? "添加资产后自动计算权重"
-                : "暂无可展示的权重，请检查参数后重试"}
-            </div>
+            optimizeError ? null : (
+              <div className="rounded-lg border border-dashed border-border bg-bg-subtle/40 px-4 py-10 text-center text-sm text-muted-foreground">
+                {assetCount === 0
+                  ? "添加资产后自动计算权重"
+                  : "暂无可展示的权重，请检查参数后重试"}
+              </div>
+            )
           ) : (
             <div className="grid items-center gap-6 lg:grid-cols-[minmax(0,1fr)_260px]">
               <div className="space-y-3">
