@@ -28,6 +28,7 @@ import logging
 import math
 import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
@@ -85,7 +86,22 @@ ALLOWED_PATHS: frozenset[str] = frozenset(
     }
 )
 
-_MAX_WORKERS = 8
+_MAX_WORKERS = 4
+
+# 经 SG relay 的 HTTP 代理每次新建连接都要重做 TLS，实测首包 1.5~8s。
+# 用线程本地 Session 复用 keep-alive 连接，把 30 个合约 × 5 端点的代价摊薄。
+_THREAD_LOCAL = threading.local()
+
+
+def _session() -> requests.Session:
+    session = getattr(_THREAD_LOCAL, "session", None)
+    if session is None:
+        proxy = (os.getenv("BP_BINANCE_HTTP_PROXY") or "").strip()
+        session = requests.Session()
+        if proxy:
+            session.proxies = {"http": proxy, "https": proxy}
+        _THREAD_LOCAL.session = session
+    return session
 
 # install_hardened_session() 本身幂等但非线程安全；并发抓取前串行化首次安装。
 _SESSION_LOCK = threading.Lock()
@@ -130,26 +146,41 @@ def _get_json(
     path: str,
     params: Optional[dict[str, Any]] = None,
     *,
-    timeout: float = 15.0,
+    timeout: float = 30.0,
+    retries: int = 2,
 ) -> Any:
     """GET 上游并返回 JSON。所有网络调用都先安装硬化会话。"""
     _ensure_session()
     url = build_request_url(path, params)
+    # 生产服务器直连 Binance 被墙，经本机 relay（systemd bp-relay，127.0.0.1:10809）出网。
+    # 只对本模块的请求生效，不污染进程级 HTTP(S)_PROXY（其余数据源仍走直连）。
+    proxy = (os.getenv("BP_BINANCE_HTTP_PROXY") or "").strip()
+    proxies = {"http": proxy, "https": proxy} if proxy else None
     # 覆盖硬化会话给东财设置的默认 Referer；Binance 请求用自家来源页更自然。
-    response = requests.get(
-        url,
-        timeout=timeout,
-        headers={"Referer": "https://www.binance.com/"},
-    )
-    status = int(getattr(response, "status_code", 200) or 200)
-    if status >= 400:
-        raise RuntimeError(f"Binance {path} HTTP {status}")
-    return response.json()
-
-
-# ---------------------------------------------------------------------------
-# 合约筛选
-# ---------------------------------------------------------------------------
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
+    }
+    last_exc: Optional[Exception] = None
+    session = _session()
+    for attempt in range(max(1, retries)):
+        try:
+            response = session.get(
+                url,
+                timeout=timeout,
+                headers=headers,
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as exc:  # noqa: BLE001 - 经 relay 的偶发抖动重试一次
+            last_exc = exc
+            if attempt + 1 < max(1, retries):
+                time.sleep(1.5)
+    assert last_exc is not None
+    raise last_exc
 
 def _to_float(value: Any) -> Optional[float]:
     """字符串/数字 → 有限 float；None/空串/NaN/Inf/坏值 → None。"""

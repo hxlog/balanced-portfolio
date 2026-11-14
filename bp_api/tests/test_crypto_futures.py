@@ -341,27 +341,30 @@ def test_get_json_calls_installed_session_and_proxy_url(monkeypatch):
     monkeypatch.setattr(cf, "install_hardened_session", lambda: installed.append(True))
     response = MagicMock(status_code=200)
     response.json.return_value = {"ok": True}
-    get = MagicMock(return_value=response)
-    monkeypatch.setattr(cf.requests, "get", get)
+    session = MagicMock()
+    session.get = MagicMock(return_value=response)
+    monkeypatch.setattr(cf, "_session", lambda: session)
 
     payload = cf._get_json("/fapi/v1/premiumIndex", {"symbol": "BTCUSDT"})
 
     assert payload == {"ok": True}
     assert installed == [True]
-    assert get.call_args.args[0] == (
+    assert session.get.call_args.args[0] == (
         "https://proxy.test/?path=/fapi/v1/premiumIndex&symbol=BTCUSDT"
     )
-
 
 def test_get_json_raises_on_http_error(monkeypatch):
     monkeypatch.delenv("BP_BINANCE_PROXY_URL", raising=False)
     monkeypatch.setattr(cf, "install_hardened_session", lambda: None)
     response = MagicMock(status_code=451)
-    monkeypatch.setattr(cf.requests, "get", MagicMock(return_value=response))
+    response.raise_for_status.side_effect = RuntimeError("451 Client Error")
+    session = MagicMock()
+    session.get = MagicMock(return_value=response)
+    monkeypatch.setattr(cf, "_session", lambda: session)
+    monkeypatch.setattr(cf.time, "sleep", lambda _s: None)
 
     with pytest.raises(RuntimeError, match="451"):
-        cf._get_json("/fapi/v1/premiumIndex")
-
+        cf._get_json("/fapi/v1/premiumIndex", retries=1)
 
 # ---------------------------------------------------------------------------
 # fetch_snapshot_5m: 并发、写库、异常隔离
