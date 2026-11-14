@@ -1,0 +1,128 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>指数估值 · 布局变体</title><style>
+:root{--sky:#0ea5e9;--up:#16a34a;--down:#dc2626;--bg:#f6f8fb;--card:#fff;--bd:#e4e9f0;--tx:#0f172a;--tx2:#5b6b82;--tx3:#8a99ad}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Geist,-apple-system,Segoe UI,PingFang SC,Microsoft YaHei,sans-serif;background:var(--bg);color:var(--tx);font-size:13px}
+.num{font-variant-numeric:tabular-nums}.up{color:var(--up)}.down{color:var(--down)}.mut{color:var(--tx3)}
+.switch{position:fixed;right:16px;bottom:16px;z-index:99;display:flex;gap:6px;background:#fff;border:1px solid var(--bd);border-radius:10px;padding:6px;box-shadow:0 6px 24px rgba(15,23,42,.12)}
+.switch button{border:0;background:transparent;padding:8px 12px;border-radius:7px;cursor:pointer;font-size:12px;color:var(--tx2)}
+.switch button.on{background:var(--sky);color:#fff}
+.screen{display:none}.screen.on{display:block}
+.top{height:56px;background:#fff;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:28px;padding:0 28px;position:sticky;top:0;z-index:10}
+.logo{font-weight:650;font-size:15px}.logo span{color:var(--sky)}
+.top nav{display:flex;gap:22px;color:var(--tx2)}.top nav b{color:var(--tx);font-weight:600;border-bottom:2px solid var(--sky);padding:19px 0}
+.top .r{margin-left:auto;display:flex;gap:14px;align-items:center;color:var(--tx2)}
+.wrap{max-width:1400px;margin:0 auto;padding:24px 28px 60px}
+h1{font-size:22px;letter-spacing:-.02em;font-weight:650}.sub{color:var(--tx2);margin-top:6px}
+.sect{margin-top:26px}.sect h2{font-size:15px;font-weight:640;display:flex;align-items:center;gap:8px}
+.sect h2 i{width:3px;height:14px;background:var(--sky);border-radius:2px;display:inline-block}
+.hint{color:var(--tx3);font-size:12px;margin-left:auto;font-weight:400}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:12px}
+.card{background:#fff;border:1px solid var(--bd);border-radius:14px;padding:16px 18px}
+.card .t{color:var(--tx2);font-size:12px;display:flex;justify-content:space-between}
+.card .v{font-size:26px;font-weight:640;letter-spacing:-.03em;margin-top:8px}
+.card .row{display:flex;gap:18px;margin-top:10px;color:var(--tx2);font-size:12px}.card .row b{color:var(--tx);font-weight:600}
+table{width:100%;border-collapse:separate;border-spacing:0;background:#fff;border:1px solid var(--bd);border-radius:14px;overflow:hidden;margin-top:12px}
+th{font-size:11.5px;color:var(--tx3);font-weight:550;text-align:right;padding:11px 12px;border-bottom:1px solid var(--bd);background:#fbfcfe;white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+td{padding:11px 12px;border-bottom:1px solid #f1f4f8;text-align:right;white-space:nowrap}
+tr:last-child td{border-bottom:0}tbody tr:hover{background:#f8fbff}
+.nm{font-weight:600}.code{color:var(--tx3);font-size:11px;margin-left:6px}
+.pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600}
+.p-low{background:#e8f7ee;color:#15803d}.p-mid{background:#fff5e6;color:#b45309}.p-high{background:#fdecec;color:#b91c1c}
+.btn{border:1px solid var(--bd);background:#fff;border-radius:8px;padding:6px 12px;font-size:12px;color:var(--tx2);cursor:pointer}
+.btn.pri{background:var(--sky);border-color:var(--sky);color:#fff}
+.term{display:grid;grid-template-columns:280px 1fr;height:calc(100vh - 56px)}
+.tleft{background:#fff;border-right:1px solid var(--bd);overflow:auto}
+.tsearch{padding:12px;border-bottom:1px solid var(--bd);position:sticky;top:0;background:#fff}
+.tsearch input{width:100%;border:1px solid var(--bd);border-radius:8px;padding:7px 10px;font-size:12px;outline:none}
+.tlist .it{padding:9px 14px;border-bottom:1px solid #f4f6fa;display:flex;justify-content:space-between;gap:8px;cursor:pointer}
+.tlist .it.on{background:#eff9ff;border-left:2px solid var(--sky)}
+.tlist .it .n{font-weight:600}.tlist .it .c{font-size:11px;color:var(--tx3);margin-top:2px}
+.tlist .it .r{text-align:right;font-size:12px}
+.tbody{padding:16px 20px;overflow:auto}
+.tkpis{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
+.tkpi{background:#fff;border:1px solid var(--bd);border-radius:10px;padding:10px 12px}
+.tkpi .k{font-size:11px;color:var(--tx3)}.tkpi .v{font-size:18px;font-weight:640;margin-top:4px;letter-spacing:-.02em}
+.tgrid{display:grid;grid-template-columns:1.55fr 1fr;gap:14px;margin-top:14px}
+.panel{background:#fff;border:1px solid var(--bd);border-radius:12px;padding:14px 16px}
+.panel h3{font-size:13px;font-weight:640;display:flex;justify-content:space-between;align-items:center}
+.mini{font-size:11px;color:var(--tx3);font-weight:400}
+.wbTop{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
+.wbMain{display:grid;grid-template-columns:1.7fr 1fr;gap:14px;margin-top:14px}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--bd);background:#fff;border-radius:999px;padding:4px 10px;font-size:12px;margin:0 6px 6px 0}
+.chip i{width:6px;height:6px;border-radius:50%;background:var(--sky);display:inline-block}
+.seg{display:inline-flex;background:#eef2f7;border-radius:8px;padding:2px}
+.seg span{padding:4px 10px;border-radius:6px;font-size:12px;color:var(--tx2)}
+.seg span.on{background:#fff;color:var(--tx);box-shadow:0 1px 3px rgba(15,23,42,.08);font-weight:600}
+.legend{display:flex;gap:14px;font-size:11px;color:var(--tx2);margin-top:8px}
+.legend i{width:8px;height:8px;border-radius:2px;display:inline-block;margin-right:5px}
+.quote{display:flex;align-items:baseline;gap:14px}
+.quote .p{font-size:30px;font-weight:660;letter-spacing:-.03em}
+.prog{height:6px;background:#eef2f7;border-radius:4px;position:relative;margin-top:8px}
+.prog i{position:absolute;top:0;bottom:0;background:linear-gradient(90deg,#bae6fd,#0ea5e9);border-radius:4px}
+.prog u{position:absolute;top:-3px;width:2px;height:12px;background:#0f172a;border-radius:2px}
+.dl{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.dl .k{font-size:11px;color:var(--tx3)}.dl .v{font-size:14px;font-weight:600;margin-top:3px}
+.tiny{font-size:11px;color:var(--tx3)}
+.wrow{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px dashed #eef2f7}
+.wrow:last-child{border:0}.wrow .wn{width:82px;font-size:12px}
+.wrow .wb{flex:1;height:8px;background:#eef2f7;border-radius:4px;overflow:hidden}
+.wrow .wb i{display:block;height:100%;background:linear-gradient(90deg,#7dd3fc,#0ea5e9)}
+.wrow .wv{width:52px;text-align:right;font-size:12px}
+</style></head><body>
+<div class="switch"><button data-s="v1" class="on">V1 卡片流</button><button data-s="v2">V2 数据终端</button><button data-s="v3">V3 工作台</button><button data-s="v4">V4 详情页</button></div>
+<section class="screen on" id="v1"><div class="top"><div class="logo">Balanced<span>·</span>Portfolio</div><nav><b>指数估值</b><span>回测</span><span>构建</span><span>加密</span><span>方法论</span></nav><div class="r"><span>搜索</span><span>登录</span></div></div>
+<div class="wrap"><h1>指数估值</h1><div class="sub">521 只指数 · PE / PB / 股息率 / 风险溢价 · 每日 21:00 更新 · 数据截至 2026-11-13</div>
+<div class="sect"><h2><i></i>全市场估值 <span class="hint">全 A 股等权中位数 · 分位自 2015 起</span></h2><div class="cards" id="mkt"></div></div>
+<div class="sect"><h2><i></i>宽基指数 <span class="hint">8 只核心宽基</span></h2><div id="broad"></div></div>
+<div class="sect"><h2><i></i>全部指数估值 <span class="hint">共 521 只 · 点击进入详情</span></h2>
+<div style="display:flex;gap:8px;margin-top:10px;align-items:center"><div class="seg"><span class="on">全部</span><span>宽基</span><span>行业</span><span>主题</span><span>策略</span></div><span class="btn">PE 分位升序</span><span class="btn">有 ETF 跟踪</span><span class="mut" style="margin-left:auto">共 521 条</span></div>
+<div id="all"></div></div></div></section>
+<section class="screen" id="v2"><div class="top"><div class="logo">Balanced<span>·</span>Portfolio</div><nav><b>指数估值</b><span>回测</span><span>构建</span><span>加密</span></nav><div class="r"><span>2026-11-13 收盘</span></div></div>
+<div class="term"><div class="tleft"><div class="tsearch"><input placeholder="搜索指数代码 / 名称 / 拼音"></div><div class="tlist" id="tlist"></div></div>
+<div class="tbody"><div class="tkpis" id="tkpis"></div><div class="tgrid">
+<div class="panel"><h3>中证中药 930641 <span class="mini">价格指数 · 39 只成分股 · 总市值 6490 亿</span></h3><div class="quote" style="margin-top:10px"><span class="p num">8,458.56</span><span class="down num">-24.36 (-0.29%)</span><span class="tiny">2026-11-13</span></div><div id="chart2" style="margin-top:10px"></div>
+<div class="legend"><span><i style="background:#0ea5e9"></i>指数点位</span><span><i style="background:#f59e0b"></i>PE(TTM)</span></div></div>
+<div><div class="panel"><h3>估值分位 <span class="mini">近 10 年</span></h3><div id="pct2" style="margin-top:10px"></div><div class="dl" id="dl2" style="margin-top:14px"></div></div>
+<div class="panel" style="margin-top:14px"><h3>风险溢价 <span class="mini">股息率 − 十年国债 1.61%</span></h3><div class="quote" style="margin-top:8px"><span class="p num up">+2.07%</span><span class="tiny">近 10 年分位 61.2%</span></div><div id="chartsmall" style="margin-top:8px"></div></div></div></div>
+<div class="tgrid" style="grid-template-columns:1fr 1fr"><div class="panel"><h3>估值走势 <span class="mini">PE / PB / 股息率</span></h3><div id="chart3" style="margin-top:10px"></div></div>
+<div class="panel"><h3>区间统计 <span class="mini">1Y / 3Y / 5Y / 10Y</span></h3><div id="stats2" style="margin-top:6px"></div></div></div></div></div></section>
+<section class="screen" id="v3"><div class="top"><div class="logo">Balanced<span>·</span>Portfolio</div><nav><b>指数估值</b><span>回测</span><span>构建</span><span>加密</span></nav><div class="r"><span>对比模式：3 只</span></div></div>
+<div class="wrap"><div style="display:flex;align-items:flex-end;gap:14px"><div><h1>指数估值工作台</h1><div class="sub">左选右看 · 支持多指数对比 · 一键加入回测组合</div></div><div style="margin-left:auto;display:flex;gap:8px"><span class="btn">导出 CSV</span><span class="btn pri">加入回测</span></div></div>
+<div class="wbTop" id="wbkpi" style="margin-top:18px"></div><div class="wbMain"><div class="panel"><h3>估值与点位 <span class="seg"><span class="on">上市以来</span><span>近 10 年</span><span>近 5 年</span></span></h3><div id="chart3b" style="margin-top:12px"></div>
+<div class="legend"><span><i style="background:#0ea5e9"></i>沪深300</span><span><i style="background:#8b5cf6"></i>中证500</span><span><i style="background:#f59e0b"></i>创业板指</span></div></div>
+<div class="panel"><h3>已选对比 <span class="mini">最多 4 只</span></h3><div style="margin-top:10px"><span class="chip"><i></i>沪深300 000300</span><span class="chip"><i style="background:#8b5cf6"></i>中证500 000905</span><span class="chip"><i style="background:#f59e0b"></i>创业板指 399006</span></div><div style="margin-top:6px" id="all2"></div></div></div></div></section>
+<section class="screen" id="v4"><div class="top"><div class="logo">Balanced<span>·</span>Portfolio</div><nav><span>指数估值</span><b>中证中药</b></nav><div class="r"><span>返回列表</span></div></div>
+<div class="wrap"><div style="display:flex;align-items:center;gap:16px"><div><h1>中证中药 <span class="mut" style="font-size:14px;font-weight:400">930641 · 主题 · 中证</span></h1><div class="sub">以中证全指为样本空间 · 基日 2004-12-31 · 基点 1000 · 价格指数 · 39 只成分股</div></div><div style="margin-left:auto;text-align:right"><div class="num" style="font-size:28px;font-weight:660">8,458.56</div><div class="down num">-24.36 (-0.29%)</div></div></div>
+<div style="display:grid;grid-template-columns:1.6fr 1fr;gap:16px;margin-top:20px"><div class="panel"><h3>估值与点位 <span class="seg"><span class="on">近 10 年</span><span>近 5 年</span><span>上市以来</span></span></h3><div id="chart4" style="margin-top:12px"></div>
+<div class="legend"><span><i style="background:#0ea5e9"></i>指数点位（右轴）</span><span><i style="background:#f59e0b"></i>PE-TTM（左轴）</span></div></div>
+<div><div class="panel"><h3>PE 分位 <span class="pill p-low">低估</span></h3><div class="prog" style="margin-top:14px"><i style="width:13.7%"></i><u style="left:13.7%"></u></div>
+<div style="display:flex;justify-content:space-between;margin-top:6px" class="tiny"><span>0%</span><span>20% 28.29</span><span>50% 32.24</span><span>80% 40.65</span><span>100%</span></div>
+<div class="dl" style="margin-top:14px"><div><div class="k">当前分位</div><div class="v num">13.68%</div></div><div><div class="k">当前 PE</div><div class="v num">23.27</div></div><div><div class="k">历史均值</div><div class="v num">34.55</div></div><div><div class="k">最高/最低</div><div class="v num">79.61/19.69</div></div></div></div>
+<div class="panel" style="margin-top:14px"><h3>PB / 股息率 / 风险溢价 / ROE</h3><div id="v4tbl" style="margin-top:8px"></div></div>
+<div class="panel" style="margin-top:14px"><h3>成分股权重 <span class="mini">前 8 合计 50.83%</span></h3><div id="w4" style="margin-top:8px"></div></div></div></div></div></section>
+<script>
+var ROWS=[["沪深300","000300",4016.29,-0.68,-14.58,20.47,15.77,2.10,13.63,2.61],["中证500","000905",6465.48,-2.10,-12.10,30.61,59.04,2.29,57.76,1.47],["中证1000","000852",6357.26,-2.76,-16.25,38.11,57.35,2.44,28.45,1.18],["上证50","000016",2775.02,0.11,-9.72,18.64,61.05,2.15,52.08,2.92],["创业板指","399006",2426.08,-3.32,-24.23,44.81,41.50,4.46,43.93,1.19],["科创50","000688",1279.66,-2.30,-8.55,62.30,-1,6.06,-1,0.31],["中证A500","000510",5321.44,-1.02,-11.22,17.92,8.31,1.98,7.42,2.88],["中证红利","000922",5210.33,-0.44,-3.21,12.44,22.15,1.52,31.02,4.92]];
+function spark(w,h,seed,color,fill){var pts=[],y=50;for(var i=0;i<60;i++){y+=Math.sin(i/6+seed)*4+Math.cos(i/3+seed)*2;pts.push(y)}var mn=Math.min.apply(null,pts),mx=Math.max.apply(null,pts);var d=pts.map(function(v,i){return (i/(pts.length-1)*w).toFixed(1)+","+(h-(v-mn)/((mx-mn)||1)*h).toFixed(1)}).join(" ");return "<svg width=\"100%\" viewBox=\"0 0 "+w+" "+h+"\" preserveAspectRatio=\"none\" style=\"display:block\">"+(fill?"<polygon points=\"0,"+h+" "+d+" "+w+","+h+"\" fill=\""+color+"\" opacity=\".08\"/>":"")+"<polyline points=\""+d+"\" fill=\"none\" stroke=\""+color+"\" stroke-width=\"1.6\"/></svg>"}
+function cells(r){var chg=+r[3];var up=chg>=0;var pep=(r[6]==null||r[6]===-1)?"-":r[6]+"%";var pcls=(r[6]==null||r[6]===-1)?"mut":(r[6]<30?"up":r[6]>70?"down":"");var pb=r[7];var pbp=r[8];return "<tr><td><span class=\"nm\">"+r[0]+"</span><span class=\"code\">"+r[1]+"</span></td><td class=\"num\">"+r[2]+"</td><td class=\"num "+(up?"up":"down")+"\">"+(up?"+":"")+chg+"%</td><td class=\"num down\">"+r[4]+"%</td><td class=\"num\">"+r[5]+"</td><td class=\"num "+pcls+"\">"+pep+"</td><td class=\"num\">"+pb+"</td><td class=\"num "+pcls+"\">"+(pbp==-1?"-":pbp+"%")+"</td><td class=\"num\">"+r[9]+"%</td><td class=\"num "+(r[9]-1.61>=0?"up":"down")+"\">"+(r[9]-1.61>=0?"+":"")+(r[9]-1.61).toFixed(2)+"%</td><td><span class=\"btn\" style=\"padding:3px 9px\">详情</span></td></tr>"}
+function tbl(rows){return "<table><thead><tr><th>指数</th><th>收盘</th><th>涨跌</th><th>52周</th><th>PE</th><th>PE分位</th><th>PB</th><th>PB分位</th><th>股息率</th><th>风险溢价</th><th></th></tr></thead><tbody>"+rows.map(cells).join("")+"</tbody></table>"}
+var MKT=[["全市场",44.43,"68.30%",2.61,"38.12%"],["主板",34.65,"56.73%",2.15,"16.43%"],["创业板",59.95,"66.78%",3.14,"21.98%"],["科创板",70.22,"-",3.54,"-"]];
+document.getElementById("mkt").innerHTML=MKT.map(function(m){return "<div class=\"card\"><div class=\"t\"><span>"+m[0]+"</span></div><div class=\"v num\">"+m[1]+"</div><div class=\"row\"><span>PE 分位 <b class=\"num\">"+m[2]+"</b></span><span>PB <b class=\"num\">"+m[3]+"</b></span><span>分位 <b class=\"num\">"+m[4]+"</b></span></div></div>"}).join("");
+document.getElementById("broad").innerHTML=tbl(ROWS);
+document.getElementById("all").innerHTML=tbl(ROWS.concat(ROWS.slice(2,6)));
+document.getElementById("tlist").innerHTML=ROWS.concat(ROWS.slice(2,4)).map(function(r,i){return "<div class=\"it "+(i===0?"on":"")+"\"><div><div class=\"n\">"+r[0]+"</div><div class=\"c\">"+r[1]+"</div></div><div class=\"r\"><div class=\"num\">"+r[5]+"</div><div class=\"tiny "+(r[6]<30?"up":"mut")+"\">"+r[6]+"%</div></div></div>"}).join("");
+document.getElementById("tkpis").innerHTML=[["PE-TTM","23.27"],["PE 分位","13.68%"],["PB","2.02"],["股息率","3.68%"],["风险溢价","+2.07%"],["ROE(TTM)","8.63%"]].map(function(a){return "<div class=\"tkpi\"><div class=\"k\">"+a[0]+"</div><div class=\"v num\">"+a[1]+"</div></div>"}).join("");
+document.getElementById("chart2").innerHTML=spark(560,150,3,"#0ea5e9",true);
+document.getElementById("chart3").innerHTML=spark(420,120,5,"#8b5cf6",false);
+document.getElementById("chartsmall").innerHTML=spark(300,60,9,"#f59e0b",true);
+document.getElementById("pct2").innerHTML=[["20%","28.29"],["50%","32.24"],["80%","40.65"]].map(function(a){return "<div style=\"display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed #eef2f7\"><span class=\"tiny\">"+a[0]+" 分位</span><b class=\"num\">"+a[1]+"</b></div>"}).join("");
+document.getElementById("dl2").innerHTML=[["均值","34.55"],["最高","79.61"],["最低","19.69"],["标准差","9.12"]].map(function(a){return "<div><div class=\"k\">"+a[0]+"</div><div class=\"v num\">"+a[1]+"</div></div>"}).join("");
+document.getElementById("stats2").innerHTML="<table style=\"margin:0;border:0\"><thead><tr><th>区间</th><th>PE 分位</th><th>均值</th><th>+1σ</th><th>−1σ</th><th>股息率</th><th>风险溢价</th></tr></thead><tbody><tr><td>近 1 年</td><td class=\"num\">12.4%</td><td class=\"num\">25.6</td><td class=\"num\">31.2</td><td class=\"num\">20.1</td><td class=\"num\">3.42%</td><td class=\"num up\">+1.81%</td></tr><tr><td>近 3 年</td><td class=\"num\">9.8%</td><td class=\"num\">27.1</td><td class=\"num\">34.8</td><td class=\"num\">19.4</td><td class=\"num\">3.55%</td><td class=\"num up\">+1.94%</td></tr><tr><td>近 5 年</td><td class=\"num\">13.7%</td><td class=\"num\">29.2</td><td class=\"num\">38.5</td><td class=\"num\">19.9</td><td class=\"num\">3.61%</td><td class=\"num up\">+2.00%</td></tr><tr><td>近 10 年</td><td class=\"num\">18.2%</td><td class=\"num\">34.6</td><td class=\"num\">43.7</td><td class=\"num\">25.4</td><td class=\"num\">3.48%</td><td class=\"num up\">+1.87%</td></tr></tbody></table>";
+document.getElementById("wbkpi").innerHTML=[["沪深300 PE","20.47","15.77%"],["中证500 PE","30.61","59.04%"],["创业板指 PE","44.81","41.50%"],["全市场 PE 分位","68.30%","-"],["沪深300 风险溢价","+1.00%","十年国债 1.61%"]].map(function(a){return "<div class=\"card\" style=\"padding:14px 16px\"><div class=\"t\">"+a[0]+"</div><div class=\"v num\" style=\"font-size:22px\">"+a[1]+"</div><div class=\"tiny\" style=\"margin-top:4px\">"+a[2]+"</div></div>"}).join("");
+document.getElementById("chart3b").innerHTML=spark(700,220,11,"#0ea5e9",true);
+document.getElementById("all2").innerHTML=tbl(ROWS.slice(0,5));
+document.getElementById("chart4").innerHTML=spark(760,260,13,"#0ea5e9",false);
+document.getElementById("v4tbl").innerHTML="<table style=\"margin:0;border:0\"><thead><tr><th>指标</th><th>当前</th><th>分位</th><th>均值</th><th>+1σ</th><th>−1σ</th></tr></thead><tbody><tr><td>PB</td><td class=\"num\">2.02</td><td class=\"num up\">2.72%</td><td class=\"num\">3.07</td><td class=\"num\">4.52</td><td class=\"num\">1.62</td></tr><tr><td>股息率 TTM</td><td class=\"num\">3.68%</td><td class=\"num\">4.98%</td><td class=\"num\">2.85%</td><td class=\"num\">1.10%</td><td class=\"num\">4.60%</td></tr><tr><td>风险溢价</td><td class=\"num up\">+2.07%</td><td class=\"num\">61.2%</td><td class=\"num\">+1.24%</td><td class=\"num\">+3.10%</td><td class=\"num\">-0.62%</td></tr><tr><td>ROE(TTM)</td><td class=\"num\">8.63%</td><td class=\"num\">43.1%</td><td class=\"num\">9.15%</td><td class=\"num\">11.2%</td><td class=\"num\">7.1%</td></tr></tbody></table>";
+document.getElementById("w4").innerHTML=[["云南白药",10.76],["片仔癀",10.71],["东阿阿胶",6.31],["同仁堂",5.02],["华润三九",4.92],["吉林敖东",4.71],["众生药业",4.38],["白云山",4.03]].map(function(a){return "<div class=\"wrow\"><span class=\"wn\">"+a[0]+"</span><span class=\"wb\"><i style=\"width:"+(a[1]/11*100)+"%\"></i></span><span class=\"wv num\">"+a[1]+"%</span></div>"}).join("");
+var bs=document.querySelectorAll(".switch button");for(var i=0;i<bs.length;i++){bs[i].onclick=function(){for(var j=0;j<bs.length;j++)bs[j].classList.remove("on");this.classList.add("on");var ss=document.querySelectorAll(".screen");for(var k=0;k<ss.length;k++)ss[k].classList.remove("on");document.getElementById(this.dataset.s).classList.add("on");window.scrollTo(0,0)}}
+</script></body></html>

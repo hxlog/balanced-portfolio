@@ -16,7 +16,7 @@ from uuid import UUID
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import api_tokens, auth, cache, db, repositories as repo, tasking, tasks
+from . import api_tokens, auth, basket, cache, db, repositories as repo, tasking, tasks
 from .schemas import (
     ApiTokenCreateIn,
     ApiTokenOut,
@@ -153,6 +153,7 @@ _otc.register_routes(app)
 valuation.register_routes(app)
 _public_api.register_routes(app)
 _stocks.register_routes(app)
+basket.register_routes(app)
 
 app.add_middleware(
     CORSMiddleware,

@@ -1,0 +1,418 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Balanced Portfolio · 新功能设计变体</title><style>
+:root{--sky:#0ea5e9;--sky2:#38bdf8;--up:#16a34a;--down:#dc2626;--bg:#f6f8fb;--card:#fff;--bd:#e4e9f0;--tx:#0f172a;--tx2:#5b6b82;--tx3:#8a99ad;--warn:#f59e0b;--violet:#8b5cf6}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Geist,-apple-system,Segoe UI,PingFang SC,Microsoft YaHei,sans-serif;background:var(--bg);color:var(--tx);font-size:13px;-webkit-font-smoothing:antialiased}
+.num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+.up{color:var(--up)}.down{color:var(--down)}.mut{color:var(--tx3)}
+body.cn-red .up{color:var(--down)}body.cn-red .down{color:var(--up)}
+.top{height:56px;background:#fff;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:26px;padding:0 24px;position:sticky;top:0;z-index:20}
+.logo{font-weight:650;letter-spacing:-.02em;font-size:15px}.logo i{color:var(--sky);font-style:normal}
+.top nav{display:flex;gap:20px;color:var(--tx2);font-size:13px}.top nav b{color:var(--tx);font-weight:600;border-bottom:2px solid var(--sky);padding:19px 0}
+.top .r{margin-left:auto;display:flex;gap:14px;align-items:center;color:var(--tx2);font-size:12px}
+.shell{display:grid;grid-template-columns:212px 1fr;min-height:calc(100vh - 56px)}
+.rail{background:#fff;border-right:1px solid var(--bd);padding:14px 10px;position:sticky;top:56px;height:calc(100vh - 56px);overflow:auto}
+.rail .g{font-size:11px;color:var(--tx3);padding:10px 10px 6px;letter-spacing:.02em}
+.rail a{display:block;padding:7px 10px;border-radius:8px;color:var(--tx2);font-size:12.5px;cursor:pointer;margin-bottom:2px}
+.rail a:hover{background:#f2f7fc}.rail a.on{background:#e8f4fd;color:#0369a1;font-weight:600}
+.main{padding:22px 26px 80px;max-width:1460px}
+h1{font-size:21px;letter-spacing:-.02em;font-weight:650}h2{font-size:14px;font-weight:640}
+.sub{color:var(--tx2);margin-top:6px;font-size:12.5px}
+.row{display:flex;align-items:center;gap:10px}.between{display:flex;align-items:center;justify-content:space-between}
+.sect{margin-top:22px}.sect>h2{display:flex;align-items:center;gap:8px}
+.sect>h2:before{content:"";width:3px;height:13px;background:var(--sky);border-radius:2px;display:block}
+.hint{color:var(--tx3);font-size:11.5px;margin-left:auto;font-weight:400}
+.card{background:#fff;border:1px solid var(--bd);border-radius:14px;padding:16px 18px}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:12px}
+.k{color:var(--tx2);font-size:12px;display:flex;justify-content:space-between}
+.v{font-size:25px;font-weight:640;letter-spacing:-.03em;margin-top:7px}
+.kv{display:flex;gap:16px;margin-top:9px;color:var(--tx2);font-size:11.5px}.kv b{color:var(--tx);font-weight:600}
+table{width:100%;border-collapse:separate;border-spacing:0;background:#fff;border:1px solid var(--bd);border-radius:13px;overflow:hidden}
+th{font-size:11px;color:var(--tx3);font-weight:550;text-align:right;padding:10px 12px;border-bottom:1px solid var(--bd);background:#fbfcfe;white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+td{padding:10px 12px;border-bottom:1px solid #f2f5f9;text-align:right;white-space:nowrap}tr:last-child td{border-bottom:0}tbody tr:hover{background:#f8fbff}
+.nm{font-weight:600}.cd{color:var(--tx3);font-size:11px;margin-left:6px}
+.pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600}
+.p-low{background:#e8f7ee;color:#15803d}.p-mid{background:#fff5e6;color:#b45309}.p-high{background:#fdecec;color:#b91c1c}.p-vio{background:#f3edff;color:#6d28d9}
+body.cn-red .p-low{background:#fdecec;color:#b91c1c}body.cn-red .p-high{background:#e8f7ee;color:#15803d}
+.btn{border:1px solid var(--bd);background:#fff;border-radius:8px;padding:6px 12px;font-size:12px;color:var(--tx2);cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{background:#f8fbff}.btn.pri{background:var(--sky);border-color:var(--sky);color:#fff}.btn.sm{padding:3px 9px;font-size:11.5px}
+.seg{display:inline-flex;background:#eef2f7;border-radius:9px;padding:2px;gap:2px}
+.seg span{padding:5px 11px;border-radius:7px;font-size:12px;color:var(--tx2);cursor:pointer}
+.seg span.on{background:#fff;color:var(--tx);box-shadow:0 1px 3px rgba(15,23,42,.08);font-weight:600}
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--bd);margin-top:18px}
+.tabs div{padding:10px 14px;font-size:13px;color:var(--tx2);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs div.on{color:var(--tx);font-weight:640;border-bottom-color:var(--sky)}
+.grid2{display:grid;grid-template-columns:1.55fr 1fr;gap:14px;margin-top:14px}
+.grid2e{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
+.grid3{display:grid;grid-template-columns:220px 1.6fr 1fr;gap:12px;margin-top:14px}
+.panel{background:#fff;border:1px solid var(--bd);border-radius:13px;padding:14px 16px}
+.panel h3{font-size:13px;font-weight:640;display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.mini{font-size:11px;color:var(--tx3);font-weight:400}
+.quote{display:flex;align-items:baseline;gap:12px}.quote .p{font-size:29px;font-weight:660;letter-spacing:-.03em}
+.legend{display:flex;gap:14px;font-size:11px;color:var(--tx2);margin-top:8px}
+.legend i{width:8px;height:8px;border-radius:2px;display:inline-block;margin-right:5px}
+.prog{height:6px;background:#eef2f7;border-radius:4px;position:relative;margin-top:12px}
+.prog i{position:absolute;top:0;bottom:0;background:linear-gradient(90deg,#bae6fd,#0ea5e9);border-radius:4px}
+.prog u{position:absolute;top:-3px;width:2px;height:12px;background:#0f172a;border-radius:2px}
+.dl{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.dl .kk{font-size:11px;color:var(--tx3)}.dl .vv{font-size:14px;font-weight:600;margin-top:3px}
+.wrow{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px dashed #eef2f7}.wrow:last-child{border:0}
+.wrow .wn{width:80px;font-size:12px}.wrow .wb{flex:1;height:8px;background:#eef2f7;border-radius:4px;overflow:hidden}
+.wrow .wb i{display:block;height:100%;background:linear-gradient(90deg,#7dd3fc,#0ea5e9)}.wrow .wv{width:52px;text-align:right;font-size:12px}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--bd);background:#fff;border-radius:999px;padding:4px 10px;font-size:12px;margin:0 6px 6px 0}
+.chip i{width:6px;height:6px;border-radius:50%;background:var(--sky);display:inline-block}
+.tl{position:sticky;top:56px;background:#fff;border-right:1px solid var(--bd);height:calc(100vh - 56px);overflow:auto}
+.tl .s{padding:10px 12px;border-bottom:1px solid var(--bd)}
+.tl input{width:100%;border:1px solid var(--bd);border-radius:8px;padding:7px 10px;font-size:12px;outline:none}
+.tl .it{padding:8px 12px;border-bottom:1px solid #f4f6fa;display:flex;justify-content:space-between;gap:8px;cursor:pointer}
+.tl .it.on{background:#eff9ff;border-left:2px solid var(--sky)}
+.tl .n{font-weight:600;font-size:12.5px}.tl .c{font-size:11px;color:var(--tx3);margin-top:1px}
+.narrow{max-width:980px;margin:0 auto}
+.note{background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:10px 12px;color:#075985;font-size:12px}
+.warn{background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px 12px;color:#92400e;font-size:12px}
+.code{background:#0f172a;color:#e2e8f0;border-radius:10px;padding:12px 14px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;line-height:1.7;overflow:auto;white-space:pre}
+.code em{color:#7dd3fc;font-style:normal}.code b{color:#86efac;font-weight:400}
+.toggle{position:fixed;right:16px;bottom:16px;z-index:99;display:flex;gap:8px;background:#fff;border:1px solid var(--bd);border-radius:11px;padding:7px 9px;box-shadow:0 8px 28px rgba(15,23,42,.13);font-size:12px;align-items:center}
+.toggle b{font-weight:600}.toggle .sw{display:inline-flex;border:1px solid var(--bd);border-radius:7px;overflow:hidden}
+.toggle .sw span{padding:4px 9px;cursor:pointer;color:var(--tx2)}.toggle .sw span.on{background:var(--sky);color:#fff}
+.vbadge{display:inline-block;padding:1px 7px;border-radius:6px;background:#eef6ff;color:#0369a1;font-size:10.5px;font-weight:600;margin-left:8px;vertical-align:middle}
+.toolbar{display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap}
+.empty{color:var(--tx3);font-size:12px;padding:14px 0;text-align:center}
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+.shell{display:block;max-width:1240px;margin:0 auto;padding:22px 24px 90px}
+.rail{display:flex;gap:6px;overflow-x:auto;background:transparent;border:0;position:static;height:auto;padding:0 0 14px;margin:0;scrollbar-width:none}
+.rail::-webkit-scrollbar{display:none}
+.rail .g{display:none}
+.rail a{white-space:nowrap;border:1px solid var(--bd);border-radius:999px;padding:6px 12px;font-size:12px;margin:0;background:#fff}
+.rail a.on{background:var(--sky);border-color:var(--sky);color:#fff}
+.main{padding:0;max-width:none}
+@media(max-width:900px){
+.shell{padding:14px 14px 80px}
+.top{padding:0 14px;gap:14px}.top nav{display:none}
+.cards{grid-template-columns:repeat(2,1fr)!important;gap:10px}
+.grid2,.grid2e,.grid3{grid-template-columns:1fr!important}
+.tl{height:auto!important;max-height:300px}
+h1{font-size:19px}.quote .p{font-size:23px}
+table{display:block;overflow-x:auto;white-space:nowrap}
+.panel{padding:12px}
+.seg{max-width:100%;overflow-x:auto}
+}
+@media(max-width:560px){.cards{grid-template-columns:1fr!important}}
+</style>
+<style>
+/* hard fixes */
+.shell{display:block!important;max-width:1240px!important;margin:0 auto!important;padding:22px 24px 90px!important}
+.rail{position:static!important;display:flex!important;align-items:flex-start!important;height:auto!important;min-height:0!important;max-height:none!important;overflow-x:auto!important;overflow-y:hidden!important;background:transparent!important;border:0!important;padding:0 0 14px!important;margin:0 0 6px!important;width:100%!important}
+.rail a{flex:0 0 auto!important;align-self:center!important;display:inline-flex!important;align-items:center!important;height:30px!important;line-height:1!important}
+.rail .g{display:none!important}
+.main{padding:0!important;max-width:none!important}
+</style></head><body>
+<div class="top"><div class="logo">Balanced<i>·</i>Portfolio</div>
+<nav><b>指数估值</b><span>回测</span><span>构建</span><span>加密</span><span>方法论</span></nav>
+<div class="r"><span>设计变体预览</span><span>2026-11-14</span></div></div>
+<div class="shell"><div class="rail" id="rail"></div><div class="main" id="main"></div></div>
+<div class="toggle"><b>涨跌色</b><div class="sw" id="sw"><span class="on" data-c="intl">绿涨红跌</span><span data-c="cn">红涨绿跌</span></div></div>
+<script>
+var R=[
+["沪深300","000300",4016.29,-0.68,-14.58,20.47,15.77,2.10,13.63,2.61],
+["中证500","000905",6465.48,-2.10,-12.10,30.61,59.04,2.29,57.76,1.47],
+["中证1000","000852",6357.26,-2.76,-16.25,38.11,57.35,2.44,28.45,1.18],
+["上证50","000016",2775.02,0.11,-9.72,18.64,61.05,2.15,52.08,2.92],
+["创业板指","399006",2426.08,-3.32,-24.23,44.81,41.50,4.46,43.93,1.19],
+["科创50","000688",1279.66,-2.30,-8.55,62.30,-1,6.06,-1,0.31],
+["中证A500","000510",5321.44,-1.02,-11.22,17.92,8.31,1.98,7.42,2.88],
+["中证红利","000922",5210.33,-0.44,-3.21,12.44,22.15,1.52,31.02,4.92],
+["中证中药","930641",8458.56,-0.29,-17.82,23.27,13.68,2.02,2.72,3.68],
+["中证白酒","399997",6808.51,2.03,-32.58,44.16,79.50,2.64,4.94,4.47],
+["中证银行","399986",6120.44,0.32,8.41,6.92,71.20,0.68,44.10,4.12],
+["中证医疗","399989",7210.11,-1.44,-21.05,27.17,8.96,2.88,3.21,0.72]
+];
+function spark(w,h,seed,color,fill){var p=[],y=50;for(var i=0;i<64;i++){y+=Math.sin(i/6+seed)*4+Math.cos(i/3.2+seed)*2;p.push(y)}var mn=Math.min.apply(null,p),mx=Math.max.apply(null,p);var d=p.map(function(v,i){return (i/(p.length-1)*w).toFixed(1)+","+(h-(v-mn)/((mx-mn)||1)*h).toFixed(1)}).join(" ");return "<svg width=\"100%\" viewBox=\"0 0 "+w+" "+h+"\" preserveAspectRatio=\"none\" style=\"display:block\">"+(fill?"<polygon points=\"0,"+h+" "+d+" "+w+","+h+"\" fill=\""+color+"\" opacity=\".09\"/>":"")+"<polyline points=\""+d+"\" fill=\"none\" stroke=\""+color+"\" stroke-width=\"1.6\"/></svg>"}
+function pctCls(v){if(v==null||v===-1)return "mut";return v<30?"up":v>70?"down":"mut"}
+function chg(v){return "<span class=\"num "+(v>=0?"up":"down")+"\">"+(v>=0?"+":"")+v+"%</span>"}
+function rowHtml(r){var b="<tr><td><span class=\"nm\">"+r[0]+"</span><span class=\"cd\">"+r[1]+"</span></td><td class=\"num\">"+r[2].toLocaleString()+"</td><td>"+chg(r[3])+"</td>";return b+"<td class=\"num down\">"+r[4]+"%</td><td class=\"num\">"+r[5]+"</td><td class=\"num "+pctCls(r[6])+"\">"+(r[6]===-1?"-":r[6]+"%")+"</td><td class=\"num\">"+r[7]+"</td><td class=\"num "+pctCls(r[8])+"\">"+(r[8]===-1?"-":r[8]+"%")+"</td><td class=\"num\">"+r[9]+"%</td><td>"+chg(+(r[9]-1.61).toFixed(2))+"</td><td><span class=\"btn sm\">详情</span></td></tr>"}
+function tbl(rows){return "<table><thead><tr><th>指数</th><th>收盘</th><th>涨跌</th><th>52周</th><th>PE</th><th>PE分位</th><th>PB</th><th>PB分位</th><th>股息率</th><th>风险溢价</th><th></th></tr></thead><tbody>"+rows.map(rowHtml).join("")+"</tbody></table>"}
+var S={};
+S.home=function(){return `
+<div class="between"><div><h1>指数估值</h1><div class="sub">521 只指数 · PE / PB / 股息率 / 风险溢价 · 每日 21:00 更新 · 数据截至 2026-11-13</div></div>
+<div class="row"><span class="btn">按分位排序</span><span class="btn pri">导出快照</span></div></div>
+<div class="sect"><h2>全市场估值<h1 class="hint">全 A 股等权中位数 · 分位自 2015 起 · 来源：东财 + 自建归档</h1></h2>
+<div class="cards">
+<div class="card"><div class="k"><span>全市场</span><span class="pill p-mid">中性</span></div><div class="v num">44.43</div><div class="kv"><span>PE 分位 <b class="num">68.30%</b></span><span>PB <b class="num">2.61</b></span><span>分位 <b class="num">38.12%</b></span></div></div>
+<div class="card"><div class="k"><span>主板</span></div><div class="v num">34.65</div><div class="kv"><span>PE 分位 <b class="num">56.73%</b></span><span>PB <b class="num">2.15</b></span><span>分位 <b class="num">16.43%</b></span></div></div>
+<div class="card"><div class="k"><span>创业板</span></div><div class="v num">59.95</div><div class="kv"><span>PE 分位 <b class="num">66.78%</b></span><span>PB <b class="num">3.14</b></span><span>分位 <b class="num">21.98%</b></span></div></div>
+<div class="card"><div class="k"><span>科创板</span></div><div class="v num">70.22</div><div class="kv"><span>PE 分位 <b class="num">-</b></span><span>PB <b class="num">3.54</b></span><span>分位 <b class="num">-</b></span></div></div>
+</div></div>
+<div class="sect"><h2>宽基指数<h1 class="hint">8 只核心宽基 · 点击进入详情</h1></h2><div style="margin-top:10px">${tbl(R)}</div></div>
+<div class="sect"><h2>全部指数估值<h1 class="hint">共 521 只</h1></h2>
+<div class="toolbar"><div class="seg"><span class="on">全部</span><span>宽基</span><span>行业</span><span>主题</span><span>策略</span></div><span class="btn">PE 分位升序</span><span class="btn">有 ETF 跟踪</span><span class="btn">仅看有估值数据</span></div>
+<div style="margin-top:10px">${tbl(R.concat(R.slice(2,10)))}</div></div>`}
+
+S.d1=function(){return `
+<div class="between"><div><h1>中证中药 <span class="mut" style="font-size:13px;font-weight:400">930641 · 主题 · 中证</span></h1>
+<div class="sub">以中证全指为样本空间 · 基日 2004-12-31 · 基点 1000 · 价格指数 · 39 只成分股 · 总市值 6490 亿</div></div>
+<div style="text-align:right"><div class="num" style="font-size:27px;font-weight:660">8,458.56</div><div>${chg(-0.29)}<span class="mut" style="font-size:11px;margin-left:8px">2026-11-13</span></div></div></div>
+<div class="tabs"><div class="on">指数指标</div><div>成分与业绩</div><div>ETF 资金</div></div>
+<div class="grid2"><div class="panel"><h3>估值与点位<span class="seg"><span class="on">近 10 年</span><span>近 5 年</span><span>上市以来</span></span></h3>
+<div style="margin-top:12px">${spark(820,300,13,"#0ea5e9",true)}</div>
+<div class="legend"><span><i style="background:#0ea5e9"></i>指数点位（右轴）</span><span><i style="background:#f59e0b"></i>PE-TTM（左轴）</span><span><i style="background:#94a3b8"></i>机会值 / 危险值</span></div>
+<div style="margin-top:10px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+<div><div class="mini">PE 分位</div><div class="num" style="font-size:15px;font-weight:600;margin-top:2px">13.68%</div></div><div><div class="mini">PE 均值</div><div class="num" style="font-size:15px;font-weight:600;margin-top:2px">34.55</div></div><div><div class="mini">+1σ / -1σ</div><div class="num" style="font-size:15px;font-weight:600;margin-top:2px">43.7 / 25.4</div></div><div><div class="mini">5 年最小 / 最大</div><div class="num" style="font-size:15px;font-weight:600;margin-top:2px">19.69 / 79.61</div></div></div>
+</div><div><div class="panel"><h3>PE 分位<span class="pill p-low">低估</span></h3>
+<div class="prog"><i style="width:13.7%"></i><u style="left:13.7%"></u></div>
+<div style="display:flex;justify-content:space-between;margin-top:7px" class="mini"><span>0%</span><span>20% 28.29</span><span>50% 32.24</span><span>80% 40.65</span><span>100%</span></div></div>
+<div class="panel" style="margin-top:12px"><h3>核心指标<span class="mini">近 10 年分位</span></h3>
+<table style="border:0;margin:0"><tbody>
+<tr><td>PB</td><td class="num">2.02</td><td class="num up">2.72%</td><td class="num mut">均值 3.07</td></tr>
+<tr><td>股息率 TTM</td><td class="num">3.68%</td><td class="num">4.98%</td><td class="num mut">均值 2.85%</td></tr>
+<tr><td>风险溢价</td><td class="num up">+2.07%</td><td class="num">61.2%</td><td class="num mut">10Y 国债 1.61%</td></tr>
+<tr><td>ROE (TTM)</td><td class="num">8.63%</td><td class="num">43.1%</td><td class="num mut">ROA 5.52%</td></tr>
+</tbody></table></div>
+<div class="panel" style="margin-top:12px"><h3>成分股权重<span class="mini">前 8 合计 50.83%</span></h3>
+${[["云南白药",10.76],["片仔癀",10.71],["东阿阿胶",6.31],["同仁堂",5.02],["华润三九",4.92],["吉林敖东",4.71],["众生药业",4.38],["白云山",4.03]].map(function(a){return `<div class="wrow"><span class="wn">${a[0]}</span><span class="wb"><i style="width:${a[1]/11*100}%"></i></span><span class="wv num">${a[1]}%</span></div>`}).join("")}
+</div></div></div>`}
+
+S.d2=function(){return `
+<div class="between"><div><h1>中证中药 <span class="mut" style="font-size:13px;font-weight:400">930641</span></h1><div class="sub">主题 · 中证 · 39 只成分股 · 价格指数</div></div>
+<div class="quote"><span class="p num">8,458.56</span>${chg(-0.29)}</div></div>
+<div class="panel" style="margin-top:14px"><h3>估值与点位<span class="seg"><span class="on">近 10 年</span><span>近 5 年</span><span>上市以来</span></span></h3>
+<div>${spark(1200,240,13,"#0ea5e9",true)}</div><div class="legend"><span><i style="background:#0ea5e9"></i>指数点位</span><span><i style="background:#f59e0b"></i>PE-TTM</span></div></div>
+<div class="cards" style="margin-top:12px">
+<div class="card"><div class="k">PE 分位</div><div class="v num">13.68%</div><div class="prog"><i style="width:13.7%"></i><u style="left:13.7%"></u></div></div>
+<div class="card"><div class="k">PE (TTM)</div><div class="v num">23.27</div><div class="kv"><span>均值 <b>34.55</b></span><span>最低 <b>19.69</b></span></div></div>
+<div class="card"><div class="k">股息率 TTM</div><div class="v num">3.68%</div><div class="kv"><span>分位 <b>4.98%</b></span><span>均值 <b>2.85%</b></span></div></div>
+<div class="card"><div class="k">风险溢价</div><div class="v num up">+2.07%</div><div class="kv"><span>10Y 国债 <b>1.61%</b></span><span>分位 <b>61.2%</b></span></div></div></div>
+<div class="tabs"><div class="on">指数指标</div><div>成分与业绩</div><div>ETF 资金</div></div>
+<div class="grid2e"><div class="panel"><h3>区间统计</h3><table style="border:0;margin:0"><thead><tr><th>区间</th><th>PE 分位</th><th>均值</th><th>+1σ</th><th>-1σ</th><th>股息率</th><th>风险溢价</th></tr></thead><tbody>
+<tr><td>近 1 年</td><td class="num">12.4%</td><td class="num">25.6</td><td class="num">31.2</td><td class="num">20.1</td><td class="num">3.42%</td><td class="num up">+1.81%</td></tr>
+<tr><td>近 3 年</td><td class="num">9.8%</td><td class="num">27.1</td><td class="num">34.8</td><td class="num">19.4</td><td class="num">3.55%</td><td class="num up">+1.94%</td></tr>
+<tr><td>近 5 年</td><td class="num">13.7%</td><td class="num">29.2</td><td class="num">38.5</td><td class="num">19.9</td><td class="num">3.61%</td><td class="num up">+2.00%</td></tr>
+<tr><td>近 10 年</td><td class="num">18.2%</td><td class="num">34.6</td><td class="num">43.7</td><td class="num">25.4</td><td class="num">3.48%</td><td class="num up">+1.87%</td></tr>
+</tbody></table></div><div class="panel"><h3>极限跌幅水位<span class="mini">距历史最高 -53.00%</span></h3><div class="dl" style="margin-top:6px"><div><div class="kk">70 水位线</div><div class="vv num">5,399.48</div><div class="mini">距收盘 -36.17%</div></div><div><div class="kk">80 水位线</div><div class="vv num">3,599.65</div><div class="mini">距收盘 -57.44%</div></div></div>
+<div style="margin-top:10px">${spark(420,80,21,"#94a3b8",true)}</div></div></div>`}
+
+S.d3=function(){return `
+<div style="display:flex;justify-content:space-between;align-items:flex-end"><div><h1>估值终端</h1><div class="sub">左选标的 · 中间看图 · 右侧指标 · 支持键盘上下切换</div></div><div class="row"><span class="btn">加入对比</span><span class="btn pri">加入回测</span></div></div>
+<div class="grid3"><div class="tl" style="height:520px;border-radius:12px;border:1px solid var(--bd)"><div class="s"><input placeholder="搜索代码 / 名称"></div>
+${R.map(function(r,i){return `<div class="it ${i===8?"on":""}"><div><div class="n">${r[0]}</div><div class="c">${r[1]}</div></div><div style="text-align:right"><div class="num">${r[5]}</div><div class="mini ${pctCls(r[6])}">${r[6]===-1?"-":r[6]+"%"}</div></div></div>`}).join("")}</div>
+<div><div class="panel"><h3>中证中药 930641<span class="mini">2026-11-13</span></h3><div class="quote" style="margin:6px 0 10px"><span class="p num">8,458.56</span>${chg(-0.29)}</div><div>${spark(620,180,13,"#0ea5e9",true)}</div>
+<div class="tabs" style="margin-top:8px"><div class="on">估值</div><div>成分</div><div>ETF</div></div>
+<div style="margin-top:10px">${spark(620,90,5,"#8b5cf6",false)}</div><div class="legend"><span><i style="background:#8b5cf6"></i>PE 历史（周频）</span></div></div></div>
+<div><div class="panel"><h3>估值分位</h3><div class="prog"><i style="width:13.7%"></i><u style="left:13.7%"></u></div><div class="dl" style="margin-top:14px"><div><div class="kk">PE</div><div class="vv num">23.27</div></div><div><div class="kk">分位</div><div class="vv num">13.68%</div></div><div><div class="kk">PB</div><div class="vv num">2.02</div></div><div><div class="kk">分位</div><div class="vv num">2.72%</div></div></div></div>
+<div class="panel" style="margin-top:12px"><h3>风险与服务</h3><div class="dl"><div><div class="kk">年化波动(1Y)</div><div class="vv num">1.20%</div></div><div><div class="kk">夏普(1Y)</div><div class="vv num">-0.95</div></div><div><div class="kk">最大回撤</div><div class="vv num down">-53.0%</div></div><div><div class="kk">发布以来</div><div class="vv num down">-42.33%</div></div></div></div>
+<div class="panel" style="margin-top:12px"><h3>跟踪 ETF<span class="mini">3 只</span></h3><table style="border:0;margin:0"><tbody><tr><td>560080</td><td class="num">20.89 亿</td></tr><tr><td>159647</td><td class="num">8.35 亿</td></tr><tr><td>561510</td><td class="num">2.14 亿</td></tr></tbody></table></div></div>
+</div>`}
+S.cons=function(){return `
+<div class="between"><div><h1>中证中药 <span class="mut" style="font-size:13px;font-weight:400">930641</span></h1><div class="sub">成分与业绩 · 权重每月首个交易日更新</div></div><div class="row"><span class="seg"><span class="on">申万一级</span><span>中证一级</span></span></div></div>
+<div class="tabs"><div>指数指标</div><div class="on">成分与业绩</div><div>ETF 资金</div></div>
+<div class="grid2"><div class="panel"><h3>成分股权重<span class="mini">39 只 · 前 10 合计 58.4%</span></h3>
+<table style="border:0;margin:0"><thead><tr><th>代码</th><th>名称</th><th>权重</th><th>PE</th><th>当日涨跌</th></tr></thead><tbody>
+${[["SZ000538","云南白药",10.76,24.1,-0.42],["SH600436","片仔癀",10.71,38.6,0.31],["SZ000423","东阿阿胶",6.31,22.4,-1.05],["SH600085","同仁堂",5.02,19.8,0.12],["SZ000999","华润三九",4.92,17.2,-0.68],["SZ000623","吉林敖东",4.71,14.9,0.44],["SZ002317","众生药业",4.38,41.2,-2.11],["SH600332","白云山",4.03,13.1,0.06]].map(function(a){return `<tr><td class="cd">${a[0]}</td><td class="nm">${a[1]}</td><td class="num">${a[2]}%</td><td class="num">${a[3]}</td><td>${chg(a[4])}</td></tr>`}).join("")}
+</tbody></table></div><div><div class="panel"><h3>一级行业权重<span class="mini">医药生物 100%</span></h3><div class="wrow"><span class="wn">医药生物</span><span class="wb"><i style="width:100%"></i></span><span class="wv num">100%</span></div></div>
+<div class="panel" style="margin-top:12px"><h3>业绩增长中位数<span class="mini">滚动同比 · 季度</span></h3><div style="margin-top:6px">${spark(430,120,31,"#0ea5e9",false)}</div><div class="legend"><span><i style="background:#0ea5e9"></i>净利润同比</span><span><i style="background:#94a3b8"></i>营业收入同比</span></div>
+<div class="dl" style="margin-top:10px"><div><div class="kk">最新单季净利增速</div><div class="vv num up">+9.91%</div></div><div><div class="kk">营收增速</div><div class="vv num down">-2.58%</div></div><div><div class="kk">ROE TTM</div><div class="vv num">8.63%</div></div><div><div class="kk">ROA TTM</div><div class="vv num">5.52%</div></div></div></div></div></div>
+<div class="panel" style="margin-top:14px"><h3>财务与估值序列<span class="mini">年度 / 最新季报</span></h3>
+<table style="margin:0"><thead><tr><th>年度</th><th>净利润(亿)</th><th>净利润增速</th><th>ROE</th><th>ROA</th></tr></thead><tbody>
+<tr><td>2022</td><td class="num">265.49</td><td class="num down">-13.37%</td><td class="num">8.47%</td><td class="num">5.40%</td></tr>
+<tr><td>2023</td><td class="num">356.15</td><td class="num up">+27.19%</td><td class="num">10.85%</td><td class="num">6.89%</td></tr>
+<tr><td>2024</td><td class="num">301.06</td><td class="num down">-14.33%</td><td class="num">9.15%</td><td class="num">5.85%</td></tr>
+<tr><td>2025</td><td class="num">315.60</td><td class="num up">+1.12%</td><td class="num">9.69%</td><td class="num">6.23%</td></tr>
+<tr><td>2026 Q3</td><td class="num">—</td><td class="num down">-3.60%</td><td class="num">8.63%</td><td class="num">5.52%</td></tr>
+</tbody></table></div>`}
+
+S.etf=function(){return `
+<div class="between"><div><h1>中证中药 <span class="mut" style="font-size:13px;font-weight:400">930641</span></h1><div class="sub">ETF 资金 · 净申购与折溢价 · 数据来源：交易所每日申赎清单 + 基金公告</div></div><div class="row"><span class="seg"><span class="on">近 20 日</span><span>近 60 日</span></span></div></div>
+<div class="tabs"><div>指数指标</div><div>成分与业绩</div><div class="on">ETF 资金</div></div>
+<div class="cards" style="margin-top:14px">
+<div class="card"><div class="k">跟踪 ETF 合计规模</div><div class="v num">31.38 亿</div><div class="kv"><span>较上周 <b class="up">+1.24 亿</b></span></div></div>
+<div class="card"><div class="k">今日合计净申购</div><div class="v num down">-2,004 万</div><div class="kv"><span>净申购率 <b class="down">-0.64%</b></span></div></div>
+<div class="card"><div class="k">近 5 日累计净申购</div><div class="v num up">+8,120 万</div><div class="kv"><span>连续流入 <b>3 日</b></span></div></div>
+<div class="card"><div class="k">平均折溢价率</div><div class="v num">-0.31%</div><div class="kv"><span>最高 <b>+0.12%</b></span><span>最低 <b>-0.89%</b></span></div></div></div>
+<div class="panel" style="margin-top:14px"><h3>净申购跟踪<span class="mini">柱=净申购额（亿元）· 线=累计份额（亿份）</span></h3><div style="margin-top:10px">${spark(1050,170,41,"#0ea5e9",true)}</div></div>
+<div class="panel" style="margin-top:14px"><h3>ETF 申购明细<span class="mini">2026-11-13 与 2026-11-12</span></h3>
+<table style="border:0;margin:0"><thead><tr><th>名称 / 代码</th><th>净申购额</th><th>净申购率</th><th>净资产</th><th>折溢价率</th><th>前一日净申购</th><th>前一日净资产</th></tr></thead><tbody>
+<tr><td><span class="nm">汇添富中证中药ETF</span><span class="cd">560080</span></td><td class="num down">-1,247.35 万</td><td class="num down">-0.59%</td><td class="num">20.89 亿</td><td class="num down">-0.26%</td><td class="num up">+124.10 万</td><td class="num">21.06 亿</td></tr>
+<tr><td><span class="nm">鹏华中证中药ETF</span><span class="cd">159647</span></td><td class="num down">-757.27 万</td><td class="num down">-0.90%</td><td class="num">8.35 亿</td><td class="num down">-0.10%</td><td class="num down">-89.33 万</td><td class="num">8.45 亿</td></tr>
+<tr><td><span class="nm">银华中证中药ETF</span><span class="cd">561510</span></td><td class="num">+0.00</td><td class="num">0.00%</td><td class="num">2.14 亿</td><td class="num">+0.02%</td><td class="num">+0.00</td><td class="num">2.14 亿</td></tr>
+</tbody></table></div>`}
+
+S.stockA=function(){return `
+<div class="between"><div><h1>构建组合 · 股票资产（变体 A：行内复权）</h1><div class="sub">同一只股票三种复权口径并存 · 默认后复权（全收益）· 收益/波动随口径即时切换</div></div><div class="row"><span class="btn">+ 添加资产</span><span class="btn pri">下一步：权重</span></div></div>
+<div class="note" style="margin-top:14px">三种口径来自同一数据源的三条独立序列，主键为 <b>股票代码 + 数据源 + 复权口径 + 交易日</b>，互不覆盖。</div>
+<div class="panel" style="margin-top:14px"><h3>资产列表<span class="mini">4 / 12 · 已按后复权优先排序</span></h3>
+<table style="border:0;margin:0"><thead><tr><th>资产</th><th>复权口径</th><th>最新价</th><th>当日</th><th>近 1 年</th><th>年化波动</th><th>数据区间</th><th></th></tr></thead><tbody>
+${[["招商银行","600036","银行","后复权",42.36,0.42,18.4,0.214,"2015-01-05 至今"],["顺丰控股","002352","物流","后复权",48.12,-0.86,12.1,0.268,"2017-02-24 至今"],["牧原股份","002714","养殖","不复权",39.88,1.24,-6.7,0.352,"2014-01-28 至今"],["工商银行","601398","银行","前复权",6.92,0.14,9.8,0.162,"2015-01-05 至今"]].map(function(r){return `<tr><td><span class="nm">${r[0]}</span><span class="cd">${r[1]} · ${r[2]}</span></td><td><span class="seg" style="transform:scale(.94);transform-origin:left"><span class="${r[3]==="后复权"?"on":""}">后复权</span><span class="${r[3]==="前复权"?"on":""}">前复权</span><span class="${r[3]==="不复权"?"on":""}">不复权</span></span></td><td class="num">${r[4]}</td><td>${chg(r[5])}</td><td>${chg(r[6])}</td><td class="num">${(r[7]*100).toFixed(1)}%</td><td class="mini">${r[8]}</td><td><span class="btn sm">移除</span></td></tr>`}).join("")}
+</tbody></table></div>
+<div class="grid2e" style="margin-top:14px"><div class="panel"><h3>口径差异提示<span class="mini">同一资产三种口径</span></h3>
+<table style="border:0;margin:0"><thead><tr><th>口径</th><th>近 1 年</th><th>近 3 年</th><th>年化波动</th><th>说明</th></tr></thead><tbody>
+<tr><td>后复权（全收益）</td><td class="num up">+18.4%</td><td class="num up">+42.1%</td><td class="num">21.4%</td><td class="mini">含分红再投，回测默认</td></tr>
+<tr><td>前复权</td><td class="num up">+17.9%</td><td class="num up">+40.8%</td><td class="num">21.3%</td><td class="mini">适合看当前价格</td></tr>
+<tr><td>不复权</td><td class="num up">+16.2%</td><td class="num up">+35.6%</td><td class="num">21.7%</td><td class="mini">含除权缺口，不建议回测</td></tr>
+</tbody></table></div><div class="panel"><h3>批量设置<span class="mini">新增股票时的默认值</span></h3><div style="margin-top:8px" class="sub">新增股票默认抓取三种口径，组合内默认选择「后复权」。可在设置中修改默认口径。</div>
+<div class="toolbar"><span class="btn">全选后复权</span><span class="btn">按类别设默认</span><span class="btn">批量重新拉取</span></div>
+<div class="warn" style="margin-top:12px">全 A 股 × 3 口径首拉约 2~3 小时；日增量按 1800 只活跃股估算约 12 分钟。若限频超阈值将自动回退到「沪深300+中证500+中证1000」优先级队列。</div></div></div>`}
+
+S.stockB=function(){return `
+<div class="between"><div><h1>构建组合 · 股票资产（变体 B：三口径卡片）</h1><div class="sub">在「添加资产」时就把口径选清楚 · 一屏看清三种口径的收益与波动差异</div></div><div class="row"><span class="btn pri">确认添加</span></div></div>
+<div class="panel" style="margin-top:14px"><h3>选择资产<span class="mini">搜索：600036</span></h3>
+<div class="row" style="margin-top:8px"><span class="chip"><i></i>招商银行 600036</span><span class="chip">顺丰控股 002352</span><span class="chip">牧原股份 002714</span></div>
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px">
+<div class="card" style="border-color:#bae6fd;box-shadow:0 0 0 3px #e0f2fe"><div class="k"><span>后复权（全收益）</span><span class="pill p-low">推荐</span></div><div class="v num">42.36</div><div class="kv"><span>近 1 年 <b class="up">+18.4%</b></span><span>波动 <b>21.4%</b></span></div><div style="margin-top:10px">${spark(240,54,7,"#0ea5e9",true)}</div></div>
+<div class="card"><div class="k"><span>前复权</span></div><div class="v num">41.98</div><div class="kv"><span>近 1 年 <b class="up">+17.9%</b></span><span>波动 <b>21.3%</b></span></div><div style="margin-top:10px">${spark(240,54,8,"#8b5cf6",true)}</div></div>
+<div class="card"><div class="k"><span>不复权</span></div><div class="v num">40.72</div><div class="kv"><span>近 1 年 <b class="up">+16.2%</b></span><span>波动 <b>21.7%</b></span></div><div style="margin-top:10px">${spark(240,54,9,"#94a3b8",true)}</div></div></div>
+<div class="grid2e" style="margin-top:14px"><div class="panel"><h3>已选资产</h3><table style="border:0;margin:0"><tbody>
+<tr><td><span class="nm">招商银行</span><span class="cd">600036</span></td><td><span class="pill p-low">后复权</span></td><td><span class="btn sm">切换</span></td></tr>
+<tr><td><span class="nm">顺丰控股</span><span class="cd">002352</span></td><td><span class="pill p-low">后复权</span></td><td><span class="btn sm">切换</span></td></tr>
+<tr><td><span class="nm">牧原股份</span><span class="cd">002714</span></td><td><span class="pill p-mid">不复权</span></td><td><span class="btn sm">切换</span></td></tr>
+</tbody></table></div><div class="panel"><h3>口径说明</h3><div class="sub" style="line-height:1.9">后复权：以最早价格为基准向后调整，包含分红再投资，适合回测与长期收益比较。<br>前复权：以最新价格为基准向前调整，适合看当前价与历史价的关系。<br>不复权：原始成交价，含除权除息缺口，仅用于核对行情。</div></div></div>`}
+S.basketA=function(){return `
+<div class="between"><div><h1>风险平价 · 一篮子资产（变体 A：表格）</h1><div class="sub">不按象限划分 · 直接给定一篮子 · 与四象限共用再平衡 / 集中度 / 回看窗口参数</div></div><div class="row"><span class="btn">保存为组合</span><span class="btn pri">开始回测</span></div></div>
+<div class="panel" style="margin-top:14px"><h3>优化方法<span class="mini">6 种</span></h3><div class="toolbar"><div class="seg"><span class="on">风险平价</span><span>最大夏普</span><span>最大 Sortino</span><span>最小方差</span><span>等权</span><span>风险预算</span></div><span class="btn">高级参数</span></div>
+<div class="toolbar" style="margin-top:10px"><span class="mut">再平衡阈值</span><span class="chip">偏离 5pp 触发</span><span class="mut">单资产上限</span><span class="chip">40%</span><span class="mut">回看窗口</span><span class="seg"><span>1 年</span><span class="on">3 年</span><span>5 年</span></span><span class="mut">最小历史</span><span class="chip">250 交易日</span></div></div>
+<div class="grid2" style="margin-top:14px"><div class="panel"><h3>篮子资产与目标权重<span class="mini">9 只</span></h3>
+<table style="border:0;margin:0"><thead><tr><th>资产</th><th>类别</th><th>目标权重</th><th>风险贡献</th><th>边际风险</th><th>调整</th></tr></thead><tbody>
+${[["沪深300","000300","股票",18.4,18.1,0.98],["中证500","000905","股票",14.2,14.6,1.03],["中证红利","000922","股票",11.8,11.2,0.95],["黄金 ETF","518880","商品",12.6,12.9,1.02],["原油基金","161129","商品",8.4,8.1,0.96],["十年国债","10Y","债券",16.2,16.4,1.01],["短融 ETF","511360","债券",7.1,7.0,0.99],["纳指 ETF","513100","海外",7.3,7.6,1.04],["恒生 ETF","159920","海外",4.0,4.1,1.02]].map(function(r){return `<tr><td><span class="nm">${r[0]}</span><span class="cd">${r[1]}</span></td><td><span class="pill p-vio">${r[2]}</span></td><td class="num">${r[3]}%</td><td class="num">${r[4]}%</td><td class="num">${r[5]}</td><td><input type="range" min="0" max="40" value="${Math.round(r[3])}" style="width:76px"></td></tr>`}).join("")}
+</tbody></table></div>
+<div><div class="panel"><h3>组合预估<span class="mini">按 3 年窗口</span></h3><div class="dl" style="margin-top:6px"><div><div class="kk">预期年化</div><div class="vv num up">+7.8%</div></div><div><div class="kk">年化波动</div><div class="vv num">9.4%</div></div><div><div class="kk">夏普</div><div class="vv num">0.66</div></div><div><div class="kk">最大回撤</div><div class="vv num down">-14.2%</div></div></div></div>
+<div class="panel" style="margin-top:12px"><h3>风险贡献分布<span class="mini">越均匀越接近理想平价</span></h3>
+${[["股票",44.4],["债券",23.4],["商品",21.0],["海外",11.2]].map(function(a){return `<div class="wrow"><span class="wn">${a[0]}</span><span class="wb"><i style="width:${a[1]}%"></i></span><span class="wv num">${a[1]}%</span></div>`}).join("")}
+<div class="note" style="margin-top:12px">若追求更严格平价，可开启「分组风险预算」：如股票 25% / 债券 35% / 商品 25% / 海外 15%。</div></div>
+<div class="panel" style="margin-top:12px"><h3>再平衡历史<span class="mini">模拟 3 年</span></h3><table style="border:0;margin:0"><tbody><tr><td>2026-11-13</td><td class="num">偏离 6.2pp</td><td><span class="pill p-mid">已触发</span></td></tr><tr><td>2026-08-21</td><td class="num">偏离 5.4pp</td><td><span class="pill p-mid">已触发</span></td></tr><tr><td>2026-03-05</td><td class="num">偏离 5.1pp</td><td><span class="pill p-mid">已触发</span></td></tr></tbody></table></div></div></div>`}
+
+S.basketB=function(){return `
+<div class="between"><div><h1>风险平价 · 一篮子资产（变体 B：分组卡片）</h1><div class="sub">按类别分组管理 · 权重滑杆实时联动 · 可对分组设风险预算</div></div><div class="row"><span class="btn">保存为组合</span><span class="btn pri">开始回测</span></div></div>
+<div class="toolbar" style="margin-top:12px"><div class="seg"><span class="on">风险平价</span><span>最大夏普</span><span>最大 Sortino</span><span>最小方差</span><span>等权</span><span>风险预算</span></div><span class="chip">再平衡 5pp</span><span class="chip">集中度 40%</span><span class="chip">窗口 3 年</span></div>
+<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:14px">
+<div class="panel"><h3>股票<span class="mini">权重 44.4% · 风险贡献 44.4%</span></h3>
+${[["沪深300 000300",18.4],["中证500 000905",14.2],["中证红利 000922",11.8]].map(function(a){return `<div style="padding:6px 0"><div style="display:flex;justify-content:space-between"><span class="nm">${a[0]}</span><b class="num">${a[1]}%</b></div><input type="range" min="0" max="40" value="${a[1]}" style="width:100%;margin-top:6px"></div>`}).join("")}</div>
+<div class="panel"><h3>债券<span class="mini">权重 23.3% · 风险贡献 23.4%</span></h3>
+${[["十年国债 10Y",16.2],["短融 ETF 511360",7.1]].map(function(a){return `<div style="padding:6px 0"><div style="display:flex;justify-content:space-between"><span class="nm">${a[0]}</span><b class="num">${a[1]}%</b></div><input type="range" min="0" max="40" value="${a[1]}" style="width:100%;margin-top:6px"></div>`}).join("")}</div>
+<div class="panel"><h3>商品<span class="mini">权重 21.0% · 风险贡献 21.0%</span></h3>
+${[["黄金 ETF 518880",12.6],["原油基金 161129",8.4]].map(function(a){return `<div style="padding:6px 0"><div style="display:flex;justify-content:space-between"><span class="nm">${a[0]}</span><b class="num">${a[1]}%</b></div><input type="range" min="0" max="40" value="${a[1]}" style="width:100%;margin-top:6px"></div>`}).join("")}</div>
+<div class="panel"><h3>海外<span class="mini">权重 11.2% · 风险贡献 11.2%</span></h3>
+${[["纳指 ETF 513100",7.3],["恒生 ETF 159920",4.0]].map(function(a){return `<div style="padding:6px 0"><div style="display:flex;justify-content:space-between"><span class="nm">${a[0]}</span><b class="num">${a[1]}%</b></div><input type="range" min="0" max="40" value="${a[1]}" style="width:100%;margin-top:6px"></div>`}).join("")}</div></div>
+<div class="grid2e" style="margin-top:14px"><div class="panel"><h3>组合预估</h3><div class="dl"><div><div class="kk">预期年化</div><div class="vv num up">+7.8%</div></div><div><div class="kk">波动</div><div class="vv num">9.4%</div></div><div><div class="kk">夏普</div><div class="vv num">0.66</div></div><div><div class="kk">回撤</div><div class="vv num down">-14.2%</div></div></div></div>
+<div class="panel"><h3>校验<span class="mini">约束检查</span></h3><div class="v num">100.0%</div><div class="kv"><span>债券下限 <b>20%</b> 满足</span><span>单资产上限 <b>40%</b> 满足</span></div></div></div>`}
+
+S.cryptoA=function(){return `
+<div class="between"><div><h1>加密货币合约看板（变体 A：总览）</h1><div class="sub">USDT 永续 · 659 个合约 · 5 分钟刷新 · 数据源 Binance Futures</div></div><div class="row"><span class="seg"><span class="on">5 分钟</span><span>15 分钟</span><span>1 小时</span><span>1 天</span></span><span class="btn">仅 Top 140 流动性</span></div></div>
+<div class="cards" style="margin-top:14px">
+<div class="card"><div class="k">未平仓量（全市场）</div><div class="v num">$18.24B</div><div class="kv"><span>24h <b class="up">+3.4%</b></span></div></div>
+<div class="card"><div class="k">全市场多空账户比</div><div class="v num">1.42</div><div class="kv"><span>30 天分位 <b>72%</b></span></div></div>
+<div class="card"><div class="k">主动买卖比</div><div class="v num">0.96</div><div class="kv"><span>30 天分位 <b>41%</b></span></div></div>
+<div class="card"><div class="k">BTC 资金费率</div><div class="v num up">+0.0110%</div><div class="kv"><span>年化 <b>+9.6%</b></span><span>4h 后结算</span></div></div></div>
+<div class="panel" style="margin-top:14px"><h3>合约明细<span class="mini">按未平仓量排序</span></h3>
+<table style="border:0;margin:0"><thead><tr><th>合约</th><th>最新价</th><th>24h</th><th>未平仓量</th><th>OI 24h</th><th>多空账户比</th><th>分位</th><th>主动买卖比</th><th>资金费率</th><th>下次结算</th></tr></thead><tbody>
+${[["BTCUSDT",104382.5,1.24,"$6.12B",2.1,1.38,68,0.97,"+0.0110%"],["ETHUSDT",3421.8,-0.86,"$3.44B",-1.2,1.52,74,0.94,"+0.0088%"],["SOLUSDT",172.4,2.98,"$1.02B",5.4,1.61,81,1.08,"-0.0042%"],["BNBUSDT",604.2,0.42,"$0.61B",0.8,1.22,55,0.99,"+0.0100%"],["XRPUSDT",2.31,-1.42,"$0.58B",-3.1,1.44,63,0.91,"+0.0100%"],["DOGEUSDT",0.1834,3.11,"$0.42B",7.2,1.71,86,1.12,"-0.0061%"]].map(function(r){return `<tr><td><span class="nm">${r[0]}</span></td><td class="num">${r[1].toLocaleString()}</td><td>${chg(r[2])}</td><td class="num">${r[3]}</td><td>${chg(r[4])}</td><td class="num">${r[5]}</td><td class="num ${pctCls(r[6])}">${r[6]}%</td><td class="num">${r[7]}</td><td class="num ${r[8].indexOf("-")===0?"down":"up"}">${r[8]}</td><td class="mini">4h 12m</td></tr>`}).join("")}
+</tbody></table></div>
+<div class="grid2e" style="margin-top:14px"><div class="panel"><h3>多空比分布<span class="mini">Top 20 合约</span></h3><div style="margin-top:8px">${spark(520,140,51,"#0ea5e9",true)}</div><div class="legend"><span><i style="background:#0ea5e9"></i>多空账户比</span><span><i style="background:#f59e0b"></i>大户持仓比</span></div></div>
+<div class="panel"><h3>资金费率热力<span class="mini">正=多头付费</span></h3><div style="display:grid;grid-template-columns:repeat(8,1fr);gap:5px;margin-top:8px">${Array.from({length:24}).map(function(_,i){var v=(Math.sin(i)*0.5+0.5);return "<div style=\"height:26px;border-radius:5px;background:rgba(14,165,233,"+(0.15+v*0.7).toFixed(2)+")\"></div>"}).join("")}</div><div class="mini" style="margin-top:6px">蓝色越深表示多头拥挤度越高</div></div></div>`}
+
+S.cryptoB=function(){return `
+<div class="between"><div><h1>BTCUSDT <span class="mut" style="font-size:13px;font-weight:400">永续 · Binance · 5m</span></h1><div class="sub">合约微观结构 · 未平仓量 / 多空比 / 主动买卖 / 资金费率 · 分位窗口 1h / 4h / 1d / 7d / 30d</div></div><div class="quote"><span class="p num">104,382.5</span>${chg(1.24)}</div></div>
+<div class="grid3" style="grid-template-columns:210px 1.7fr 1fr"><div class="tl" style="height:500px;border-radius:12px;border:1px solid var(--bd)"><div class="s"><input placeholder="搜索合约"></div>
+${[["BTCUSDT",104382.5,1.24],["ETHUSDT",3421.8,-0.86],["SOLUSDT",172.4,2.98],["BNBUSDT",604.2,0.42],["XRPUSDT",2.31,-1.42],["DOGEUSDT",0.1834,3.11],["ADAUSDT",0.912,0.11],["AVAXUSDT",28.4,-0.54]].map(function(r,i){return `<div class="it ${i===0?"on":""}"><div><div class="n">${r[0]}</div><div class="c">OI $6.12B</div></div><div style="text-align:right"><div class="num">${r[1].toLocaleString()}</div><div class="mini">${chg(r[2])}</div></div></div>`}).join("")}</div>
+<div><div class="panel"><h3>价格与未平仓量<span class="seg"><span class="on">5m</span><span>15m</span><span>1h</span><span>4h</span><span>1d</span></span></h3><div style="margin-top:10px">${spark(600,180,61,"#0ea5e9",true)}</div><div class="legend"><span><i style="background:#0ea5e9"></i>价格（右轴）</span><span><i style="background:#f59e0b"></i>未平仓量（左轴）</span></div></div>
+<div class="panel" style="margin-top:12px"><h3>5 分钟微结构<span class="mini">最近 4 个桶</span></h3><table style="border:0;margin:0"><thead><tr><th>时间</th><th>价格</th><th>OI</th><th>主动买/卖</th><th>多空账户比</th></tr></thead><tbody>
+${[["11-14 16:35",104382,6.12,0.97,1.38],["11-14 16:30",104355,6.11,1.02,1.39],["11-14 16:25",104401,6.13,0.94,1.37],["11-14 16:20",104290,6.09,1.05,1.36]].map(function(r){return `<tr><td class="mini">${r[0]}</td><td class="num">${r[1].toLocaleString()}</td><td class="num">$${r[2]}B</td><td class="num">${r[3]}</td><td class="num">${r[4]}</td></tr>`}).join("")}</tbody></table></div></div>
+<div><div class="panel"><h3>多空账户比<span class="mini">当前 1.38</span></h3><div class="prog"><i style="width:68%"></i><u style="left:68%"></u></div><div class="dl" style="margin-top:12px"><div><div class="kk">1h</div><div class="vv num">72%</div></div><div><div class="kk">4h</div><div class="vv num">65%</div></div><div><div class="kk">1d</div><div class="vv num">58%</div></div><div><div class="kk">30d</div><div class="vv num">68%</div></div></div></div>
+<div class="panel" style="margin-top:12px"><h3>大户持仓比<span class="mini">当前 1.12</span></h3><div class="prog"><i style="width:44%"></i><u style="left:44%"></u></div><div class="mini" style="margin-top:8px">大户与散户方向分歧时，历史上更易出现趋势反转（统计观察，不构成策略）</div></div>
+<div class="panel" style="margin-top:12px"><h3>资金费率</h3><table style="border:0;margin:0"><tbody><tr><td>当前</td><td class="num up">+0.0110%</td></tr><tr><td>7 日均值</td><td class="num up">+0.0084%</td></tr><tr><td>下次结算</td><td class="num">4h 12m</td></tr><tr><td>30 天最高</td><td class="num up">+0.0310%</td></tr></tbody></table></div></div></div>
+<div class="panel" style="margin-top:14px"><h3>分位统计<span class="mini">5 个指标 × 5 个窗口 · 基于已闭合 5m 数据</span></h3>
+<table style="border:0;margin:0"><thead><tr><th>指标</th><th>当前</th><th>1h</th><th>4h</th><th>1d</th><th>7d</th><th>30d</th><th>均值(30d)</th><th>±1σ</th></tr></thead><tbody>
+<tr><td>多空账户比</td><td class="num">1.38</td><td class="num">72%</td><td class="num">65%</td><td class="num">58%</td><td class="num">61%</td><td class="num up">68%</td><td class="num">1.29</td><td class="num">0.34</td></tr>
+<tr><td>大户持仓比</td><td class="num">1.12</td><td class="num">44%</td><td class="num">39%</td><td class="num">46%</td><td class="num">43%</td><td class="num">44%</td><td class="num">1.09</td><td class="num">0.21</td></tr>
+<tr><td>主动买卖比</td><td class="num">0.97</td><td class="num">48%</td><td class="num">52%</td><td class="num">45%</td><td class="num">49%</td><td class="num">41%</td><td class="num">1.01</td><td class="num">0.12</td></tr>
+<tr><td>未平仓量($B)</td><td class="num">6.12</td><td class="num">81%</td><td class="num">76%</td><td class="num">69%</td><td class="num">64%</td><td class="num up">72%</td><td class="num">5.44</td><td class="num">0.68</td></tr>
+<tr><td>资金费率</td><td class="num">0.011%</td><td class="num">63%</td><td class="num">58%</td><td class="num">55%</td><td class="num">51%</td><td class="num">49%</td><td class="num">0.008%</td><td class="num">0.006</td></tr>
+</tbody></table></div>`}
+
+S.api=function(){return `
+<div class="between"><div><h1>数据 API 接入中心</h1><div class="sub">REST + Bearer Token · Excel Power Query 直连 · Python SDK · 可选 HMAC 签名</div></div><div class="row"><span class="btn">申请 Token</span><span class="btn pri">查看 OpenAPI</span></div></div>
+<div class="grid2" style="margin-top:16px"><div>
+<div class="panel"><h3>1. 认证<span class="mini">Bearer + 可选 HMAC</span></h3><div class="code">Authorization: Bearer bp_live_7f9c...a1
+X-BP-Timestamp: 1763107200
+X-BP-Nonce: 8f2c1d
+X-BP-Sign: HMAC-SHA256(body, secret)   <b># 可选</b></div><div class="mini" style="margin-top:8px">Token 仅创建时明文返回一次，服务端存 SHA-256 摘要；可设 scopes（quotes / valuation / percentile）与过期时间。</div></div>
+<div class="panel" style="margin-top:12px"><h3>2. Excel 直连（Power Query）<span class="mini">Q16 选型 A</span></h3><div class="code"><em>// 数据 → 获取数据 → 其他源 → 空查询 → 高级编辑器</em>
+let
+  Url = <b>"https://api.example.com/api/v1/index/valuation"</b>,
+  Q = [codes=<b>"000300,930641"</b>, start=<b>"2024-01-01"</b>,
+       end=<b>"2024-12-31"</b>, window=<b>"5y"</b>],
+  Res = Json.Document(Web.Contents(Url, [
+          Query=Q,
+          Headers=[Authorization=<b>"Bearer bp_live_..."</b>]])),
+  Tbl = Table.FromRecords(Res[data])
+in Tbl</div></div>
+<div class="panel" style="margin-top:12px"><h3>3. Python SDK</h3><div class="code"><em>from</em> bpdata <em>import</em> Client
+c = Client(token=<b>"bp_live_..."</b>)
+
+em = c.daily(codes=[<b>"600036"</b>,<b>"000300"</b>], start=<b>"2024-01-01"</b>, adjust=<b>"hfq"</b>)
+
+yld = c.valuation(codes=[<b>"000300"</b>], window=<b>"10y"</b>,
+                  fields=[<b>"pe"</b>,<b>"pb"</b>,<b>"dividend_yield"</b>,<b>"erp"</b>])
+<em># 返回 DataFrame，含 value / percentile / mean / sd1 / sd2 / sd3</em></div></div>
+</div><div>
+<div class="panel"><h3>4. 端点一览<span class="mini">/api/v1</span></h3><table style="border:0;margin:0"><thead><tr><th>方法</th><th>路径</th><th>说明</th></tr></thead><tbody>
+<tr><td>GET</td><td class="cd">/market/daily</td><td class="mini">日行情 · adjust=bfq/qfq/hfq</td></tr>
+<tr><td>GET</td><td class="cd">/index/valuation</td><td class="mini">PE/PB/股息率/ERP + 区间统计</td></tr>
+<tr><td>GET</td><td class="cd">/index/percentile</td><td class="mini">分位 / 均值 / ±1σ ±2σ ±3σ</td></tr>
+<tr><td>GET</td><td class="cd">/index/detail</td><td class="mini">简介 / 成分 / 跟踪基金</td></tr>
+<tr><td>GET</td><td class="cd">/market/bond-yield</td><td class="mini">十年期国债收益率</td></tr>
+<tr><td>GET</td><td class="cd">/crypto/futures</td><td class="mini">合约微观指标与分位</td></tr>
+</tbody></table></div>
+<div class="panel" style="margin-top:12px"><h3>5. 响应结构<span class="mini">统一信封</span></h3><div class="code">{
+  <b>"data"</b>: [ { <b>"trade_date"</b>: <b>"2024-12-31"</b>,
+              <b>"close"</b>: 4016.29, <b>"pe_ttm"</b>: 20.47,
+              <b>"pe_basis"</b>: <b>"equal_weight_ttm"</b>,
+              <b>"source"</b>: <b>"pingan"</b> } ],
+  <b>"meta"</b>: { <b>"code"</b>: <b>"000300"</b>, <b>"adjust"</b>: <b>"hfq"</b>, <b>"rows"</b>: 244,
+            <b>"as_of"</b>: <b>"2026-11-13"</b>, <b>"source_mix"</b>: [<b>"pingan"</b>,<b>"csindex"</b>] },
+  <b>"error"</b>: null
+}</div></div>
+<div class="panel" style="margin-top:12px"><h3>6. 限频与配额</h3><div class="dl"><div><div class="kk">标准</div><div class="vv num">60/min</div></div><div><div class="kk">批量行数上限</div><div class="vv num">50,000</div></div><div><div class="kk">单次日期间隔</div><div class="vv num">20 年</div></div><div><div class="kk">CSV</div><div class="vv num">支持</div></div></div><div class="note" style="margin-top:10px">SQL 风格查询（可选）：<b>GET /api/v1/query?fields=close,pe_ttm&amp;codes=000300</b>，与 Excel 用户习惯对齐。</div></div>
+</div></div>`}
+
+S.basketC=function(){return `
+<div class="between"><div><h1>风险平价 · 风险预算（Q38-C）</h1><div class="sub">按分组设预算 · 组内再按风险平价分配 · 高级模式可展开到单资产</div></div><div class="row"><span class="btn">保存为组合</span><span class="btn pri">开始回测</span></div></div>
+<div class="toolbar" style="margin-top:12px"><div class="seg"><span>风险平价</span><span>最大夏普</span><span>最大 Sortino</span><span>最小方差</span><span>等权</span><span class="on">风险预算</span></div><span class="chip">再平衡 5pp</span><span class="chip">单资产 40%</span><span class="chip">分组上限 60%</span><span class="chip">窗口 3 年</span></div>
+<div class="grid2" style="margin-top:14px"><div class="panel"><h3>分组风险预算<span class="mini">合计必须 100%</span></h3>
+${[["股票",25],["债券",35],["商品",25],["海外",15]].map(function(a){return `<div style="padding:8px 0"><div style="display:flex;justify-content:space-between"><span class="nm">${a[0]}</span><b class="num">${a[1]}%</b></div><input type="range" min="0" max="100" value="${a[1]}" style="width:100%;margin-top:6px"></div>`}).join("")}
+<div class="note" style="margin-top:8px">分组预算用于约束「风险贡献」而非资金权重：股票 25% 意味着股票类资产合计贡献 25% 的组合风险。</div></div>
+<div class="panel"><h3>预算校验</h3><div class="v num">100%</div><div class="kv"><span>股票上限 60% 满足</span><span>债券下限 20% 满足</span></div>
+<table style="border:0;margin:10px 0 0"><thead><tr><th>分组</th><th>预算</th><th>测算风险贡献</th><th>偏离</th></tr></thead><tbody>
+<tr><td>股票</td><td class="num">25%</td><td class="num">24.8%</td><td class="num up">-0.2pp</td></tr>
+<tr><td>债券</td><td class="num">35%</td><td class="num">35.2%</td><td class="num up">+0.2pp</td></tr>
+<tr><td>商品</td><td class="num">25%</td><td class="num">25.1%</td><td class="num up">+0.1pp</td></tr>
+<tr><td>海外</td><td class="num">15%</td><td class="num">14.9%</td><td class="num up">-0.1pp</td></tr>
+</tbody></table><div class="mini" style="margin-top:8px">偏离 > 2pp 时建议开启「自动调平」</div></div></div>
+<div class="panel" style="margin-top:14px"><h3>组内分配<span class="mini">风险平价</span></h3>
+<table style="border:0;margin:0"><thead><tr><th>资产</th><th>分组</th><th>资金权重</th><th>组内风险占比</th><th>边际风险</th></tr></thead><tbody>
+${[["沪深300","股票",9.8,33.4,1.02],["中证500","股票",8.1,33.1,1.05],["中证红利","股票",7.1,33.5,0.99],["十年国债","债券",21.4,60.2,0.98],["短融 ETF","债券",13.6,39.8,1.01],["黄金 ETF","商品",14.2,56.7,1.00],["原油基金","商品",10.8,43.3,1.02],["纳指 ETF","海外",9.4,62.8,1.03],["恒生 ETF","海外",5.6,37.2,0.99]].map(function(r){return `<tr><td class="nm">${r[0]}</td><td><span class="pill p-vio">${r[1]}</span></td><td class="num">${r[2]}%</td><td class="num">${r[3]}%</td><td class="num">${r[4]}</td></tr>`}).join("")}
+</tbody></table></div>`}
+
+S.cryptoLayout=function(){return `
+<div class="between"><div><h1>加密货币看板 · 改造后布局（Q31-B）</h1><div class="sub">新增合约模块置于现有相关性看板之上 · 现有模块保持不动 · 两套缓存 tag 隔离</div></div><div class="row"><span class="seg"><span class="on">合约</span><span>相关性</span></span></div></div>
+<div class="sect" style="margin-top:12px"><h2>合约总览<span class="hint">新增 · 5 分钟刷新 · Tier A 30 合约</span></h2>
+<div class="cards">
+<div class="card"><div class="k">全市场未平仓量</div><div class="v num">$18.24B</div><div class="kv"><span>24h <b class="up">+3.4%</b></span></div></div>
+<div class="card"><div class="k">多空账户比</div><div class="v num">1.42</div><div class="kv"><span>30d 分位 <b>72%</b></span></div></div>
+<div class="card"><div class="k">主动买卖比</div><div class="v num">0.96</div><div class="kv"><span>30d 分位 <b>41%</b></span></div></div>
+<div class="card"><div class="k">BTC 资金费率</div><div class="v num up">+0.0110%</div><div class="kv"><span>年化 <b>+9.6%</b></span></div></div></div>
+<table style="margin-top:12px"><thead><tr><th>合约</th><th>最新价</th><th>24h</th><th>未平仓量</th><th>多空账户比</th><th>分位</th><th>资金费率</th></tr></thead><tbody>
+${[["BTCUSDT",104382.5,1.24,"$6.12B",1.38,68,"+0.0110%"],["ETHUSDT",3421.8,-0.86,"$3.44B",1.52,74,"+0.0088%"],["SOLUSDT",172.4,2.98,"$1.02B",1.61,81,"-0.0042%"],["BNBUSDT",604.2,0.42,"$0.61B",1.22,55,"+0.0100%"],["XRPUSDT",2.31,-1.42,"$0.58B",1.44,63,"+0.0100%"]].map(function(r){return `<tr><td class="nm">${r[0]}</td><td class="num">${r[1].toLocaleString()}</td><td>${chg(r[2])}</td><td class="num">${r[3]}</td><td class="num">${r[4]}</td><td class="num ${pctCls(r[5])}">${r[5]}%</td><td class="num ${r[6].indexOf("-")===0?"down":"up"}">${r[6]}</td></tr>`}).join("")}
+</tbody></table><div style="margin-top:8px"><span class="btn">查看全部 659 个合约</span></div></div>
+<div class="sect"><h2>资产相关性<span class="hint">现有模块 · 保持不变</span></h2>
+<div class="cards"><div class="card"><div class="k">BTC 与黄金</div><div class="v num">0.42</div><div class="kv"><span>3M 滚动</span></div></div><div class="card"><div class="k">BTC 与纳指</div><div class="v num">0.61</div><div class="kv"><span>3M 滚动</span></div></div><div class="card"><div class="k">BTC 与美元指数</div><div class="v num down">-0.33</div><div class="kv"><span>3M 滚动</span></div></div><div class="card"><div class="k">ETH 与 BTC</div><div class="v num">0.84</div><div class="kv"><span>3M 滚动</span></div></div></div>
+<div class="panel" style="margin-top:12px"><h3>滚动相关性<span class="mini">Pearson / Spearman / Kendall / Hoeffding</span></h3><div style="margin-top:8px">${spark(1050,140,71,"#8b5cf6",true)}</div></div></div>`}
+
+var GROUPS=[
+{g:"估值",items:[["home","估值首页"],["d1","详情 · 默认 D1"],["d2","详情 · 移动端 D2"],["d3","详情 · 专业模式 D3"],["cons","Tab · 成分与业绩"],["etf","Tab · ETF 资金"]]},
+{g:"资产与组合",items:[["stockA","股票三复权 · 行内"],["stockB","股票三复权 · 首次引导"],["basketA","篮子 · 表格（选定）"],["basketB","篮子 · 分组（备选）"],["basketC","篮子 · 风险预算"]]},
+{g:"加密",items:[["cryptoA","合约 · 总览页"],["cryptoB","合约 · 详情页"],["cryptoLayout","/crypto 改造后布局"]]},
+{g:"开放接口",items:[["api","API 接入中心"]]}];
+function mount(id){var it=[];for(var i=0;i<GROUPS.length;i++){it.push("<div class=\"g\">"+GROUPS[i].g+"</div>");for(var j=0;j<GROUPS[i].items.length;j++){var x=GROUPS[i].items[j];it.push("<a data-k=\""+x[0]+"\" class=\""+(id===x[0]?"on":"")+"\">"+x[1]+"</a>")}}document.getElementById("rail").innerHTML=it.join("");var as=document.querySelectorAll("#rail a");for(var k=0;k<as.length;k++){as[k].onclick=function(){mount(this.dataset.k)}}document.getElementById("main").innerHTML=S[id]();window.scrollTo(0,0)}
+mount("home");
+var sws=document.querySelectorAll("#sw span");for(var z=0;z<sws.length;z++){sws[z].onclick=function(){for(var q=0;q<sws.length;q++)sws[q].classList.remove("on");this.classList.add("on");document.body.className=this.dataset.c==="cn"?"cn-red":""}}
+</script></body></html>

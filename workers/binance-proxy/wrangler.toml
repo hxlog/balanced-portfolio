@@ -1,0 +1,18 @@
+# Binance 公开端点只读代理（P5）
+# 部署: npx wrangler deploy（或 ../../scripts/deploy_worker.sh）
+name = "binance-proxy"
+main = "src/index.ts"
+compatibility_date = "2025-06-01"
+workers_dev = true
+
+# 运行期变量（非 secret）。CORS 只允许该来源。
+[vars]
+ALLOWED_ORIGIN = "https://xushilu.com"
+
+[observability]
+enabled = true
+
+# 如需绑定自有域名，取消注释并替换 zone_name / pattern：
+# [[routes]]
+# pattern = "binance-proxy.xushilu.com/*"
+# zone_name = "xushilu.com"

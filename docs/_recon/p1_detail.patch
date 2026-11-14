@@ -1,0 +1,1741 @@
+diff --git a/web/app/valuation/ValuationHome.tsx b/web/app/valuation/ValuationHome.tsx
+index 18087e6..a612364 100644
+--- a/web/app/valuation/ValuationHome.tsx
++++ b/web/app/valuation/ValuationHome.tsx
+@@ -1,6 +1,7 @@
+ "use client";
+ 
+ import { useMemo, useState } from "react";
++import Link from "next/link";
+ import { Search, X } from "lucide-react";
+ import { Badge } from "@/components/ui/badge";
+ import { Button } from "@/components/ui/button";
+@@ -208,7 +209,7 @@ function IndexTable({
+ }) {
+   return (
+     <div className="overflow-x-auto overscroll-x-contain rounded-xl border border-border bg-card">
+-      <table className="w-full min-w-[1080px] border-collapse text-sm">
++      <table className="w-full min-w-[1140px] border-collapse text-sm">
+         <caption className="sr-only">{caption}</caption>
+         <thead>
+           <tr className="whitespace-nowrap border-b border-border bg-muted/40 text-[11px] text-muted-foreground">
+@@ -264,6 +265,9 @@ function IndexTable({
+             >
+               风险溢价
+             </th>
++            <th scope="col" className="px-3 py-3 text-right font-medium">
++              详情
++            </th>
+           </tr>
+         </thead>
+         <tbody>
+@@ -358,6 +362,15 @@ function IndexTable({
+               <td className="px-3 py-3 text-right tabular-nums text-muted-foreground">
+                 {formatSignedPct(row.risk_premium_pct)}
+               </td>
++              <td className="px-3 py-3 text-right">
++                <Link
++                  href={"/valuation/" + row.index_code}
++                  className="inline-flex items-center rounded-md border border-border px-2 py-1 text-xs text-primary transition-colors hover:bg-primary/5"
++                  aria-label={`查看 ${row.name} 详情`}
++                >
++                  详情
++                </Link>
++              </td>
+             </tr>
+           ))}
+         </tbody>
+diff --git a/web/app/valuation/[code]/ConstituentsTab.tsx b/web/app/valuation/[code]/ConstituentsTab.tsx
+new file mode 100644
+index 0000000..a06f10c
+--- /dev/null
++++ b/web/app/valuation/[code]/ConstituentsTab.tsx
+@@ -0,0 +1,245 @@
++"use client";
++
++import { useMemo } from "react";
++import { useTheme } from "next-themes";
++import { EChart } from "@/components/EChart";
++import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
++import { getChartTheme, type ChartTheme } from "@/lib/chart-theme";
++import {
++  EMPTY_DISPLAY,
++  formatNumber,
++  formatPlainPct,
++} from "@/lib/valuation-detail-format";
++import type {
++  DetailConstituent,
++  ValuationDetailData,
++} from "@/lib/valuation-detail-types";
++
++/** 前 8 大权重横向条形图（单系列；表格即其可访问数据视图）。 */
++function buildWeightBarOption(
++  top: readonly DetailConstituent[],
++  theme: ChartTheme,
++): Record<string, unknown> {
++  return {
++    animation: false,
++    grid: { left: 8, right: 64, top: 8, bottom: 8, containLabel: true },
++    tooltip: {
++      trigger: "item",
++      backgroundColor: theme.tooltipBg,
++      borderColor: theme.tooltipBorder,
++      textStyle: { color: theme.text, fontSize: 12 },
++      valueFormatter: (value: unknown) =>
++        typeof value === "number" && Number.isFinite(value)
++          ? `${value.toFixed(2)}%`
++          : EMPTY_DISPLAY,
++    },
++    xAxis: {
++      type: "value",
++      axisLine: { show: false },
++      axisTick: { show: false },
++      axisLabel: { color: theme.subtext, formatter: "{value}%" },
++      splitLine: { lineStyle: { color: theme.splitLine } },
++    },
++    yAxis: {
++      type: "category",
++      inverse: true,
++      data: top.map((item) => item.name),
++      axisLine: { show: false },
++      axisTick: { show: false },
++      axisLabel: {
++        color: theme.text,
++        fontSize: 11,
++        width: 96,
++        overflow: "truncate",
++      },
++    },
++    series: [
++      {
++        name: "权重",
++        type: "bar",
++        data: top.map((item) => item.weight),
++        barWidth: 12,
++        itemStyle: {
++          color: theme.palette[0],
++          borderRadius: [0, 4, 4, 0],
++        },
++        label: {
++          show: true,
++          position: "right",
++          color: theme.subtext,
++          fontSize: 11,
++          formatter: (params: { value?: unknown }) =>
++            typeof params.value === "number"
++              ? `${params.value.toFixed(2)}%`
++              : EMPTY_DISPLAY,
++        },
++      },
++    ],
++  };
++}
++
++function compareConstituents(
++  a: DetailConstituent,
++  b: DetailConstituent,
++): number {
++  if (a.rank != null && b.rank != null && a.rank !== b.rank) {
++    return a.rank - b.rank;
++  }
++  if (a.rank != null && b.rank == null) return -1;
++  if (a.rank == null && b.rank != null) return 1;
++  return (b.weight ?? -1) - (a.weight ?? -1);
++}
++
++export function ConstituentsTab({ detail }: { detail: ValuationDetailData }) {
++  const { resolvedTheme } = useTheme();
++  const isDark = resolvedTheme === "dark";
++  const theme = getChartTheme(isDark);
++
++  const ordered = useMemo(
++    () => [...detail.constituents].sort(compareConstituents),
++    [detail.constituents],
++  );
++  const top = useMemo(
++    () => ordered.filter((item) => item.weight != null).slice(0, 8),
++    [ordered],
++  );
++  const chartOption = useMemo(
++    () => buildWeightBarOption(top, theme),
++    [top, theme],
++  );
++  const effectiveDate = ordered[0]?.effective_date ?? null;
++
++  return (
++    <div className="space-y-6">
++      <Card>
++        <CardHeader className="pb-2">
++          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
++            <CardTitle className="text-base">前 8 大权重</CardTitle>
++            <span className="text-xs tabular-nums text-muted-foreground">
++              {effectiveDate ? `成分生效日 ${effectiveDate}` : "最新成分快照"}
++            </span>
++          </div>
++          <p className="text-xs text-muted-foreground">
++            按最新生效日权重排序；权重单位为百分比。
++          </p>
++        </CardHeader>
++        <CardContent className="pt-2">
++          {top.length > 0 ? (
++            <EChart
++              option={chartOption}
++              style={{
++                height: Math.max(240, top.length * 42 + 32),
++                width: "100%",
++              }}
++            />
++          ) : (
++            <div className="flex h-[240px] items-center justify-center rounded-lg border border-dashed border-border bg-muted/20 px-6 text-center text-sm text-muted-foreground">
++              暂无成分股权重数据
++            </div>
++          )}
++        </CardContent>
++      </Card>
++
++      <Card>
++        <CardHeader className="pb-2">
++          <CardTitle className="text-base">成分股权重</CardTitle>
++          <p className="text-xs text-muted-foreground">
++            后端按最新生效日返回前 60 大成分；行业缺失显示「—」。
++          </p>
++        </CardHeader>
++        <CardContent className="pt-2">
++          {ordered.length > 0 ? (
++            <div className="overflow-x-auto overscroll-x-contain rounded-lg border border-border">
++              <table className="w-full min-w-[640px] border-collapse text-sm">
++                <caption className="sr-only">
++                  指数成分股权重表，含排名、代码、名称、行业与权重
++                </caption>
++                <thead>
++                  <tr className="border-b border-border bg-muted/40 text-[11px] text-muted-foreground">
++                    <th
++                      scope="col"
++                      className="px-4 py-3 text-left font-medium"
++                    >
++                      排名
++                    </th>
++                    <th
++                      scope="col"
++                      className="px-4 py-3 text-left font-medium"
++                    >
++                      代码
++                    </th>
++                    <th
++                      scope="col"
++                      className="px-4 py-3 text-left font-medium"
++                    >
++                      名称
++                    </th>
++                    <th
++                      scope="col"
++                      className="px-4 py-3 text-left font-medium"
++                    >
++                      行业
++                    </th>
++                    <th
++                      scope="col"
++                      className="px-4 py-3 text-right font-medium"
++                    >
++                      权重
++                    </th>
++                  </tr>
++                </thead>
++                <tbody>
++                  {ordered.map((item) => (
++                    <tr
++                      key={item.stock_code}
++                      className="border-b border-border/60 transition-colors last:border-0 hover:bg-muted/30"
++                    >
++                      <td className="px-4 py-3 tabular-nums text-muted-foreground">
++                        {item.rank != null
++                          ? formatNumber(item.rank, 0)
++                          : EMPTY_DISPLAY}
++                      </td>
++                      <td className="px-4 py-3 font-mono text-xs tabular-nums">
++                        {item.stock_code}
++                      </td>
++                      <td className="px-4 py-3 font-medium">{item.name}</td>
++                      <td className="px-4 py-3 text-muted-foreground">
++                        {item.industry_l1?.trim()
++                          ? item.industry_l1
++                          : EMPTY_DISPLAY}
++                      </td>
++                      <td className="px-4 py-3 text-right font-mono tabular-nums">
++                        {formatPlainPct(item.weight)}
++                      </td>
++                    </tr>
++                  ))}
++                </tbody>
++              </table>
++            </div>
++          ) : (
++            <div className="rounded-lg border border-dashed border-border bg-muted/20 px-6 py-10 text-center">
++              <p className="text-sm font-medium">暂无成分股数据</p>
++              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
++                后端尚未落库该指数的最新成分股快照。
++              </p>
++            </div>
++          )}
++        </CardContent>
++      </Card>
++
++      <Card>
++        <CardHeader className="pb-2">
++          <CardTitle className="text-base">业绩</CardTitle>
++        </CardHeader>
++        <CardContent>
++          <div className="rounded-lg border border-dashed border-border bg-muted/20 px-6 py-10 text-center">
++            <p className="text-sm font-medium">业绩数据暂未接入</p>
++            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
++              后端暂未提供营收/净利同比与年度财务数据，当前仅展示成分股权重。
++            </p>
++          </div>
++        </CardContent>
++      </Card>
++    </div>
++  );
++}
+diff --git a/web/app/valuation/[code]/FundsTab.tsx b/web/app/valuation/[code]/FundsTab.tsx
+new file mode 100644
+index 0000000..8b7016d
+--- /dev/null
++++ b/web/app/valuation/[code]/FundsTab.tsx
+@@ -0,0 +1,154 @@
++"use client";
++
++import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
++import {
++  EMPTY_DISPLAY,
++  formatAumYi,
++  formatNumber,
++} from "@/lib/valuation-detail-format";
++import type {
++  DetailTrackerFund,
++  ValuationDetailData,
++} from "@/lib/valuation-detail-types";
++
++function sumAum(funds: readonly DetailTrackerFund[]): number | null {
++  let total: number | null = null;
++  for (const fund of funds) {
++    if (fund.aum != null && Number.isFinite(fund.aum)) {
++      total = (total ?? 0) + fund.aum;
++    }
++  }
++  return total;
++}
++
++export function FundsTab({ detail }: { detail: ValuationDetailData }) {
++  const funds = detail.tracker_funds;
++  const total = sumAum(funds);
++  const asOf =
++    funds.find((fund) => fund.trade_date)?.trade_date ?? detail.trade_date;
++
++  return (
++    <div className="space-y-6">
++      <Card className="border-primary/20 bg-primary/5">
++        <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-end sm:justify-between sm:p-6">
++          <div>
++            <div className="text-xs text-muted-foreground">
++              跟踪基金合计规模
++            </div>
++            <div className="mt-1 flex flex-wrap items-baseline gap-1.5">
++              <span className="text-3xl font-semibold tabular-nums tracking-tight">
++                {formatAumYi(total)}
++              </span>
++              <span className="text-sm text-muted-foreground">亿元</span>
++            </div>
++          </div>
++          <dl className="flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">
++            <div>
++              <dt>跟踪基金</dt>
++              <dd className="mt-0.5 font-mono tabular-nums text-foreground">
++                {formatNumber(funds.length, 0)} 只
++              </dd>
++            </div>
++            <div>
++              <dt>数据截至</dt>
++              <dd className="mt-0.5 font-mono tabular-nums text-foreground">
++                {asOf ?? EMPTY_DISPLAY}
++              </dd>
++            </div>
++          </dl>
++        </CardContent>
++      </Card>
++
++      <Card>
++        <CardHeader className="pb-2">
++          <CardTitle className="text-base">跟踪基金明细</CardTitle>
++          <p className="text-xs text-muted-foreground">
++            规模按最新交易日 aum 汇总并换算为亿元；缺失显示「—」。
++          </p>
++        </CardHeader>
++        <CardContent className="pt-2">
++          {funds.length > 0 ? (
++            <div className="overflow-x-auto overscroll-x-contain rounded-lg border border-border">
++              <table className="w-full min-w-[760px] border-collapse text-sm">
++                <caption className="sr-only">
++                  跟踪该指数的基金列表，含代码、名称、基金公司、风险等级与规模
++                </caption>
++                <thead>
++                  <tr className="border-b border-border bg-muted/40 text-[11px] text-muted-foreground">
++                    <th
++                      scope="col"
++                      className="px-4 py-3 text-left font-medium"
++                    >
++                      基金代码
++                    </th>
++                    <th
++                      scope="col"
++                      className="px-4 py-3 text-left font-medium"
++                    >
++                      基金名称
++                    </th>
++                    <th
++                      scope="col"
++                      className="px-4 py-3 text-left font-medium"
++                    >
++                      基金公司
++                    </th>
++                    <th
++                      scope="col"
++                      className="px-4 py-3 text-left font-medium"
++                    >
++                      风险等级
++                    </th>
++                    <th
++                      scope="col"
++                      className="px-4 py-3 text-right font-medium"
++                    >
++                      规模（亿元）
++                    </th>
++                  </tr>
++                </thead>
++                <tbody>
++                  {funds.map((fund) => (
++                    <tr
++                      key={fund.fund_code}
++                      className="border-b border-border/60 transition-colors last:border-0 hover:bg-muted/30"
++                    >
++                      <td className="px-4 py-3 font-mono text-xs tabular-nums">
++                        {fund.fund_code}
++                      </td>
++                      <td className="px-4 py-3 font-medium">{fund.name}</td>
++                      <td className="px-4 py-3 text-muted-foreground">
++                        {fund.company_name ?? EMPTY_DISPLAY}
++                      </td>
++                      <td className="px-4 py-3">
++                        {fund.risk_grade ? (
++                          <span className="inline-flex items-center rounded border border-border px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">
++                            {fund.risk_grade}
++                          </span>
++                        ) : (
++                          <span className="text-muted-foreground">
++                            {EMPTY_DISPLAY}
++                          </span>
++                        )}
++                      </td>
++                      <td className="px-4 py-3 text-right font-mono tabular-nums">
++                        {formatAumYi(fund.aum)}
++                      </td>
++                    </tr>
++                  ))}
++                </tbody>
++              </table>
++            </div>
++          ) : (
++            <div className="rounded-lg border border-dashed border-border bg-muted/20 px-6 py-10 text-center">
++              <p className="text-sm font-medium">暂无跟踪基金数据</p>
++              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
++                后端尚未落库该指数的跟踪 ETF/联接基金快照。
++              </p>
++            </div>
++          )}
++        </CardContent>
++      </Card>
++    </div>
++  );
++}
+diff --git a/web/app/valuation/[code]/MetricsTab.tsx b/web/app/valuation/[code]/MetricsTab.tsx
+new file mode 100644
+index 0000000..8c26f70
+--- /dev/null
++++ b/web/app/valuation/[code]/MetricsTab.tsx
+@@ -0,0 +1,373 @@
++"use client";
++
++import { useMemo } from "react";
++import { useTheme } from "next-themes";
++import { EChart } from "@/components/EChart";
++import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
++import { getChartTheme, withAlpha, type ChartTheme } from "@/lib/chart-theme";
++import { cn } from "@/lib/utils";
++import { findPercentile } from "@/lib/valuation-detail-api-map";
++import {
++  EMPTY_DISPLAY,
++  formatNumber,
++  formatPercentileValue,
++  formatPlainPct,
++  formatSignedPct,
++  hasUsablePercentile,
++  percentileLabel,
++  percentileTone,
++  percentileUnavailableText,
++} from "@/lib/valuation-detail-format";
++import type {
++  PercentileSummary,
++  ValuationDetailData,
++  ValuationHistoryData,
++  ValuationHistoryPoint,
++} from "@/lib/valuation-detail-types";
++
++/** 单序列 PE 折线：只画 PE，点位右轴待后端提供后再叠加。 */
++function buildPeChartOption(
++  series: readonly ValuationHistoryPoint[],
++  theme: ChartTheme,
++  isDark: boolean,
++): Record<string, unknown> {
++  return {
++    animation: false,
++    grid: { left: 56, right: 20, top: 30, bottom: 38 },
++    tooltip: {
++      trigger: "axis",
++      backgroundColor: theme.tooltipBg,
++      borderColor: theme.tooltipBorder,
++      textStyle: { color: theme.text, fontSize: 12 },
++      valueFormatter: (value: unknown) =>
++        typeof value === "number" && Number.isFinite(value)
++          ? value.toFixed(2)
++          : EMPTY_DISPLAY,
++    },
++    xAxis: {
++      type: "category",
++      data: series.map((point) => point.trade_date),
++      boundaryGap: false,
++      axisLine: { lineStyle: { color: theme.axisLine } },
++      axisTick: { show: false },
++      axisLabel: {
++        color: theme.subtext,
++        hideOverlap: true,
++        formatter: (value: string) => value.slice(0, 7),
++      },
++    },
++    yAxis: {
++      type: "value",
++      scale: true,
++      name: "PE (TTM)",
++      nameGap: 16,
++      nameTextStyle: { color: theme.subtext, fontSize: 11 },
++      axisLine: { show: false },
++      axisTick: { show: false },
++      axisLabel: { color: theme.subtext },
++      splitLine: { lineStyle: { color: theme.splitLine } },
++    },
++    series: [
++      {
++        name: "PE (TTM)",
++        type: "line",
++        data: series.map((point) => point.value),
++        showSymbol: false,
++        lineStyle: { width: 2, color: theme.palette[0] },
++        itemStyle: { color: theme.palette[0] },
++        areaStyle: {
++          color: withAlpha(theme.palette[0], isDark ? 0.16 : 0.1),
++        },
++        emphasis: { focus: "series" },
++      },
++    ],
++  };
++}
++
++function clampPercent(value: number): number {
++  return Math.min(100, Math.max(0, value));
++}
++
++function PePercentileCard({ stats }: { stats: PercentileSummary | null }) {
++  const usable = hasUsablePercentile(stats);
++  const pct = usable ? stats.pct : null;
++  const tone = percentileTone(pct);
++  const label = percentileLabel(pct);
++
++  return (
++    <Card>
++      <CardHeader className="pb-2">
++        <CardTitle className="text-base">PE 分位</CardTitle>
++        <p className="text-xs text-muted-foreground">
++          近 5 年历史分位 · 样本需 ≥120 个交易日
++        </p>
++      </CardHeader>
++      <CardContent className="pt-2">
++        {usable ? (
++          <>
++            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
++              <span
++                className={cn(
++                  "text-3xl font-semibold tabular-nums tracking-tight",
++                  tone,
++                )}
++              >
++                {formatPercentileValue(stats.pct)}
++              </span>
++              {label && (
++                <span className={cn("text-xs font-medium", tone)}>{label}</span>
++              )}
++            </div>
++
++            <div
++              className="relative mt-4 h-3 w-full overflow-hidden rounded-full bg-muted"
++              aria-hidden="true"
++            >
++              <div className="absolute inset-y-0 left-0 w-[30%] bg-success/25" />
++              <div className="absolute inset-y-0 left-[30%] w-[40%] bg-warning/25" />
++              <div className="absolute inset-y-0 left-[70%] right-0 bg-destructive/25" />
++              <div
++                className="absolute top-1/2 h-5 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground ring-2 ring-background"
++                style={{ left: `${clampPercent(stats.pct)}%` }}
++              />
++            </div>
++            <div className="mt-1 flex items-center justify-between text-[10px] tabular-nums text-muted-foreground">
++              <span>0%</span>
++              <span>50%</span>
++              <span>100%</span>
++            </div>
++
++            <dl className="mt-4 grid grid-cols-3 gap-2 border-t border-border/60 pt-3 text-xs">
++              <div>
++                <dt className="text-muted-foreground">均值</dt>
++                <dd className="mt-0.5 font-mono tabular-nums">
++                  {formatNumber(stats.mean)}
++                </dd>
++              </div>
++              <div>
++                <dt className="text-muted-foreground">中位数</dt>
++                <dd className="mt-0.5 font-mono tabular-nums">
++                  {formatNumber(stats.p50)}
++                </dd>
++              </div>
++              <div>
++                <dt className="text-muted-foreground">样本</dt>
++                <dd className="mt-0.5 font-mono tabular-nums">
++                  {formatNumber(stats.sample_size, 0)}
++                </dd>
++              </div>
++            </dl>
++          </>
++        ) : (
++          <div className="rounded-lg border border-dashed border-border bg-muted/30 px-4 py-5">
++            <p className="text-sm font-medium">样本不足</p>
++            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
++              {stats
++                ? `当前有效样本 ${formatNumber(stats.sample_size, 0)} 个，分位需 ≥120 个交易日。`
++                : "暂无 PE 分位统计。"}
++            </p>
++          </div>
++        )}
++      </CardContent>
++    </Card>
++  );
++}
++
++interface CoreMetricRow {
++  key: string;
++  label: string;
++  display: string;
++  stats: PercentileSummary | null;
++  usable: boolean;
++  meanDisplay: string;
++  meanTitle: string;
++}
++
++function CoreMetricsCard({ detail }: { detail: ValuationDetailData }) {
++  const rows: CoreMetricRow[] = [
++    {
++      key: "pb",
++      label: "PB",
++      display: formatNumber(detail.pb),
++      stats: findPercentile(detail.percentiles, "pb"),
++      usable: false,
++      meanDisplay: EMPTY_DISPLAY,
++      meanTitle: "近 5 年均值",
++    },
++    {
++      key: "dividend",
++      label: "股息率 TTM",
++      display: formatPlainPct(detail.dividend_yield_ttm),
++      stats: findPercentile(detail.percentiles, "dividend_yield_ttm"),
++      usable: false,
++      meanDisplay: EMPTY_DISPLAY,
++      meanTitle: "近 5 年均值（百分数点）",
++    },
++    {
++      key: "erp",
++      label: "风险溢价",
++      display: formatSignedPct(detail.erp),
++      stats: findPercentile(detail.percentiles, "erp"),
++      usable: false,
++      meanDisplay: EMPTY_DISPLAY,
++      meanTitle: "近 5 年均值（百分数点）",
++    },
++  ];
++
++  if (detail.roe_ttm != null) {
++    rows.push({
++      key: "roe",
++      label: "ROE TTM",
++      display: formatPlainPct(detail.roe_ttm),
++      stats: null,
++      usable: false,
++      meanDisplay: EMPTY_DISPLAY,
++      meanTitle: "后端暂未提供 ROE 分位",
++    });
++  }
++
++  for (const row of rows) {
++    row.usable = hasUsablePercentile(row.stats);
++    if (row.key === "pb") {
++      row.meanDisplay = formatNumber(row.stats?.mean);
++    } else if (row.key === "erp") {
++      row.meanDisplay = formatSignedPct(row.stats?.mean);
++    } else if (row.stats) {
++      row.meanDisplay = formatPlainPct(row.stats.mean);
++    }
++  }
++
++  return (
++    <Card>
++      <CardHeader className="pb-2">
++        <CardTitle className="text-base">核心指标</CardTitle>
++        <p className="text-xs text-muted-foreground">
++          分位窗口为近 5 年；缺失或样本不足显示「—」/「样本不足」
++        </p>
++      </CardHeader>
++      <CardContent className="overflow-x-auto pt-2">
++        <table className="w-full min-w-[340px] border-collapse text-sm">
++          <caption className="sr-only">
++            指数核心估值指标：PB、股息率、风险溢价与 ROE
++          </caption>
++          <thead>
++            <tr className="border-b border-border/60 text-[11px] text-muted-foreground">
++              <th scope="col" className="pb-2 pr-2 text-left font-medium">
++                指标
++              </th>
++              <th scope="col" className="px-2 pb-2 text-right font-medium">
++                当前
++              </th>
++              <th scope="col" className="px-2 pb-2 text-right font-medium">
++                5 年分位
++              </th>
++              <th scope="col" className="pb-2 pl-2 text-right font-medium">
++                均值
++              </th>
++            </tr>
++          </thead>
++          <tbody>
++            {rows.map((row) => (
++              <tr
++                key={row.key}
++                className="border-b border-border/40 last:border-0"
++              >
++                <th
++                  scope="row"
++                  className="py-2.5 pr-2 text-left font-normal text-muted-foreground"
++                >
++                  {row.label}
++                </th>
++                <td className="px-2 py-2.5 text-right font-mono tabular-nums">
++                  {row.display}
++                </td>
++                <td
++                  className={cn(
++                    "px-2 py-2.5 text-right font-mono text-xs tabular-nums",
++                    row.usable
++                      ? percentileTone(row.stats?.pct)
++                      : "text-muted-foreground",
++                  )}
++                  title={
++                    row.usable
++                      ? "近 5 年历史分位"
++                      : percentileUnavailableText(row.stats)
++                  }
++                >
++                  {row.usable
++                    ? formatPercentileValue(row.stats?.pct, 1)
++                    : row.stats
++                      ? "样本不足"
++                      : EMPTY_DISPLAY}
++                </td>
++                <td
++                  className="py-2.5 pl-2 text-right font-mono text-xs tabular-nums text-muted-foreground"
++                  title={row.meanTitle}
++                >
++                  {row.meanDisplay}
++                </td>
++              </tr>
++            ))}
++          </tbody>
++        </table>
++      </CardContent>
++    </Card>
++  );
++}
++
++export function MetricsTab({
++  detail,
++  history,
++}: {
++  detail: ValuationDetailData;
++  history: ValuationHistoryData | null;
++}) {
++  const { resolvedTheme } = useTheme();
++  const isDark = resolvedTheme === "dark";
++  const theme = getChartTheme(isDark);
++  const series = history?.series ?? [];
++  const chartOption = useMemo(
++    () => buildPeChartOption(series, theme, isDark),
++    [history, theme, isDark],
++  );
++  const peStats =
++    history?.stats ?? findPercentile(detail.percentiles, "pe_ttm");
++  const lastDate =
++    series.length > 0 ? series[series.length - 1].trade_date : detail.trade_date;
++
++  return (
++    <div className="grid grid-cols-1 gap-6 min-[1100px]:grid-cols-[minmax(0,1fr)_360px]">
++      <Card className="min-w-0">
++        <CardHeader className="pb-2">
++          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
++            <CardTitle className="text-base">估值与点位</CardTitle>
++            <span className="text-xs tabular-nums text-muted-foreground">
++              PE (TTM) · 近 5 年
++            </span>
++          </div>
++          <p className="text-xs text-muted-foreground">
++            当前展示 PE 序列，点位右轴待后端提供后叠加。
++            {lastDate ? ` 数据截至 ${lastDate}。` : ""}
++          </p>
++        </CardHeader>
++        <CardContent className="pt-2">
++          {series.length > 0 ? (
++            <EChart
++              option={chartOption}
++              style={{ height: 380, width: "100%" }}
++            />
++          ) : (
++            <div className="flex h-[380px] items-center justify-center rounded-lg border border-dashed border-border bg-muted/20 px-6 text-center text-sm text-muted-foreground">
++              暂无 PE 历史序列
++            </div>
++          )}
++        </CardContent>
++      </Card>
++
++      <div className="space-y-6">
++        <PePercentileCard stats={peStats} />
++        <CoreMetricsCard detail={detail} />
++      </div>
++    </div>
++  );
++}
+diff --git a/web/app/valuation/[code]/ValuationDetailClient.tsx b/web/app/valuation/[code]/ValuationDetailClient.tsx
+new file mode 100644
+index 0000000..cbf2d62
+--- /dev/null
++++ b/web/app/valuation/[code]/ValuationDetailClient.tsx
+@@ -0,0 +1,267 @@
++"use client";
++
++import { useEffect, useState } from "react";
++import Link from "next/link";
++import { useSearchParams } from "next/navigation";
++import { AlertTriangle, ArrowLeft } from "lucide-react";
++import { Badge } from "@/components/ui/badge";
++import { Button } from "@/components/ui/button";
++import { Card, CardContent } from "@/components/ui/card";
++import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
++import { cn } from "@/lib/utils";
++import { EMPTY_DISPLAY, formatNumber } from "@/lib/valuation-detail-format";
++import type {
++  ValuationDetailData,
++  ValuationHistoryData,
++} from "@/lib/valuation-detail-types";
++import type { ValuationLevel } from "@/lib/valuation-types";
++import { levelClass } from "@/lib/valuation-mock";
++import { ConstituentsTab } from "./ConstituentsTab";
++import { FundsTab } from "./FundsTab";
++import { MetricsTab } from "./MetricsTab";
++
++const TAB_KEYS = ["metrics", "constituents", "funds"] as const;
++type DetailTab = (typeof TAB_KEYS)[number];
++
++function isDetailTab(value: string | null): value is DetailTab {
++  return value === "metrics" || value === "constituents" || value === "funds";
++}
++
++/**
++ * Tab 状态与 URL 双向保持：
++ * - 首屏从 `?tab=` 读取（可分享链接）；
++ * - 切换时用 History API `replaceState` 更新 URL，不触发 Next 路由跳转/整页刷新；
++ * - `useSearchParams` 在前进/后退或外部导航时把 URL 重新同步回状态。
++ */
++function useDetailTab(): [DetailTab, (value: string) => void] {
++  const searchParams = useSearchParams();
++  const rawTab = searchParams.get("tab");
++  const tabFromUrl: DetailTab = isDetailTab(rawTab) ? rawTab : "metrics";
++  const [tab, setTab] = useState<DetailTab>(tabFromUrl);
++
++  useEffect(() => {
++    setTab(tabFromUrl);
++  }, [tabFromUrl]);
++
++  const changeTab = (value: string) => {
++    const next: DetailTab = isDetailTab(value) ? value : "metrics";
++    setTab(next);
++    if (typeof window === "undefined") return;
++    const url = new URL(window.location.href);
++    if (next === "metrics") {
++      url.searchParams.delete("tab");
++    } else {
++      url.searchParams.set("tab", next);
++    }
++    window.history.replaceState(window.history.state, "", url.toString());
++  };
++
++  return [tab, changeTab];
++}
++
++const LEVEL_BADGE_BG: Record<ValuationLevel, string> = {
++  低估: "border-success/30 bg-success/10",
++  中性: "border-warning/30 bg-warning/10",
++  高估: "border-destructive/30 bg-destructive/10",
++};
++
++function LevelBadge({ level }: { level: ValuationLevel | null }) {
++  if (!level) return null;
++  return (
++    <span
++      className={cn(
++        "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium",
++        levelClass(level),
++        LEVEL_BADGE_BG[level],
++      )}
++    >
++      PE {level}
++    </span>
++  );
++}
++
++function DetailHeader({ detail }: { detail: ValuationDetailData }) {
++  return (
++    <header className="border-b border-border/60 bg-card/30">
++      <div className="mx-auto w-full max-w-[1240px] px-4 py-7 sm:px-6 sm:py-8">
++        <Link
++          href="/valuation"
++          className="inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
++        >
++          <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
++          返回指数估值
++        </Link>
++
++        <div className="mt-4 flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
++          <div className="min-w-0">
++            <div className="flex flex-wrap items-center gap-2">
++              <Badge
++                variant="outline"
++                className="border-primary/30 bg-primary/5 text-primary"
++              >
++                指数估值
++              </Badge>
++              <Badge variant="outline">{detail.index_type}</Badge>
++              <Badge
++                variant="outline"
++                className="font-mono tabular-nums"
++              >
++                {detail.index_code}
++              </Badge>
++              <LevelBadge level={detail.level_pe} />
++            </div>
++
++            <h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">
++              {detail.name}
++            </h1>
++            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
++              {detail.publisher ?? "发布机构未知"} · 数据截至{" "}
++              <span className="tabular-nums">
++                {detail.trade_date ?? EMPTY_DISPLAY}
++              </span>
++              {detail.pe_ttm != null && (
++                <>
++                  {" "}
++                  · PE (TTM){" "}
++                  <span className="font-mono tabular-nums text-foreground">
++                    {formatNumber(detail.pe_ttm)}
++                  </span>
++                </>
++              )}
++            </p>
++          </div>
++
++          <dl className="grid shrink-0 grid-cols-2 gap-x-6 gap-y-2 text-xs sm:grid-cols-4 lg:max-w-lg">
++            <div>
++              <dt className="text-muted-foreground">基日</dt>
++              <dd className="mt-0.5 font-mono tabular-nums">
++                {detail.base_date ?? EMPTY_DISPLAY}
++              </dd>
++            </div>
++            <div>
++              <dt className="text-muted-foreground">基点</dt>
++              <dd className="mt-0.5 font-mono tabular-nums">
++                {formatNumber(detail.base_point)}
++              </dd>
++            </div>
++            <div>
++              <dt className="text-muted-foreground">收益方式</dt>
++              <dd className="mt-0.5">{detail.income_method ?? EMPTY_DISPLAY}</dd>
++            </div>
++            <div>
++              <dt className="text-muted-foreground">市场</dt>
++              <dd className="mt-0.5">{detail.market ?? EMPTY_DISPLAY}</dd>
++            </div>
++          </dl>
++        </div>
++
++        {detail.intro && (
++          <p className="mt-4 max-w-4xl text-xs leading-relaxed text-muted-foreground line-clamp-3">
++            {detail.intro}
++          </p>
++        )}
++      </div>
++    </header>
++  );
++}
++
++function ErrorState({ code }: { code: string }) {
++  return (
++    <div className="mx-auto flex min-h-[60vh] w-full max-w-[1240px] items-center justify-center px-4 py-16 sm:px-6">
++      <Card className="w-full max-w-xl">
++        <CardContent className="p-8 text-center">
++          <AlertTriangle
++            className="mx-auto h-8 w-8 text-warning"
++            aria-hidden="true"
++          />
++          <h1 className="mt-4 text-xl font-semibold tracking-tight">
++            指数估值数据加载失败
++          </h1>
++          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
++            未能读取指数{" "}
++            <span className="font-mono tabular-nums text-foreground">
++              {code}
++            </span>{" "}
++            的估值数据。可能是后端暂不可用，或该指数尚未入库。
++          </p>
++          <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
++            <Button asChild>
++              <Link href="/valuation">返回指数估值</Link>
++            </Button>
++            <Button
++              type="button"
++              variant="outline"
++              onClick={() => window.location.reload()}
++            >
++              重新加载
++            </Button>
++          </div>
++        </CardContent>
++      </Card>
++    </div>
++  );
++}
++
++export function ValuationDetailClient({
++  code,
++  detail,
++  history,
++}: {
++  code: string;
++  detail: ValuationDetailData | null;
++  history: ValuationHistoryData | null;
++}) {
++  // hooks 必须在条件 return 之前调用；错误态也保持稳定 hook 顺序。
++  const [tab, changeTab] = useDetailTab();
++
++  if (!detail) {
++    return (
++      <div className="min-h-screen bg-background text-foreground">
++        <ErrorState code={code} />
++      </div>
++    );
++  }
++
++  return (
++    <div className="min-h-screen bg-background text-foreground">
++      <DetailHeader detail={detail} />
++
++      <div className="mx-auto w-full max-w-[1240px] px-4 py-6 sm:px-6 sm:py-8">
++        <Tabs value={tab} onValueChange={changeTab}>
++          <div className="overflow-x-auto">
++            <TabsList
++              className="h-10 w-full justify-start sm:w-auto"
++              aria-label="指数详情分区"
++            >
++              <TabsTrigger value="metrics" className="px-4">
++                指数指标
++              </TabsTrigger>
++              <TabsTrigger value="constituents" className="px-4">
++                成分与业绩
++              </TabsTrigger>
++              <TabsTrigger value="funds" className="px-4">
++                ETF 资金
++              </TabsTrigger>
++            </TabsList>
++          </div>
++
++          <TabsContent value="metrics" className="mt-6">
++            <MetricsTab detail={detail} history={history} />
++          </TabsContent>
++          <TabsContent value="constituents" className="mt-6">
++            <ConstituentsTab detail={detail} />
++          </TabsContent>
++          <TabsContent value="funds" className="mt-6">
++            <FundsTab detail={detail} />
++          </TabsContent>
++        </Tabs>
++
++        <p className="mt-10 text-[11px] leading-relaxed text-muted-foreground">
++          口径：PE/PB 分位为近 5 年历史分位，样本不足 120 个交易日时显示「样本不足」；
++          股息率、风险溢价与 ROE 为百分数点；跟踪基金规模按最新交易日 aum
++          换算为亿元。缺失值显示「—」，不以 0 代替。本页仅供研究，不构成投资建议。
++        </p>
++      </div>
++    </div>
++  );
++}
+diff --git a/web/app/valuation/[code]/ValuationDetailSkeleton.tsx b/web/app/valuation/[code]/ValuationDetailSkeleton.tsx
+new file mode 100644
+index 0000000..23c16fb
+--- /dev/null
++++ b/web/app/valuation/[code]/ValuationDetailSkeleton.tsx
+@@ -0,0 +1,42 @@
++/**
++ * `/valuation/[code]` 的 Suspense 骨架屏。
++ *
++ * 结构与详情页首屏（页头 + Tab 栏 + 左图右栏）一一对应，避免数据到达时布局跳动。
++ * 仅使用语义 token，不引入图表库。
++ */
++export function ValuationDetailSkeleton() {
++  return (
++    <div
++      className="min-h-screen bg-background text-foreground"
++      role="status"
++      aria-live="polite"
++    >
++      <span className="sr-only">正在加载指数估值详情</span>
++
++      <div className="border-b border-border/60 bg-card/30">
++        <div className="mx-auto w-full max-w-[1240px] px-4 py-7 sm:px-6 sm:py-8">
++          <div className="h-3.5 w-28 animate-pulse rounded bg-muted" />
++          <div className="mt-4 flex flex-wrap gap-2">
++            <div className="h-5 w-16 animate-pulse rounded-full bg-muted" />
++            <div className="h-5 w-20 animate-pulse rounded-full bg-muted" />
++            <div className="h-5 w-14 animate-pulse rounded-full bg-muted" />
++          </div>
++          <div className="mt-4 h-8 w-56 animate-pulse rounded bg-muted" />
++          <div className="mt-3 h-4 w-full max-w-xl animate-pulse rounded bg-muted" />
++        </div>
++      </div>
++
++      <div className="mx-auto w-full max-w-[1240px] px-4 py-6 sm:px-6 sm:py-8">
++        <div className="h-10 w-full max-w-sm animate-pulse rounded-md bg-muted" />
++
++        <div className="mt-6 grid grid-cols-1 gap-6 min-[1100px]:grid-cols-[minmax(0,1fr)_360px]">
++          <div className="h-[480px] animate-pulse rounded-xl border border-border bg-card" />
++          <div className="space-y-6">
++            <div className="h-[248px] animate-pulse rounded-xl border border-border bg-card" />
++            <div className="h-[280px] animate-pulse rounded-xl border border-border bg-card" />
++          </div>
++        </div>
++      </div>
++    </div>
++  );
++}
+diff --git a/web/app/valuation/[code]/page.tsx b/web/app/valuation/[code]/page.tsx
+new file mode 100644
+index 0000000..a7c6882
+--- /dev/null
++++ b/web/app/valuation/[code]/page.tsx
+@@ -0,0 +1,117 @@
++import type { Metadata } from "next";
++import { Suspense } from "react";
++import { connection } from "next/server";
++import {
++  findPercentile,
++  mapValuationDetail,
++  mapValuationHistory,
++} from "@/lib/valuation-detail-api-map";
++import {
++  getCachedValuationDetail,
++  getCachedValuationHistory,
++} from "@/lib/valuation-detail-data";
++import type {
++  ValuationDetailData,
++  ValuationHistoryData,
++} from "@/lib/valuation-detail-types";
++import { ValuationDetailClient } from "./ValuationDetailClient";
++import { ValuationDetailSkeleton } from "./ValuationDetailSkeleton";
++
++interface ValuationDetailPageProps {
++  params: Promise<{ code: string }>;
++}
++
++/** 动态 metadata：指数名 + PE + PE 分位；后端不可用时回退通用标题。 */
++export async function generateMetadata({
++  params,
++}: ValuationDetailPageProps): Promise<Metadata> {
++  const { code } = await params;
++
++  try {
++    const response = await getCachedValuationDetail(code);
++    const detail = mapValuationDetail(response.data);
++    if (!detail) throw new Error("invalid valuation detail payload");
++
++    const stats = findPercentile(detail.percentiles, "pe_ttm");
++    const peText =
++      detail.pe_ttm != null ? `PE ${detail.pe_ttm.toFixed(2)}` : "PE —";
++    const pctText =
++      stats?.pct != null && stats.sample_size >= 120
++        ? `PE 分位 ${stats.pct.toFixed(2)}%`
++        : "PE 分位样本不足";
++    const title = `${detail.name}（${detail.index_code}）估值 — ${peText} · ${pctText}`;
++    const description = `${detail.name} 指数估值详情：PE/PB、股息率、风险溢价与近 5 年历史分位。${peText}，${pctText}。数据截至 ${detail.trade_date ?? "—"}。`;
++    const canonical = `/valuation/${encodeURIComponent(detail.index_code)}`;
++
++    return {
++      title,
++      description,
++      alternates: { canonical },
++      openGraph: {
++        title: `${title} | Balanced Portfolio`,
++        description,
++        url: canonical,
++        type: "article",
++      },
++    };
++  } catch {
++    const canonical = `/valuation/${encodeURIComponent(code)}`;
++    return {
++      title: `指数估值详情（${code}）`,
++      description: `指数 ${code} 的 PE/PB、股息率与历史分位详情。`,
++      alternates: { canonical },
++      openGraph: {
++        title: "指数估值详情 | Balanced Portfolio",
++        description: `指数 ${code} 的 PE/PB、股息率与历史分位详情。`,
++        url: canonical,
++        type: "article",
++      },
++    };
++  }
++}
++
++/** 数据层：显式请求期取数；任一接口失败时交给客户端展示错误态/空态。 */
++async function ValuationDetailData({ code }: { code: string }) {
++  // PPR：显式声明请求期数据，避免构建期预渲染去连后端。
++  await connection();
++
++  let detail: ValuationDetailData | null = null;
++  let history: ValuationHistoryData | null = null;
++
++  try {
++    const [detailResult, historyResult] = await Promise.allSettled([
++      getCachedValuationDetail(code),
++      getCachedValuationHistory(code),
++    ]);
++
++    if (detailResult.status === "fulfilled") {
++      detail = mapValuationDetail(detailResult.value.data);
++    } else {
++      console.error("valuation detail SSR fetch failed:", detailResult.reason);
++    }
++
++    if (historyResult.status === "fulfilled") {
++      history = mapValuationHistory(historyResult.value.data);
++    } else {
++      console.error("valuation history SSR fetch failed:", historyResult.reason);
++    }
++  } catch (error) {
++    console.error("valuation detail SSR failed:", error);
++  }
++
++  return (
++    <ValuationDetailClient code={code} detail={detail} history={history} />
++  );
++}
++
++export default async function ValuationDetailPage({
++  params,
++}: ValuationDetailPageProps) {
++  const { code } = await params;
++
++  return (
++    <Suspense fallback={<ValuationDetailSkeleton />}>
++      <ValuationDetailData code={code} />
++    </Suspense>
++  );
++}
+diff --git a/web/lib/valuation-detail-api-map.ts b/web/lib/valuation-detail-api-map.ts
+new file mode 100644
+index 0000000..3d632ed
+--- /dev/null
++++ b/web/lib/valuation-detail-api-map.ts
+@@ -0,0 +1,205 @@
++/**
++ * 后端 `/api/valuation/{code}` 与 `/history` 响应 -> 详情页类型。
++ *
++ * 与 `valuation-api-map.ts` 同一定位：字段口径在这里收口，组件只消费映射后的
++ * 驼峰/语义化结构。所有数值走 `num()`，兼容 DB 原生 Decimal/字符串；NaN/Inf 一律
++ * 归一为 null，展示层显示「—」。
++ */
++
++import type { IndexCategory, ValuationLevel } from "./valuation-types";
++import type {
++  DetailConstituent,
++  DetailPercentile,
++  DetailTrackerFund,
++  PercentileSummary,
++  ValuationDetailData,
++  ValuationHistoryData,
++  ValuationHistoryPoint,
++} from "./valuation-detail-types";
++
++const CATEGORIES: ReadonlySet<string> = new Set(["宽基", "行业", "主题", "策略", "其他"]);
++const LEVELS: ReadonlySet<string> = new Set(["低估", "中性", "高估"]);
++
++function num(value: unknown): number | null {
++  if (typeof value === "number" && Number.isFinite(value)) return value;
++  if (
++    typeof value === "string" &&
++    value.trim() !== "" &&
++    Number.isFinite(Number(value))
++  ) {
++    return Number(value);
++  }
++  return null;
++}
++
++function str(value: unknown): string | null {
++  return typeof value === "string" && value !== "" ? value : null;
++}
++
++/** 只保留日期部分，避免后端返回 datetime 时把时间串进页面。 */
++function dateStr(value: unknown): string | null {
++  const text = str(value);
++  return text ? text.slice(0, 10) : null;
++}
++
++function asCategory(value: unknown): IndexCategory {
++  const text = typeof value === "string" ? value : "";
++  return (CATEGORIES.has(text) ? text : "其他") as IndexCategory;
++}
++
++function asLevel(value: unknown): ValuationLevel | null {
++  const text = typeof value === "string" ? value : "";
++  return (LEVELS.has(text) ? text : null) as ValuationLevel | null;
++}
++
++function mapConstituent(raw: unknown): DetailConstituent | null {
++  if (!raw || typeof raw !== "object") return null;
++  const item = raw as Record<string, unknown>;
++  const stockCode = str(item.stock_code);
++  if (!stockCode) return null;
++  return {
++    stock_code: stockCode,
++    name: str(item.name) ?? stockCode,
++    industry_l1: str(item.industry_l1),
++    weight: num(item.weight),
++    rank: num(item.rank),
++    effective_date: dateStr(item.effective_date),
++  };
++}
++
++function mapTrackerFund(raw: unknown): DetailTrackerFund | null {
++  if (!raw || typeof raw !== "object") return null;
++  const item = raw as Record<string, unknown>;
++  const fundCode = str(item.fund_code);
++  if (!fundCode) return null;
++  return {
++    fund_code: fundCode,
++    name: str(item.name) ?? fundCode,
++    company_name: str(item.company_name),
++    risk_grade: str(item.risk_grade),
++    aum: num(item.aum),
++    trade_date: dateStr(item.trade_date),
++  };
++}
++
++/**
++ * 分位统计映射。
++ *
++ * history 的 `stats` 直接来自 `bp_index_percentile` 行，DB 列名是 `min_value` /
++ * `max_value`，而契约文档写的是 `min` / `max`；这里两者都兼容。
++ */
++export function mapPercentileSummary(raw: unknown): PercentileSummary | null {
++  if (!raw || typeof raw !== "object") return null;
++  const item = raw as Record<string, unknown>;
++  return {
++    pct: num(item.pct),
++    mean: num(item.mean),
++    sd: num(item.sd),
++    p20: num(item.p20),
++    p50: num(item.p50),
++    p80: num(item.p80),
++    min: num(item.min) ?? num(item.min_value),
++    max: num(item.max) ?? num(item.max_value),
++    sample_size: Math.max(0, Math.trunc(num(item.sample_size) ?? 0)),
++    reason: str(item.reason),
++  };
++}
++
++function mapDetailPercentile(raw: unknown): DetailPercentile | null {
++  if (!raw || typeof raw !== "object") return null;
++  const item = raw as Record<string, unknown>;
++  const summary = mapPercentileSummary(item);
++  const metric = str(item.metric);
++  if (!summary || !metric) return null;
++  return {
++    ...summary,
++    metric,
++    window_key: str(item.window_key) ?? "",
++  };
++}
++
++/** 详情响应 `data` -> `ValuationDetailData`；缺少指数代码时返回 null（按错误态处理）。 */
++export function mapValuationDetail(
++  raw: Record<string, unknown> | null | undefined,
++): ValuationDetailData | null {
++  if (!raw || typeof raw !== "object") return null;
++  const code = str(raw.index_code);
++  if (!code) return null;
++
++  const constituents = Array.isArray(raw.constituents)
++    ? raw.constituents
++        .map(mapConstituent)
++        .filter((item): item is DetailConstituent => item !== null)
++    : [];
++  const trackerFunds = Array.isArray(raw.tracker_funds)
++    ? raw.tracker_funds
++        .map(mapTrackerFund)
++        .filter((item): item is DetailTrackerFund => item !== null)
++    : [];
++  const percentiles = Array.isArray(raw.percentiles)
++    ? raw.percentiles
++        .map(mapDetailPercentile)
++        .filter((item): item is DetailPercentile => item !== null)
++    : [];
++
++  return {
++    index_code: code,
++    name: str(raw.name) ?? code,
++    market: str(raw.market),
++    index_type: asCategory(raw.index_type),
++    publisher: str(raw.publisher),
++    base_date: dateStr(raw.base_date),
++    base_point: num(raw.base_point),
++    income_method: str(raw.income_method),
++    intro: str(raw.intro),
++    trade_date: dateStr(raw.trade_date),
++    pe_ttm: num(raw.pe_ttm),
++    pb: num(raw.pb),
++    dividend_yield_ttm: num(raw.dividend_yield_ttm),
++    erp: num(raw.erp),
++    roe_ttm: num(raw.roe_ttm),
++    bond10y: num(raw.bond10y),
++    level_pe: asLevel(raw.level_pe),
++    level_pb: asLevel(raw.level_pb),
++    level_dividend: asLevel(raw.level_dividend),
++    constituents,
++    tracker_funds: trackerFunds,
++    percentiles,
++  };
++}
++
++function mapHistoryPoint(raw: unknown): ValuationHistoryPoint | null {
++  if (!raw || typeof raw !== "object") return null;
++  const item = raw as Record<string, unknown>;
++  const date = dateStr(item.trade_date);
++  const value = num(item.value);
++  if (!date || value == null) return null;
++  return { trade_date: date, value };
++}
++
++/** history 响应 `data` -> `ValuationHistoryData`；按日期升序。 */
++export function mapValuationHistory(
++  raw: Record<string, unknown> | null | undefined,
++): ValuationHistoryData {
++  const item = raw && typeof raw === "object" ? raw : {};
++  const series = Array.isArray(item.series)
++    ? item.series
++        .map(mapHistoryPoint)
++        .filter((point): point is ValuationHistoryPoint => point !== null)
++    : [];
++  series.sort((a, b) => a.trade_date.localeCompare(b.trade_date));
++  return { series, stats: mapPercentileSummary(item.stats) };
++}
++
++/** 从详情 `percentiles[]` 精确取某个 metric + window 的统计。 */
++export function findPercentile(
++  percentiles: readonly DetailPercentile[],
++  metric: string,
++  windowKey = "5y",
++): DetailPercentile | null {
++  return (
++    percentiles.find(
++      (item) => item.metric === metric && item.window_key === windowKey,
++    ) ?? null
++  );
++}
+diff --git a/web/lib/valuation-detail-data.ts b/web/lib/valuation-detail-data.ts
+new file mode 100644
+index 0000000..456d405
+--- /dev/null
++++ b/web/lib/valuation-detail-data.ts
+@@ -0,0 +1,53 @@
++/**
++ * `/valuation/[code]` 的服务端数据层。
++ *
++ * 与 `cached-data.ts` 同一形态：`"use cache"` + `cacheLife("hours")` +
++ * `cacheTag("valuation")`。后端重算落库后可通过 `POST /api/revalidate/valuation`
++ * 失效同一个 tag；失败时 throw（不缓存 null），由页面 catch 后展示错误态。
++ *
++ * 请求路径只读后端预计算表，不在 Next 侧做任何计算。
++ */
++
++import { cacheLife, cacheTag } from "next/cache";
++import { apiBase } from "./session-server";
++
++/** 后端统一响应信封。 */
++export interface ValuationEnvelope {
++  data: Record<string, unknown>;
++  meta: Record<string, unknown>;
++}
++
++async function serverFetch<T>(path: string): Promise<T> {
++  const res = await fetch(`${apiBase()}${path}`);
++  if (!res.ok) {
++    throw new Error(`API ${path}: ${res.status}`);
++  }
++  return res.json() as Promise<T>;
++}
++
++/** 指数详情（画像 + 最新估值 + 分位 + 成分 + 跟踪基金）。 */
++export async function getCachedValuationDetail(
++  code: string,
++): Promise<ValuationEnvelope> {
++  "use cache";
++  cacheLife("hours");
++  cacheTag("valuation");
++  return await serverFetch<ValuationEnvelope>(
++    `/api/valuation/${encodeURIComponent(code)}`,
++  );
++}
++
++/** 估值历史序列 + 区间统计。 */
++export async function getCachedValuationHistory(
++  code: string,
++  metric = "pe_ttm",
++  windowKey = "5y",
++): Promise<ValuationEnvelope> {
++  "use cache";
++  cacheLife("hours");
++  cacheTag("valuation");
++  const params = new URLSearchParams({ metric, window: windowKey });
++  return await serverFetch<ValuationEnvelope>(
++    `/api/valuation/${encodeURIComponent(code)}/history?${params.toString()}`,
++  );
++}
+diff --git a/web/lib/valuation-detail-format.ts b/web/lib/valuation-detail-format.ts
+new file mode 100644
+index 0000000..9ebcc85
+--- /dev/null
++++ b/web/lib/valuation-detail-format.ts
+@@ -0,0 +1,78 @@
++/**
++ * `/valuation/[code]` 的展示格式化与语气色。
++ *
++ * 基础数字/百分比格式化复用 `valuation-mock.ts`（全站唯一入口），这里只补充
++ * 详情页特有的「亿元」「0~100 分位」「样本是否可用」三类逻辑。
++ */
++
++import type { PercentileSummary } from "./valuation-detail-types";
++import {
++  EMPTY_DISPLAY,
++  formatNumber,
++  formatPlainPct,
++  formatSignedPct,
++} from "./valuation-mock";
++
++export { EMPTY_DISPLAY, formatNumber, formatPlainPct, formatSignedPct };
++
++/** 后端分位样本门槛：有效样本 <120 时不输出 pct。 */
++export const MIN_PERCENTILE_SAMPLE = 120;
++
++/** 元 -> 亿元，保留 2 位小数；缺失显示「—」。 */
++export function formatAumYi(value: number | null | undefined): string {
++  if (value == null || !Number.isFinite(value)) return EMPTY_DISPLAY;
++  return (value / 1e8).toLocaleString("zh-CN", {
++    minimumFractionDigits: 2,
++    maximumFractionDigits: 2,
++  });
++}
++
++/** 0~100 分位 -> 百分比文本（与 DB/API 同口径，不再 ×100）。 */
++export function formatPercentileValue(
++  value: number | null | undefined,
++  digits = 2,
++): string {
++  if (value == null || !Number.isFinite(value)) return EMPTY_DISPLAY;
++  return `${value.toFixed(digits)}%`;
++}
++
++/**
++ * 分位语气色：低分位=便宜=success，中间=warning，高分位=高估=destructive。
++ * 入参为 0~100（API 口径），与涨跌色 text-up/text-down 解耦。
++ */
++export function percentileTone(value: number | null | undefined): string {
++  if (value == null || !Number.isFinite(value)) return "text-muted-foreground";
++  if (value <= 30) return "text-success";
++  if (value >= 70) return "text-destructive";
++  return "text-warning";
++}
++
++/** 分位 -> 「低估 / 中性 / 高估」；样本不足返回 null。 */
++export function percentileLabel(
++  value: number | null | undefined,
++): "低估" | "中性" | "高估" | null {
++  if (value == null || !Number.isFinite(value)) return null;
++  if (value <= 30) return "低估";
++  if (value >= 70) return "高估";
++  return "中性";
++}
++
++/** 分位统计是否可用（pct 非空且样本 ≥120）。 */
++export function hasUsablePercentile(
++  stats: PercentileSummary | null | undefined,
++): stats is PercentileSummary & { pct: number } {
++  return Boolean(
++    stats &&
++      stats.pct != null &&
++      Number.isFinite(stats.pct) &&
++      stats.sample_size >= MIN_PERCENTILE_SAMPLE,
++  );
++}
++
++/** 分位不可用时的说明文案。 */
++export function percentileUnavailableText(
++  stats: PercentileSummary | null | undefined,
++): string {
++  if (!stats) return "暂无分位统计";
++  return `样本不足（${formatNumber(stats.sample_size, 0)} < ${MIN_PERCENTILE_SAMPLE}）`;
++}
+diff --git a/web/lib/valuation-detail-types.ts b/web/lib/valuation-detail-types.ts
+new file mode 100644
+index 0000000..493eb5e
+--- /dev/null
++++ b/web/lib/valuation-detail-types.ts
+@@ -0,0 +1,100 @@
++/**
++ * `/valuation/[code]` 指数详情页的前端类型。
++ *
++ * 单位约定沿用 `valuation-types.ts`：
++ * - `pct` 为 0~100 百分数（与 DB/API 一致），展示层直接加 `%`。
++ * - 股息率 / 风险溢价 / ROE 为「百分数点」，展示层不再 ×100。
++ * - 成分股权重 `weight` 为 0~100 百分数点。
++ * - 跟踪基金 `aum` 为元；展示层统一除以 1e8 转「亿元」。
++ * - `null` 表示缺失或样本不足（<120），不得用 0 填充。
++ */
++
++import type { IndexCategory, ValuationLevel } from "./valuation-types";
++
++/** 最新生效日的成分股。 */
++export interface DetailConstituent {
++  stock_code: string;
++  name: string;
++  industry_l1: string | null;
++  /** 权重（百分数点，0~100）。 */
++  weight: number | null;
++  rank: number | null;
++  effective_date: string | null;
++}
++
++/** 最新交易日的跟踪基金。 */
++export interface DetailTrackerFund {
++  fund_code: string;
++  name: string;
++  company_name: string | null;
++  risk_grade: string | null;
++  /** 规模（元）；展示层除以 1e8 转亿元。 */
++  aum: number | null;
++  trade_date: string | null;
++}
++
++/** 分位窗口统计（详情 `percentiles[]` 与 history `stats` 共用）。 */
++export interface PercentileSummary {
++  /** 当前值在窗口内的分位，0~100；样本不足时为 null。 */
++  pct: number | null;
++  mean: number | null;
++  sd: number | null;
++  p20: number | null;
++  p50: number | null;
++  p80: number | null;
++  min: number | null;
++  max: number | null;
++  /** 有效样本数（不含 null）。 */
++  sample_size: number;
++  /** 后端样本不足时给 `insufficient_sample`。 */
++  reason?: string | null;
++}
++
++/** 详情接口 `percentiles` 数组的一行。 */
++export interface DetailPercentile extends PercentileSummary {
++  metric: string;
++  window_key: string;
++}
++
++/** 详情接口映射后的完整快照。 */
++export interface ValuationDetailData {
++  index_code: string;
++  name: string;
++  market: string | null;
++  index_type: IndexCategory;
++  publisher: string | null;
++  base_date: string | null;
++  base_point: number | null;
++  income_method: string | null;
++  intro: string | null;
++  trade_date: string | null;
++  pe_ttm: number | null;
++  pb: number | null;
++  /** 股息率 TTM（百分数点）。 */
++  dividend_yield_ttm: number | null;
++  /** 风险溢价（百分数点）。 */
++  erp: number | null;
++  /** ROE TTM（百分数点）。 */
++  roe_ttm: number | null;
++  /** 十年期国债到期收益率（百分数点）。 */
++  bond10y: number | null;
++  level_pe: ValuationLevel | null;
++  level_pb: ValuationLevel | null;
++  level_dividend: ValuationLevel | null;
++  constituents: DetailConstituent[];
++  tracker_funds: DetailTrackerFund[];
++  percentiles: DetailPercentile[];
++}
++
++/** history 接口的一个序列点。 */
++export interface ValuationHistoryPoint {
++  trade_date: string;
++  /** 指标值（PE/PB 为倍数，股息率/ERP 为百分数点）。 */
++  value: number;
++}
++
++/** history 接口映射后的数据。 */
++export interface ValuationHistoryData {
++  series: ValuationHistoryPoint[];
++  stats: PercentileSummary | null;
++}

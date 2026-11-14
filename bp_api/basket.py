@@ -11,7 +11,6 @@ main.py 的路由注册由主控完成，本模块只提供 `register_routes(app
 
 from __future__ import annotations
 
-import logging
 import math
 from datetime import date
 from typing import Optional
@@ -25,8 +24,6 @@ from .quant.basket import METHODS, optimize, run_basket_backtest, summarize_retu
 from .repositories import _json_safe
 from .schemas import BasketBacktestIn, BasketOptimizeIn
 from .settings import load_settings
-
-logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
