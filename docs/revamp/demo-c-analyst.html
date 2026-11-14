@@ -1,0 +1,107 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Demo C · 分析师详情页</title><style>
+:root{--bg:#fbfaf7;--fg:#1c1917;--mut:#78716c;--line:#e7e2d9;--panel:#fff;--acc:#0f766e;--up:#15803d;--down:#b91c1c}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.55 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:1280px;margin:0 auto;padding:24px 30px}
+.top{display:flex;align-items:center;gap:18px;padding-bottom:14px;border-bottom:1px solid var(--line);color:var(--mut);font-size:13px}
+.brand{font-weight:700;color:var(--fg);letter-spacing:-.01em}
+.crumb{margin-left:auto;font-size:12px}
+.title{display:flex;align-items:flex-end;gap:14px;margin:22px 0 4px}
+h1{font:600 34px/1.15 Georgia,"Songti SC",serif;margin:0;letter-spacing:-.01em}
+.code{color:var(--mut);font-size:14px;padding-bottom:5px}
+.sub{color:var(--mut);font-size:12.5px;display:flex;gap:12px;align-items:center}
+.grid{display:grid;grid-template-columns:1.75fr 1fr;gap:16px;margin-top:18px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px}
+.panel h3{margin:0 0 2px;font:600 15px/1.3 Georgia,serif}
+.panel p{margin:0 0 14px;color:var(--mut);font-size:12px}
+.ctl{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.chip{border:1px solid var(--line);border-radius:8px;padding:4px 10px;font-size:12px;color:var(--mut);background:#fff}
+.chip.on{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-bottom:14px}
+.st{background:#fff;padding:12px 14px}
+.st .k{font-size:11px;color:var(--mut)}
+.st .v{font-size:22px;font-weight:650;margin-top:3px;font-variant-numeric:tabular-nums}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{text-align:right;color:var(--mut);font-weight:500;padding:7px 8px;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left}
+td{padding:8px;border-bottom:1px solid #f3efe7}
+.tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:5px;background:#f1f5f9;color:#475569;margin-right:4px}
+.disc{margin-top:10px;font-size:11.5px;color:#a8a29e}
+.intro p{margin:0 0 10px;font-size:13px;color:#44403c;line-height:1.75}
+.pill{font-size:11px;border:1px solid var(--line);border-radius:999px;padding:2px 9px;color:var(--mut)}
+</style></head><body>
+<div class="wrap">
+  <div class="top"><div class="brand">Balanced Portfolio</div><span>指数估值</span><span>风险平价</span><span>股指期货</span><span>加密合约</span><span class="crumb">指数估值 / 沪深300</span></div>
+
+  <div class="title"><h1>沪深300</h1><div class="code">000300 · 宽基 · 中证公司</div><span class="pill">ETF 26 只</span><span class="pill">成分 300</span></div>
+  <div class="sub">收盘 4,016.28 <span class="up">+0.42%</span> · 交易日期 2026-11-14 · 估值来源 平安 / 中证官网 · 成分披露 2026-11-13</div>
+
+  <div class="grid">
+    <div>
+      <div class="panel">
+        <h3>估值走势 · PE-Band</h3>
+        <p>虚线为所选统计口径的区间带；当前值以实心点标注</p>
+        <div class="ctl">
+          <span class="chip on">PE</span><span class="chip">PB</span><span class="chip">股息率</span><span class="chip">ERP</span><span class="chip">PCF（待接入）</span>
+          <span style="width:8px"></span>
+          <span class="chip on">分位带</span><span class="chip">标准差 1σ</span><span class="chip">2σ</span><span class="chip">3σ</span>
+          <span style="width:8px"></span>
+          <span class="chip">1Y</span><span class="chip">3Y</span><span class="chip on">5Y</span><span class="chip">10Y</span><span class="chip">全部</span>
+        </div>
+        <svg viewBox="0 0 700 250" width="100%" height="250">
+          <g stroke="#f0ece3"><line x1="0" y1="30" x2="700" y2="30"/><line x1="0" y1="80" x2="700" y2="80"/><line x1="0" y1="130" x2="700" y2="130"/><line x1="0" y1="180" x2="700" y2="180"/><line x1="0" y1="230" x2="700" y2="230"/></g>
+          <path d="M0,175 L40,168 L80,158 L120,170 L160,158 L200,144 L240,148 L280,134 L320,146 L360,158 L400,144 L440,130 L480,136 L520,118 L560,128 L600,106 L640,98 L680,84 L700,76" fill="none" stroke="#0f766e" stroke-width="2"/>
+          <path d="M0,90 L700,58" stroke="#a8a29e" stroke-dasharray="5 4"/><path d="M0,138 L700,116" stroke="#d97706" stroke-dasharray="5 4"/><path d="M0,192 L700,178" stroke="#a8a29e" stroke-dasharray="5 4"/>
+          <circle cx="700" cy="76" r="4" fill="#0f766e"/>
+        </svg>
+      </div>
+
+      <div class="panel" style="margin-top:16px">
+        <h3>成分股（最近披露 2026-11-13）</h3>
+        <p>来源：中证官网 closeweight · 权重合计 100%</p>
+        <table>
+          <thead><tr><th>代码</th><th>名称</th><th>行业</th><th>权重</th><th>PE</th><th>今日</th></tr></thead>
+          <tbody>
+            <tr><td>600519</td><td>贵州茅台</td><td><span class="tag">食品饮料</span></td><td>5.21%</td><td>21.4</td><td class="up">+0.8%</td></tr>
+            <tr><td>300750</td><td>宁德时代</td><td><span class="tag">电力设备</span></td><td>3.84%</td><td>24.7</td><td class="up">+1.2%</td></tr>
+            <tr><td>601318</td><td>中国平安</td><td><span class="tag">非银金融</span></td><td>3.12%</td><td>8.9</td><td class="down">-0.4%</td></tr>
+            <tr><td>600036</td><td>招商银行</td><td><span class="tag">银行</span></td><td>2.87%</td><td>6.1</td><td class="down">-0.2%</td></tr>
+            <tr><td>000858</td><td>五粮液</td><td><span class="tag">食品饮料</span></td><td>2.41%</td><td>18.3</td><td class="up">+0.5%</td></tr>
+          </tbody>
+        </table>
+        <div class="disc">每季度随指数调样更新；披露日期取官方权重文件日期，缺失时标注「—」。</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel intro">
+        <h3>指数简介</h3>
+        <p>沪深 300 指数由上海和深圳证券市场中市值大、流动性好的 300 只股票组成，综合反映中国 A 股市场上市股票价格的整体表现，是境内最主要的宽基基准。</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap"><span class="tag">宽基</span><span class="tag">成分 300</span><span class="tag">季度调样</span><span class="tag">CNY</span></div>
+      </div>
+
+      <div class="panel" style="margin-top:16px">
+        <h3>关键指标</h3>
+        <p>随上方筛选联动 · 5Y 分位</p>
+        <div class="stats">
+          <div class="st"><div class="k">PE · 5Y 分位</div><div class="v">74.6%</div></div>
+          <div class="st"><div class="k">PB · 5Y 分位</div><div class="v">61.2%</div></div>
+          <div class="st"><div class="k">股息率</div><div class="v">3.01%</div></div>
+          <div class="st"><div class="k">ERP</div><div class="v">2.41%</div></div>
+          <div class="st"><div class="k">年化波动</div><div class="v">18.4%</div></div>
+          <div class="st"><div class="k">最大回撤</div><div class="v">-32.8%</div></div>
+          <div class="st"><div class="k">10Y 年化</div><div class="v">6.8%</div></div>
+          <div class="st"><div class="k">ROE 隐含</div><div class="v">9.9%</div></div>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top:16px">
+        <h3>跟踪基金</h3>
+        <p>26 只 ETF / 联接基金 · 规模合计 4,218 亿</p>
+        <table><thead><tr><th>代码</th><th>名称</th><th>规模</th></tr></thead>
+        <tbody><tr><td>510300</td><td>华泰柏瑞沪深300ETF</td><td>1,842 亿</td></tr>
+        <tr><td>510330</td><td>华夏沪深300ETF</td><td>1,103 亿</td></tr>
+        <tr><td>159919</td><td>嘉实沪深300ETF</td><td>742 亿</td></tr></tbody></table>
+      </div>
+    </div>
+  </div>
+</div></body></html>

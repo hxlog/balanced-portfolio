@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Demo A · 浅色分析师工作台</title><style>
+:root{--bg:#fff;--fg:#0d0f14;--mut:#6b7280;--line:#e8eaee;--soft:#f6f7f9;--acc:#4f46e5;--acc2:#0ea5e9;--up:#16a34a;--down:#dc2626}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,"SF Pro Text","Segoe UI",system-ui,"PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:1280px;margin:0 auto;padding:28px 32px}
+.top{display:flex;align-items:center;justify-content:space-between;padding-bottom:18px;border-bottom:1px solid var(--line)}
+.brand{display:flex;gap:10px;align-items:center;font-weight:600;letter-spacing:-.01em}
+.logo{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,#4f46e5,#0ea5e9)}
+nav{display:flex;gap:22px;color:var(--mut);font-size:13px}nav b{color:var(--fg);font-weight:600}
+h1{font-size:30px;line-height:1.2;letter-spacing:-.02em;margin:26px 0 6px;font-weight:650}
+.sub{color:var(--mut);font-size:13px;display:flex;gap:14px;align-items:center}
+.pill{border:1px solid var(--line);border-radius:999px;padding:2px 9px;font-size:11.5px;color:#374151;background:var(--soft)}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:20px 0}
+.card{border:1px solid var(--line);border-radius:14px;padding:16px 16px 14px;background:#fff}
+.card:hover{border-color:#d5d8de}
+.k{font-size:12px;color:var(--mut);display:flex;justify-content:space-between}
+.v{font-size:30px;font-weight:650;letter-spacing:-.02em;margin-top:6px;font-variant-numeric:tabular-nums}
+.pct{font-size:12px;color:var(--mut);margin-top:4px;display:flex;gap:8px;align-items:center}
+.badge{font-size:11px;border-radius:6px;padding:1px 6px;background:#eef2ff;color:#4338ca;font-weight:600}
+.chartbox{border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+.chartbox h3{margin:0 0 2px;font-size:14px;font-weight:600}
+.chartbox p{margin:0 0 12px;color:var(--mut);font-size:12px}
+.two{display:grid;grid-template-columns:1.55fr 1fr;gap:14px}
+.toolbar{display:flex;gap:8px;align-items:center;margin:18px 0 10px;flex-wrap:wrap}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.seg span{padding:5px 11px;font-size:12px;color:var(--mut);cursor:default}
+.seg span.on{background:var(--fg);color:#fff}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+th{text-align:right;font-size:11.5px;font-weight:500;color:var(--mut);padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+td{padding:10px;border-bottom:1px solid #f1f2f5;font-size:13px}
+tr:hover td{background:#fafbfc}
+.up{color:var(--up)}.down{color:var(--down)}
+.bar{position:relative;height:6px;border-radius:99px;background:#eef0f4;width:90px;margin-left:auto}
+.bar i{position:absolute;inset:0 auto 0 0;border-radius:99px;background:linear-gradient(90deg,#84cc16,#eab308,#f97316)}
+.pos{display:flex;gap:8px;align-items:center;justify-content:flex-end}
+.note{color:#9ca3af;font-size:11.5px;margin-top:10px}
+</style></head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="brand"><div class="logo"></div>Balanced Portfolio</div>
+    <nav><b>指数估值</b><span>风险平价回测</span><span>股指期货</span><span>加密合约</span><span>方法论</span></nav>
+    <div style="display:flex;gap:8px;align-items:center;color:#6b7280;font-size:13px">⌕　◐　注册</div>
+  </div>
+
+  <h1>指数估值</h1>
+  <div class="sub">更新至 <b>2026-11-14</b> <span class="pill">521 只指数</span> <span class="pill">5 年分位</span></div>
+
+  <div class="grid4" id="boards"></div>
+
+  <div class="two">
+    <div class="chartbox">
+      <h3>沪深300 · PE-Band（10 年）</h3>
+      <p>当前 13.42x，位于 5 年 74.6% 分位 · 均值 12.6x</p>
+      <svg viewBox="0 0 720 220" width="100%" height="220">
+        <defs><linearGradient id="ga" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#4f46e5" stop-opacity=".18"/><stop offset="1" stop-color="#4f46e5" stop-opacity="0"/></linearGradient></defs>
+        <g stroke="#eef0f4"><line x1="0" y1="40" x2="720" y2="40"/><line x1="0" y1="90" x2="720" y2="90"/><line x1="0" y1="140" x2="720" y2="140"/><line x1="0" y1="190" x2="720" y2="190"/></g>
+        <path d="M0,150 L40,145 L80,138 L120,150 L160,140 L200,128 L240,132 L280,120 L320,132 L360,142 L400,130 L440,118 L480,124 L520,108 L560,116 L600,96 L640,88 L680,72 L720,64" fill="none" stroke="#4f46e5" stroke-width="2"/>
+        <path d="M0,150 L40,145 L80,138 L120,150 L160,140 L200,128 L240,132 L280,120 L320,132 L360,142 L400,130 L440,118 L480,124 L520,108 L560,116 L600,96 L640,88 L680,72 L720,64 L720,220 L0,220 Z" fill="url(#ga)"/>
+        <path d="M0,70 L720,42" stroke="#94a3b8" stroke-dasharray="4 4"/><path d="M0,118 L720,100" stroke="#eab308" stroke-dasharray="4 4"/><path d="M0,170 L720,158" stroke="#94a3b8" stroke-dasharray="4 4"/>
+        <text x="4" y="62" font-size="10" fill="#94a3b8">+2σ</text><text x="4" y="112" font-size="10" fill="#eab308">+1σ</text><text x="4" y="165" font-size="10" fill="#94a3b8">-1σ</text>
+      </svg>
+    </div>
+    <div class="chartbox">
+      <h3>板块估值热力</h3>
+      <p>PE 分位 · 鼠标悬停看明细</p>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+        <div style="grid-column:span 2;border-radius:10px;background:#fee2e2;padding:14px"><div style="font-size:12px;color:#991b1b">金融</div><div style="font-size:24px;font-weight:650;color:#7f1d1d">87%</div></div>
+        <div style="grid-column:span 2;border-radius:10px;background:#dcfce7;padding:14px"><div style="font-size:12px;color:#166534">医药</div><div style="font-size:24px;font-weight:650;color:#14532d">9%</div></div>
+        <div style="border-radius:10px;background:#fef3c7;padding:12px"><div style="font-size:11px;color:#92400e">消费</div><div style="font-size:20px;font-weight:650;color:#78350f">62%</div></div>
+        <div style="border-radius:10px;background:#e0f2fe;padding:12px"><div style="font-size:11px;color:#075985">科技</div><div style="font-size:20px;font-weight:650;color:#0c4a6e">34%</div></div>
+        <div style="border-radius:10px;background:#ecfccb;padding:12px"><div style="font-size:11px;color:#3f6212">红利</div><div style="font-size:20px;font-weight:650;color:#365314">98%</div></div>
+        <div style="border-radius:10px;background:#f1f5f9;padding:12px"><div style="font-size:11px;color:#334155">制造</div><div style="font-size:20px;font-weight:650;color:#1e293b">47%</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <div class="seg"><span class="on">PE 分位</span><span>PB 分位</span><span>股息率</span></div>
+    <div class="seg"><span>1 年</span><span>3 年</span><span class="on">5 年</span><span>10 年</span></div>
+    <div class="seg"><span class="on">全部</span><span>宽基</span><span>行业</span><span>策略</span></div>
+    <div style="margin-left:auto;color:#6b7280;font-size:12px">⌕ 搜索指数 / 代码　·　列设置</div>
+  </div>
+
+  <table id="tbl">
+    <thead><tr><th>指数</th><th>收盘</th><th>今日</th><th>52 周</th><th>PE</th><th>5Y 分位</th><th>PB</th><th>5Y 分位</th><th>股息率</th><th>52 周位置</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="note">历史分位基于 2021-11 至今的估值序列；样本不足时显示「—」并标注数据积累进度，不再出现虚假 50%。</div>
+</div>
+<script>
+const rows = [
+      {name:'上证50', code:'000016', pe:11.71, pep:93.3, pb:1.23, pbp:88.1, dy:3.53, chg:-0.51, w52:-8.4, pos:12},
+      {name:'沪深300', code:'000300', pe:13.42, pep:74.6, pb:1.33, pbp:61.2, dy:3.01, chg:-0.98, w52:-14.6, pos:3},
+      {name:'中证500', code:'000905', pe:27.43, pep:59.0, pb:1.86, pbp:57.8, dy:1.47, chg:-2.10, w52:-12.1, pos:21},
+      {name:'中证1000', code:'000852', pe:38.11, pep:57.4, pb:2.44, pbp:28.5, dy:1.18, chg:-2.76, w52:-16.3, pos:15},
+      {name:'创业板指', code:'399006', pe:27.51, pep:41.5, pb:4.46, pbp:43.9, dy:1.19, chg:-3.32, w52:-24.2, pos:9},
+      {name:'科创50', code:'000688', pe:62.30, pep:6.1, pb:6.06, pbp:12.4, dy:0.31, chg:-2.30, w52:-8.6, pos:4},
+      {name:'中证红利', code:'000922', pe:9.25, pep:98.7, pb:0.91, pbp:79.2, dy:4.42, chg:-1.43, w52:-1.2, pos:75},
+      {name:'中证A500', code:'000510', pe:15.51, pep:51.6, pb:1.50, pbp:44.3, dy:2.73, chg:-2.49, w52:-10.8, pos:3}
+    ];
+const boards = [
+  {n:'全市场', v:'18.62', pct:'68.3%', pb:'2.61', pbp:'38.1%', tag:'中证全指代理'},
+  {n:'主板', v:'34.65', pct:'56.7%', pb:'2.15', pbp:'16.4%', tag:'东财快照'},
+  {n:'创业板', v:'59.95', pct:'66.8%', pb:'3.14', pbp:'22.0%', tag:'东财快照'},
+  {n:'科创板', v:'70.22', pct:'—', pb:'3.54', pbp:'—', tag:'积累中 1/60 日'}
+];
+document.getElementById('boards').innerHTML = boards.map(b=>`
+  <div class="card"><div class="k"><span>${b.n} · 市盈率</span><span class="pill">${b.tag}</span></div>
+  <div class="v">${b.v}</div><div class="pct">分位 <b style="color:#111">${b.pct}</b> · 市净率 ${b.pb} <span class="badge">${b.pbp}</span></div></div>`).join('');
+document.querySelector('#tbl tbody').innerHTML = rows.map(r=>`
+  <tr><td><b>${r.name}</b> <span style="color:#9ca3af">${r.code}</span></td>
+  <td>${r.pe.toFixed(2)}</td><td class="${r.chg<0?'down':'up'}">${r.chg.toFixed(2)}%</td>
+  <td class="${r.w52<0?'down':'up'}">${r.w52.toFixed(1)}%</td>
+  <td>${r.pe.toFixed(2)}</td><td>${r.pep.toFixed(1)}%</td>
+  <td>${r.pb.toFixed(2)}</td><td>${r.pbp.toFixed(1)}%</td><td>${r.dy.toFixed(2)}%</td>
+  <td><div class="pos"><div class="bar"><i style="width:${r.pos}%"></i></div><span style="color:#6b7280;font-size:12px">${r.pos}%</span></div></td></tr>`).join('');
+</script></body></html>

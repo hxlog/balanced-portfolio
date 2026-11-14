@@ -1,0 +1,96 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Demo B · 深色终端</title><style>
+:root{--bg:#0b0e14;--panel:#11161f;--line:#1f2937;--fg:#e5e7eb;--mut:#8b95a5;--acc:#34d399;--acc2:#f59e0b;--up:#22c55e;--down:#ef4444}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.45 "JetBrains Mono",Consolas,"SF Mono",ui-monospace,Menlo,monospace}
+.wrap{padding:18px 24px}
+.bar{display:flex;align-items:center;gap:18px;border-bottom:1px solid var(--line);padding-bottom:12px}
+.brand{font-weight:700;letter-spacing:.08em;color:#fff;font-size:13px}
+.brand i{color:var(--acc)}
+nav{display:flex;gap:16px;color:var(--mut);font-size:12px}nav b{color:#fff}
+.right{margin-left:auto;color:var(--mut);font-size:12px}
+h1{font-size:15px;margin:18px 0 2px;letter-spacing:.1em;color:#fff}
+.meta{color:var(--mut);font-size:11px;letter-spacing:.04em}
+.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--line);margin:14px 0;border:1px solid var(--line)}
+.kpi{background:var(--panel);padding:12px 14px}
+.kpi .k{font-size:10.5px;color:var(--mut);letter-spacing:.08em;text-transform:uppercase}
+.kpi .v{font-size:24px;color:#fff;margin-top:5px}
+.kpi .s{font-size:10.5px;color:var(--acc);margin-top:2px}
+.grid{display:grid;grid-template-columns:2fr 1.05fr;gap:12px}
+.box{border:1px solid var(--line);background:var(--panel);padding:12px 14px}
+.box h3{margin:0 0 2px;font-size:12px;letter-spacing:.06em;color:#fff}
+.box p{margin:0 0 10px;font-size:10.5px;color:var(--mut)}
+.tbl{width:100%;border-collapse:collapse;font-size:11.5px}
+th{text-align:right;color:var(--mut);font-weight:400;padding:6px 8px;border-bottom:1px solid var(--line);letter-spacing:.03em}
+th:first-child,td:first-child{text-align:left}
+td{padding:6px 8px;border-bottom:1px solid #161c26;color:#d1d5db}
+.up{color:var(--up)}.down{color:var(--down)}
+.tabs{display:flex;gap:2px;margin:16px 0 8px}
+.tabs span{border:1px solid var(--line);background:#0f141d;color:var(--mut);padding:4px 10px;font-size:11px}
+.tabs span.on{background:var(--acc);color:#04120b;border-color:var(--acc);font-weight:700}
+.heat{display:grid;grid-template-columns:repeat(6,1fr);gap:2px;margin-top:8px}
+.h{padding:10px 8px;font-size:10.5px}
+.h b{display:block;font-size:16px;color:#fff;margin-top:3px}
+</style></head><body>
+<div class="wrap">
+  <div class="bar">
+    <div class="brand">BP<i>·</i>TERMINAL</div>
+    <nav><b>INDEX VALUATION</b><span>RISK PARITY</span><span>CFFEX</span><span>CRYPTO FUT</span><span>METHOD</span></nav>
+    <div class="right">2026-11-14 23:59 CST · 521 INDICES · 5Y WINDOW</div>
+  </div>
+
+  <h1>INDEX VALUATION DESK</h1>
+  <div class="meta">SOURCE: PINGAN + CSI + XUEQIU + EM   ·   PERCENTILE ENGINE v2   ·   NO MOCK DATA</div>
+
+  <div class="kpis">
+    <div class="kpi"><div class="k">ALL-A PE (PROXY)</div><div class="v">18.62</div><div class="s">68.3% 5Y</div></div>
+    <div class="kpi"><div class="k">ALL-A PB</div><div class="v">2.61</div><div class="s">38.1% 5Y</div></div>
+    <div class="kpi"><div class="k">HS300 PE</div><div class="v">13.42</div><div class="s">74.6% 5Y</div></div>
+    <div class="kpi"><div class="k">CSI500 PE</div><div class="v">27.43</div><div class="s">59.0% 5Y</div></div>
+    <div class="kpi"><div class="k">DIVIDEND</div><div class="v">3.01%</div><div class="s">HS300 · 5Y 82%</div></div>
+    <div class="kpi"><div class="k">ERP</div><div class="v">2.41%</div><div class="s">BOND 1.61%</div></div>
+  </div>
+
+  <div class="grid">
+    <div class="box">
+      <h3>PE BAND · HS300 · 5Y</h3><p>+2σ / +1σ / MEAN / -1σ / -2σ + CURRENT</p>
+      <svg viewBox="0 0 640 210" width="100%" height="210">
+        <g stroke="#1f2937"><line x1="0" y1="30" x2="640" y2="30"/><line x1="0" y1="70" x2="640" y2="70"/><line x1="0" y1="110" x2="640" y2="110"/><line x1="0" y1="150" x2="640" y2="150"/><line x1="0" y1="190" x2="640" y2="190"/></g>
+        <path d="M0,155 L40,150 L80,142 L120,152 L160,140 L200,126 L240,130 L280,116 L320,128 L360,140 L400,126 L440,112 L480,118 L520,100 L560,110 L600,88 L640,78" fill="none" stroke="#34d399" stroke-width="1.6"/>
+        <path d="M0,52 L640,34" stroke="#ef4444" stroke-dasharray="3 3" stroke-width="1"/>
+        <path d="M0,88 L640,72" stroke="#f59e0b" stroke-dasharray="3 3" stroke-width="1"/>
+        <path d="M0,120 L640,108" stroke="#8b95a5" stroke-dasharray="3 3" stroke-width="1"/>
+        <path d="M0,168 L640,158" stroke="#8b95a5" stroke-dasharray="3 3" stroke-width="1"/>
+        <circle cx="640" cy="78" r="3.5" fill="#34d399"/>
+      </svg>
+    </div>
+    <div class="box">
+      <h3>VALUATION HEATMAP</h3><p>PE PERCENTILE BY SECTOR</p>
+      <div class="heat">
+        <div class="h" style="background:#3f1d1d">金融<b>87%</b></div>
+        <div class="h" style="background:#16351f">医药<b>9%</b></div>
+        <div class="h" style="background:#3a2f10">消费<b>62%</b></div>
+        <div class="h" style="background:#132b3a">科技<b>34%</b></div>
+        <div class="h" style="background:#23330f">红利<b>98%</b></div>
+        <div class="h" style="background:#1b2431">制造<b>47%</b></div>
+        <div class="h" style="background:#132b3a">军工<b>28%</b></div>
+        <div class="h" style="background:#3a2f10">地产<b>55%</b></div>
+        <div class="h" style="background:#16351f">银行<b>12%</b></div>
+        <div class="h" style="background:#1b2431">有色<b>44%</b></div>
+        <div class="h" style="background:#3f1d1d">电子<b>81%</b></div>
+        <div class="h" style="background:#23330f">煤炭<b>91%</b></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tabs"><span class="on">PE Pct</span><span>PB Pct</span><span>Div Yield</span><span>ERP</span><span>1Y</span><span>3Y</span><span class="on">5Y</span><span>10Y</span></div>
+
+  <div class="box">
+    <table class="tbl">
+      <thead><tr><th>INDEX</th><th>LAST</th><th>CHG%</th><th>52W%</th><th>PE</th><th>PE PCT</th><th>PB</th><th>PB PCT</th><th>DIV%</th><th>POS52</th></tr></thead>
+      <tbody id="tb"></tbody>
+    </table>
+  </div>
+</div>
+<script>
+const rows=[['上证50','000016',2775.02,0.11,-9.72,11.71,93.3,1.23,88.1,3.53,12],['沪深300','000300',4016.29,-0.68,-14.58,13.42,74.6,1.33,61.2,3.01,3],['中证500','000905',6465.48,-2.10,-12.10,27.43,59.0,1.86,57.8,1.47,21],['中证1000','000852',6357.26,-2.76,-16.25,38.11,57.4,2.44,28.5,1.18,15],['创业板指','399006',2426.08,-3.32,-24.23,44.81,41.5,4.46,43.9,1.19,9],['科创50','000688',1279.66,-2.30,-8.55,62.30,6.1,6.06,12.4,0.31,4],['中证红利','000922',0,0,-1.2,9.25,98.7,0.91,79.2,4.42,75],['中证A500','000510',0,-2.49,-10.8,15.51,51.6,1.50,44.3,2.73,3]];
+document.getElementById('tb').innerHTML=rows.map(r=>`<tr><td>${r[0]} <span style="color:#4b5563">${r[1]}</span></td><td>${r[2]?r[2].toFixed(2):'—'}</td><td class="${r[3]<0?'down':'up'}">${r[3]>0?'+':''}${r[3].toFixed(2)}%</td><td class="${r[4]<0?'down':'up'}">${r[4].toFixed(1)}%</td><td>${r[5].toFixed(2)}</td><td>${r[6].toFixed(1)}%</td><td>${r[7].toFixed(2)}</td><td>${r[8].toFixed(1)}%</td><td>${r[9].toFixed(2)}%</td><td>${r[10]}%</td></tr>`).join('');
+</script></body></html>
