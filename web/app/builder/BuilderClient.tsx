@@ -32,6 +32,8 @@ import { ConfirmRecomputeDialog } from "@/components/ConfirmRecomputeDialog";
 import { BacktestProgressDialog } from "@/components/BacktestProgressDialog";
 import { CreateAssetDialog } from "@/components/CreateAssetDialog";
 import { ChangeDiffDialog, type AssetDiff, type CoverageNotice, type DiffRow } from "@/components/ChangeDiffDialog";
+import { BasketBuilder } from "./BasketBuilder";
+import { ModeSwitch } from "./ModeSwitch";
 
 const QUADRANT_ORDER: Quadrant[] = ["overheat", "stagflation", "recovery", "recession"];
 const QUADRANT_COLOR: Record<Quadrant, string> = {
@@ -118,8 +120,22 @@ export default function BuilderClient({
 }) {
   return (
     <Suspense fallback={<div className="p-12 text-center text-muted-foreground">加载中...</div>}>
-      <BuilderKeyed initialAssets={initialAssets} />
+      <BuilderModeGate initialAssets={initialAssets} />
     </Suspense>
+  );
+}
+
+/**
+ * 顶层模式分流: `?mode=basket` 渲染独立的单层篮子构建器;
+ * 其余情况走原有四象限路径, 不改动其状态与提交逻辑。
+ */
+function BuilderModeGate({ initialAssets = [] }: { initialAssets?: Asset[] }) {
+  const searchParams = useSearchParams();
+  const isBasket = searchParams.get("mode") === "basket";
+  return isBasket ? (
+    <BasketBuilder initialAssets={initialAssets} />
+  ) : (
+    <BuilderKeyed initialAssets={initialAssets} />
   );
 }
 
@@ -542,6 +558,9 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
     <div className="flex-1 bg-bg-subtle/30 pb-20 sm:pb-24">
       <div className="bg-background border-b border-border py-3 md:py-6 lg:py-8 xl:py-10 px-4 sm:px-6 top-14 sm:top-16 z-40">
         <div className="max-w-5xl mx-auto">
+          <div className="mb-5 flex justify-center">
+            <ModeSwitch mode="quadrant" />
+          </div>
           <h1 className="text-2xl font-semibold mb-8 text-center">
             {isEditMode ? "编辑投资组合" : isCopyMode ? "复制投资组合" : "新增投资组合"}
           </h1>

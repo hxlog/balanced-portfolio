@@ -44,11 +44,15 @@ export function mapIndexRow(raw: Record<string, unknown>): IndexQuoteRow {
     name: String(raw.name ?? ""),
     category: asCategory(raw.index_type),
     publisher: str(raw.publisher),
+    market: str(raw.market),
     has_etf: Boolean(raw.has_etf),
     has_valuation: Boolean(raw.has_valuation),
     trade_date: String(raw.trade_date ?? ""),
     close: num(raw.close_price),
     change_pct: num(raw.change_pct),
+    // 后端当前只提供当日涨跌；若后续补充 7 日字段则优先使用，不改契约。
+    change_7d_pct:
+      num(raw.change_7d_pct) ?? num(raw.change_7d) ?? num(raw.change_7d_pct_5),
     change_52w_pct: null,
     distance_from_high_pct: null,
     pe_ttm: num(raw.pe_ttm),
@@ -57,6 +61,9 @@ export function mapIndexRow(raw: Record<string, unknown>): IndexQuoteRow {
     pb_percentile: num(raw.pb_percentile),
     dividend_yield_pct: num(raw.dividend_yield_ttm),
     risk_premium_pct: num(raw.erp),
+    level_pe: asLevel(raw.level_pe),
+    level_pb: asLevel(raw.level_pb),
+    level_dividend: asLevel(raw.level_dividend),
   };
 }
 

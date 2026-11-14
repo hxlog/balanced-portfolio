@@ -22,14 +22,29 @@ export const metadata: Metadata = {
 /** 骨架屏：SSR 首屏占位，数据流式到达后替换。 */
 function ValuationSkeleton() {
   return (
-    <div className="mx-auto max-w-[1240px] px-4 py-8 sm:px-6">
-      <div className="h-8 w-48 animate-pulse rounded bg-muted" />
-      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, index) => (
-          <div key={index} className="h-28 animate-pulse rounded-xl bg-muted" />
-        ))}
+    <div className="min-h-screen bg-background text-foreground" role="status">
+      <span className="sr-only">正在加载指数估值数据</span>
+      <div className="mx-auto w-full max-w-[1440px] px-4 pb-16 pt-7 sm:px-6 sm:pt-9 lg:px-8">
+        <div className="h-8 w-40 animate-pulse rounded bg-muted" />
+        <div className="mt-2 h-4 w-72 max-w-full animate-pulse rounded bg-muted" />
+        <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+          {Array.from({ length: 5 }).map((_, index) => (
+            <div
+              key={index}
+              className="h-[156px] animate-pulse rounded-xl border border-border bg-card"
+            />
+          ))}
+        </div>
+        <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
+          {Array.from({ length: 2 }).map((_, index) => (
+            <div
+              key={index}
+              className="h-[304px] animate-pulse rounded-xl border border-border bg-card"
+            />
+          ))}
+        </div>
+        <div className="mt-6 h-[520px] animate-pulse rounded-xl border border-border bg-card" />
       </div>
-      <div className="mt-6 h-64 animate-pulse rounded-xl bg-muted" />
     </div>
   );
 }
@@ -49,19 +64,19 @@ async function ValuationData() {
     const mapped = (indices.data ?? []).map(mapIndexRow).filter((row) => row.index_code);
     if (mapped.length > 0) {
       rows = mapped;
-      asOf = indices.meta?.as_of ? String(indices.meta.as_of) : undefined;
+      asOf = indices.meta?.as_of
+        ? String(indices.meta.as_of)
+        : mapped.find((row) => row.trade_date)?.trade_date || undefined;
       const mappedCards = (overview.data ?? []).map(mapMarketCard);
       if (mappedCards.length > 0) cards = mappedCards;
     }
   } catch {
     // 后端不可用/未落库时回退到示例数据，页面仍可访问。
   }
-  const broadRows = rows ? rows.filter((row) => row.category === "宽基").slice(0, 8) : undefined;
   return (
     <ValuationHome
       rows={rows}
       cards={cards}
-      broadRows={broadRows && broadRows.length > 0 ? broadRows : undefined}
       asOf={asOf}
       isLive={Boolean(rows)}
     />

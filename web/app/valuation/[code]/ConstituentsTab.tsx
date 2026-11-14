@@ -3,7 +3,6 @@
 import { useMemo } from "react";
 import { useTheme } from "next-themes";
 import { EChart } from "@/components/EChart";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getChartTheme, type ChartTheme } from "@/lib/chart-theme";
 import {
   EMPTY_DISPLAY,
@@ -14,15 +13,22 @@ import type {
   DetailConstituent,
   ValuationDetailData,
 } from "@/lib/valuation-detail-types";
+import {
+  ChartCard,
+  SectionHeading,
+  Surface,
+} from "../_components/valuation-ui";
 
-/** 前 8 大权重横向条形图（单系列；表格即其可访问数据视图）。 */
+const CHART_HEIGHT = 280;
+
+/** 前 12 大权重横向条形图（单系列；完整表格即其可访问数据视图）。 */
 function buildWeightBarOption(
   top: readonly DetailConstituent[],
   theme: ChartTheme,
 ): Record<string, unknown> {
   return {
     animation: false,
-    grid: { left: 8, right: 64, top: 8, bottom: 8, containLabel: true },
+    grid: { left: 4, right: 52, top: 4, bottom: 4, containLabel: true },
     tooltip: {
       trigger: "item",
       backgroundColor: theme.tooltipBg,
@@ -37,7 +43,7 @@ function buildWeightBarOption(
       type: "value",
       axisLine: { show: false },
       axisTick: { show: false },
-      axisLabel: { color: theme.subtext, formatter: "{value}%" },
+      axisLabel: { color: theme.subtext, fontSize: 9, formatter: "{value}%" },
       splitLine: { lineStyle: { color: theme.splitLine } },
     },
     yAxis: {
@@ -48,8 +54,8 @@ function buildWeightBarOption(
       axisTick: { show: false },
       axisLabel: {
         color: theme.text,
-        fontSize: 11,
-        width: 96,
+        fontSize: 10,
+        width: 84,
         overflow: "truncate",
       },
     },
@@ -58,7 +64,7 @@ function buildWeightBarOption(
         name: "权重",
         type: "bar",
         data: top.map((item) => item.weight),
-        barWidth: 12,
+        barWidth: 10,
         itemStyle: {
           color: theme.palette[0],
           borderRadius: [0, 4, 4, 0],
@@ -67,7 +73,7 @@ function buildWeightBarOption(
           show: true,
           position: "right",
           color: theme.subtext,
-          fontSize: 11,
+          fontSize: 9,
           formatter: (params: { value?: unknown }) =>
             typeof params.value === "number"
               ? `${params.value.toFixed(2)}%`
@@ -100,7 +106,7 @@ export function ConstituentsTab({ detail }: { detail: ValuationDetailData }) {
     [detail.constituents],
   );
   const top = useMemo(
-    () => ordered.filter((item) => item.weight != null).slice(0, 8),
+    () => ordered.filter((item) => item.weight != null).slice(0, 12),
     [ordered],
   );
   const chartOption = useMemo(
@@ -109,137 +115,103 @@ export function ConstituentsTab({ detail }: { detail: ValuationDetailData }) {
   );
   const effectiveDate = ordered[0]?.effective_date ?? null;
 
+  if (ordered.length === 0) {
+    return (
+      <Surface className="flex flex-col items-center justify-center px-6 py-14 text-center">
+        <p className="text-sm font-medium">暂无成分股数据</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          后端尚未落库该指数的最新成分股快照。
+        </p>
+      </Surface>
+    );
+  }
+
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader className="pb-2">
-          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-            <CardTitle className="text-base">前 8 大权重</CardTitle>
-            <span className="text-xs tabular-nums text-muted-foreground">
-              {effectiveDate ? `成分生效日 ${effectiveDate}` : "最新成分快照"}
-            </span>
+    <div className="space-y-4">
+      <ChartCard
+        title="前 12 大权重"
+        hint="按最新生效日权重排序"
+        aside={
+          <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+            {effectiveDate ?? "最新快照"}
+          </span>
+        }
+        bodyClassName="px-2 pb-2"
+      >
+        {top.length > 0 ? (
+          <EChart
+            option={chartOption}
+            style={{ height: CHART_HEIGHT, width: "100%" }}
+          />
+        ) : (
+          <div
+            className="flex items-center justify-center text-xs text-muted-foreground"
+            style={{ height: CHART_HEIGHT }}
+          >
+            暂无权重数据
           </div>
-          <p className="text-xs text-muted-foreground">
-            按最新生效日权重排序；权重单位为百分比。
-          </p>
-        </CardHeader>
-        <CardContent className="pt-2">
-          {top.length > 0 ? (
-            <EChart
-              option={chartOption}
-              style={{
-                height: Math.max(240, top.length * 42 + 32),
-                width: "100%",
-              }}
-            />
-          ) : (
-            <div className="flex h-[240px] items-center justify-center rounded-lg border border-dashed border-border bg-muted/20 px-6 text-center text-sm text-muted-foreground">
-              暂无成分股权重数据
-            </div>
-          )}
-        </CardContent>
-      </Card>
+        )}
+      </ChartCard>
 
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">成分股权重</CardTitle>
-          <p className="text-xs text-muted-foreground">
-            后端按最新生效日返回前 60 大成分；行业缺失显示「—」。
-          </p>
-        </CardHeader>
-        <CardContent className="pt-2">
-          {ordered.length > 0 ? (
-            <div className="overflow-x-auto overscroll-x-contain rounded-lg border border-border">
-              <table className="w-full min-w-[640px] border-collapse text-sm">
-                <caption className="sr-only">
-                  指数成分股权重表，含排名、代码、名称、行业与权重
-                </caption>
-                <thead>
-                  <tr className="border-b border-border bg-muted/40 text-[11px] text-muted-foreground">
-                    <th
-                      scope="col"
-                      className="px-4 py-3 text-left font-medium"
-                    >
-                      排名
-                    </th>
-                    <th
-                      scope="col"
-                      className="px-4 py-3 text-left font-medium"
-                    >
-                      代码
-                    </th>
-                    <th
-                      scope="col"
-                      className="px-4 py-3 text-left font-medium"
-                    >
-                      名称
-                    </th>
-                    <th
-                      scope="col"
-                      className="px-4 py-3 text-left font-medium"
-                    >
-                      行业
-                    </th>
-                    <th
-                      scope="col"
-                      className="px-4 py-3 text-right font-medium"
-                    >
-                      权重
-                    </th>
+      <section aria-labelledby="constituent-table-heading">
+        <SectionHeading
+          id="constituent-table-heading"
+          title="成分列表"
+          hint={`${formatNumber(ordered.length, 0)} 只`}
+        />
+        <Surface className="overflow-hidden">
+          <div className="max-h-[360px] overflow-auto overscroll-contain">
+            <table className="w-full min-w-[620px] border-collapse text-sm">
+              <caption className="sr-only">
+                指数成分股权重表，含排名、代码、名称、行业与权重
+              </caption>
+              <thead className="sticky top-0 z-10">
+                <tr className="border-b border-border bg-muted text-[11px] text-muted-foreground">
+                  <th scope="col" className="px-3 py-2 text-left font-medium">
+                    排名
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-left font-medium">
+                    代码
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-left font-medium">
+                    名称
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-left font-medium">
+                    行业
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-right font-medium">
+                    权重
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {ordered.map((item) => (
+                  <tr
+                    key={item.stock_code}
+                    className="border-b border-border/60 transition-colors last:border-0 hover:bg-muted/30"
+                  >
+                    <td className="px-3 py-2 font-mono text-xs tabular-nums text-muted-foreground">
+                      {formatNumber(item.rank, 0)}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs tabular-nums">
+                      {item.stock_code}
+                    </td>
+                    <td className="px-3 py-2 font-medium">{item.name}</td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground">
+                      {item.industry_l1?.trim()
+                        ? item.industry_l1
+                        : EMPTY_DISPLAY}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-xs tabular-nums">
+                      {formatPlainPct(item.weight)}
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {ordered.map((item) => (
-                    <tr
-                      key={item.stock_code}
-                      className="border-b border-border/60 transition-colors last:border-0 hover:bg-muted/30"
-                    >
-                      <td className="px-4 py-3 tabular-nums text-muted-foreground">
-                        {item.rank != null
-                          ? formatNumber(item.rank, 0)
-                          : EMPTY_DISPLAY}
-                      </td>
-                      <td className="px-4 py-3 font-mono text-xs tabular-nums">
-                        {item.stock_code}
-                      </td>
-                      <td className="px-4 py-3 font-medium">{item.name}</td>
-                      <td className="px-4 py-3 text-muted-foreground">
-                        {item.industry_l1?.trim()
-                          ? item.industry_l1
-                          : EMPTY_DISPLAY}
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono tabular-nums">
-                        {formatPlainPct(item.weight)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="rounded-lg border border-dashed border-border bg-muted/20 px-6 py-10 text-center">
-              <p className="text-sm font-medium">暂无成分股数据</p>
-              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                后端尚未落库该指数的最新成分股快照。
-              </p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">业绩</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="rounded-lg border border-dashed border-border bg-muted/20 px-6 py-10 text-center">
-            <p className="text-sm font-medium">业绩数据暂未接入</p>
-            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              后端暂未提供营收/净利同比与年度财务数据，当前仅展示成分股权重。
-            </p>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </CardContent>
-      </Card>
+        </Surface>
+      </section>
     </div>
   );
 }

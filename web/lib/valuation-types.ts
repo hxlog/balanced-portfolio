@@ -67,6 +67,8 @@ export interface IndexQuoteRow {
   name: string;
   category: IndexCategory;
   publisher: string | null;
+  /** 指数所属市场（CSI/SH/SZ/CNI/HK/US/BJ/GLOBAL）。 */
+  market?: string | null;
   has_etf: boolean;
   has_valuation: boolean;
   /** 行情/估值的共同截止交易日。 */
@@ -75,22 +77,30 @@ export interface IndexQuoteRow {
   close: number | null;
   /** 当日涨跌幅（百分数点）。 */
   change_pct: number | null;
+  /** 近 7 日涨跌幅（百分数点）；接口未提供时为 null。 */
+  change_7d_pct?: number | null;
   /** 近 52 周涨跌幅（百分数点）。 */
   change_52w_pct: number | null;
   /** 距历史最高点的跌幅（百分数点，通常为负）。 */
   distance_from_high_pct: number | null;
   /** 市盈率 TTM。 */
   pe_ttm: number | null;
-  /** PE 历史分位，0~1。 */
+  /** PE 历史分位，0~100（与 DB/API 同口径）。 */
   pe_percentile: number | null;
   /** 市净率。 */
   pb: number | null;
-  /** PB 历史分位，0~1。 */
+  /** PB 历史分位，0~100（与 DB/API 同口径）。 */
   pb_percentile: number | null;
   /** 股息率 TTM（百分数点）。 */
   dividend_yield_pct: number | null;
   /** 风险溢价 = 股息率 TTM − 十年期国债收益率（百分数点）。 */
   risk_premium_pct: number | null;
+  /** 后端给出的 PE 估值等级。 */
+  level_pe?: ValuationLevel | null;
+  /** 后端给出的 PB 估值等级。 */
+  level_pb?: ValuationLevel | null;
+  /** 后端给出的股息率估值等级。 */
+  level_dividend?: ValuationLevel | null;
 }
 
 /**
@@ -103,10 +113,10 @@ export interface MarketValuationCard {
   board: MarketBoard;
   label: string;
   pe: number | null;
-  /** PE 分位，0~1。 */
+  /** PE 分位，0~100（与 DB/API 同口径）。 */
   pe_percentile: number | null;
   pb: number | null;
-  /** PB 分位，0~1。 */
+  /** PB 分位，0~100（与 DB/API 同口径）。 */
   pb_percentile: number | null;
   level: ValuationLevel | null;
   /** 数据截止日。 */
