@@ -118,10 +118,38 @@ def start(app: AppConfig) -> None:
         except Exception as exc:  # noqa: BLE001
             logger.exception("crypto 小时同步异常: %s", exc)
 
+    def market_valuation_job() -> None:
+        """21:20 全市场估值快照（东财 push2，5 个板块）。"""
+        try:
+            from .db import connect
+            from .market_valuation import compute
+
+            with connect(app.db) as conn:
+                conn.autocommit = False
+                result = compute(conn)
+            logger.info("全市场估值快照完成: %s", result)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("全市场估值快照异常: %s", exc)
+
+    def csindex_value_job() -> None:
+        """21:40 中证官网第二口径（官方估值文件，滚动 20 日）。"""
+        try:
+            from .csindex_value import run as run_csindex
+            from .db import connect
+
+            with connect(app.db) as conn:
+                conn.autocommit = False
+                result = run_csindex(conn)
+            logger.info("中证官网口径同步完成: %s", result)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("中证官网口径同步异常: %s", exc)
+
     # 注意: 勿传 next_run_time=None — APScheduler 会将其视为 paused, 周期永不触发。
     # 启动立即执行由下方 job()/cffex_job() 负责; interval 从 start() 后按间隔调度。
     scheduler.add_job(valuation_job, "cron", hour="21-23", minute="*/15", id="valuation")
     scheduler.add_job(valuation_backfill_job, "cron", hour="9", minute="0", id="valuation-backfill")
+    scheduler.add_job(market_valuation_job, "cron", hour="21", minute="20", id="market-valuation")
+    scheduler.add_job(csindex_value_job, "cron", hour="21", minute="40", id="csindex-value")
     scheduler.add_job(
         job,
         "interval",

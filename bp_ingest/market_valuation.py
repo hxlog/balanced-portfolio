@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import statistics
 from datetime import date
 from typing import Any, Iterable, Mapping
@@ -59,6 +60,7 @@ def _fetch_board(fs_filter: str) -> list[dict[str, Any]]:
         if total is not None and len(rows) >= total:
             break
         page += 1
+        time.sleep(0.25)
     return rows
 
 def _stats(rows: Iterable[Mapping[str, Any]]) -> tuple[float | None, float | None, float | None, float | None, int]:
