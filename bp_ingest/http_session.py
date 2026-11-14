@@ -191,12 +191,25 @@ class _HardenedSession:
             return resp
         return resp
 
+    def _apply_proxy(self, kw):
+        """显式选择走代理：设置 BP_HTTP_PROXY（如 http://127.0.0.1:10809）时生效。
+
+        默认仍是本机直连；只有需要借道境外中继访问被 WAF 拦截的数据源时才显式开启，
+        避免无意间把全部行情请求都绕到海外（东财等只服务国内 IP）。
+        """
+        proxy = (os.getenv("BP_HTTP_PROXY") or "").strip()
+        if proxy and "proxies" not in kw:
+            kw["proxies"] = {"http": proxy, "https": proxy}
+        return kw
+
     def get(self, url, **kw):
         self._apply_referer(url, kw)
+        self._apply_proxy(kw)
         return self._request_with_retry("get", url, **kw)
 
     def post(self, url, **kw):
         self._apply_referer(url, kw)
+        self._apply_proxy(kw)
         return self._request_with_retry("post", url, **kw)
 
     @property

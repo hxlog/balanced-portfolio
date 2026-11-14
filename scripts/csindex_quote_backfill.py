@@ -7,6 +7,9 @@
 写库口径：source = csindex_perf，adjust = bfq，category = index；
 页面读行情只按 (symbol, adjust)，因此无需改动 API。
 """
+import os
+import random
+import re
 import sys
 import time
 from datetime import date
@@ -21,8 +24,11 @@ from bp_ingest.http_session import install_hardened_session
 
 API = "https://www.csindex.com.cn/csindex-home/perf/index-perf"
 HOME = "https://www.csindex.com.cn/"
-BUDGET_SECONDS = 600  # 单次预算，避免长时间占资源
+BUDGET_SECONDS = int(os.getenv("BP_CS_BUDGET", "600"))  # 单次预算（秒）
+SLOW_DELAY = float(os.getenv("BP_CS_DELAY", "0.4"))  # 每只成功后的间隔（秒）
 SOURCE = "csindex_perf"
+# 平安口径里的供应商私有代码（东财/中证官网都没有对应指数），直接跳过
+SKIP_RE = re.compile(r"^\d+L$|^FI|^SG|^DC|^CZ|^CICS|^INESC|^XI\d")
 START = "20170101"
 CHUNK_ROWS = 500
 
@@ -106,7 +112,7 @@ def main() -> int:
         symbols = [row[0] for row in cur.fetchall()]
         cur.execute("select distinct symbol from bp_index_quote_daily where adjust = %s", ("bfq",))
         have = {row[0] for row in cur.fetchall()}
-    missing = [symbol for symbol in symbols if symbol not in have]
+    missing = [symbol for symbol in symbols if symbol not in have and not SKIP_RE.search(symbol)]
     print("index symbols:", len(symbols), "missing:", len(missing), flush=True)
 
     ok = 0
@@ -123,12 +129,25 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001 - 兼容 curl_cffi / requests 两种 HTTPError
             status = getattr(getattr(exc, "response", None), "status_code", None)
             if status == 403:
+                # 403 有两种可能：全局 WAF 拦 IP，或该代码在官网不存在（返回拦截页）。
+                # 用控制代码 000300 探测：能通说明是「代码无效」，直接跳过。
+                control_ok = False
+                try:
+                    control_ok = bool(fetch("000300", end))
+                except Exception:  # noqa: BLE001
+                    control_ok = False
+                if control_ok:
+                    print("skip-invalid", symbol, flush=True)
+                    skipped += 1
+                    time.sleep(0.4)
+                    continue
                 forbidden_streak += 1
                 print("WAF 403", symbol, "streak", forbidden_streak, flush=True)
-                if forbidden_streak >= 3:
+                if forbidden_streak >= 6:
                     print("WAF 连续 403，提前退出", flush=True)
                     break
-                time.sleep(2)
+                # 单次 403 可能只是瞬时限流：等 2 分钟后重试同一只
+                time.sleep(120)
                 continue
             print("fetch fail", symbol, type(exc).__name__, status, flush=True)
             time.sleep(0.8)
@@ -149,7 +168,7 @@ def main() -> int:
         if (index + 1) % 20 == 0:
             print("progress %d/%d ok=%d skip=%d elapsed=%.0fs" % (
                 index + 1, len(missing), ok, skipped, time.time() - started), flush=True)
-        time.sleep(0.12)
+        time.sleep(SLOW_DELAY + random.uniform(0, 0.3))
     print("done ok=%d skipped=%d elapsed=%.0fs" % (ok, skipped, time.time() - started), flush=True)
     return 0
 
