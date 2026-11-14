@@ -95,3 +95,34 @@ export async function resolveDefaultPortfolioId(): Promise<number | null> {
     return null;
   }
 }
+/** 估值首页：指数列表（行情 + 最新主口径估值 + PE/PB 分位）。
+ *
+ * 后端只读预计算表，请求路径永不计算。失效：估值采集任务落库后
+ * POST /api/revalidate/valuation，或等 cacheLife("hours") TTL 兜底。
+ * 失败时 throw（不缓存 null），页面 catch 后回退示例数据。 */
+export async function getCachedValuationIndices(
+  limit = 600,
+): Promise<{ data: Record<string, unknown>[]; meta: Record<string, unknown> }> {
+  "use cache";
+  cacheLife("hours");
+  cacheTag("valuation");
+  const path = "/api/valuation/indices?limit=" + String(limit);
+  return await serverFetch<{
+    data: Record<string, unknown>[];
+    meta: Record<string, unknown>;
+  }>(path);
+}
+
+/** 估值首页：全市场板块估值卡（bp_market_valuation_daily）。 */
+export async function getCachedValuationOverview(): Promise<{
+  data: Record<string, unknown>[];
+  meta: Record<string, unknown>;
+}> {
+  "use cache";
+  cacheLife("hours");
+  cacheTag("valuation");
+  return await serverFetch<{
+    data: Record<string, unknown>[];
+    meta: Record<string, unknown>;
+  }>("/api/valuation/overview");
+}

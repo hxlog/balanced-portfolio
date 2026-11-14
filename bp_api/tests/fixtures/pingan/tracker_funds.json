@@ -1,0 +1,24 @@
+{
+  "responseCode": "0",
+  "currentDate": "2026-11-14",
+  "total": 1,
+  "data": [
+    {
+      "fundCode": "SZ159647",
+      "ommName": "鹏华中证中药ETF",
+      "companyName": "鹏华基金",
+      "riskGrade": "R4",
+      "oneYearYield": "-15.0200",
+      "tradeDate": "20261113",
+      "positionDTO": {
+        "fnvsum": "881155037.2",
+        "drFmpfmanceDTOS": [
+          {
+            "manager": "张羽翔",
+            "personCode": "20366201"
+          }
+        ]
+      }
+    }
+  ]
+}

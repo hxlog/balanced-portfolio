@@ -1,0 +1,19 @@
+{
+  "responseCode": "0",
+  "currentDate": "2026-11-14",
+  "total": 1,
+  "rows": [
+    {
+      "sInfoCompany": "中证中药指数",
+      "sInfoIndexBaseper": "20041231",
+      "sInfoIndexBasept": "1000",
+      "sInfoWindCode": "930641.CSI",
+      "indexIntro": "中证中药指数选取涉及中药生产与销售等业务的上市公司证券作为样本，以反映中药概念类上市公司的整体表现。",
+      "sInfoIndexType": "股票类",
+      "sInfoPublisher": "中证公司",
+      "sInfoIncomeMethod": "价格指数",
+      "weightTypeName": "市值加权|调整市值加权",
+      "code": "{B75DBBC2-F3B9-43C4-86A7-76D40CF2E842}"
+    }
+  ]
+}

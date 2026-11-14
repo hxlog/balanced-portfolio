@@ -18,6 +18,7 @@ import { useAuth } from "@/lib/auth";
 import { api } from "@/lib/api";
 
 const NAV_LINKS = [
+  { href: "/valuation", label: "指数估值" },
   { href: "/dashboard", label: "风险平价回测" },
   { href: "/cffex", label: "股指期货看板" },
   { href: "/crypto", label: "加密货币看板" },

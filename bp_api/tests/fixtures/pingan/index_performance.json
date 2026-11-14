@@ -1,0 +1,43 @@
+{
+  "responseCode": "0",
+  "currentDate": "2026-11-14",
+  "total": 2,
+  "rows": [
+    {
+      "code": "{602988EA-15B6-9E73-E063-0C42C80A2BB4}",
+      "sInfoWindcode": "000300.SH",
+      "pctChgRecent1m": "-6.066644",
+      "pctChgRecent1w": "-0.936966",
+      "pctChgRecent3m": "-13.886543",
+      "pctChgRecent6m": "-19.647556",
+      "pctChgRecent1y": "-14.584716",
+      "pctChgRecent2y": "-14.584716",
+      "pctChgRecent3y": "12.205227",
+      "siPctChg": "300.250108",
+      "stdDev1y": "0.011261",
+      "stdDev2y": "0.010606",
+      "stdDev3y": "0.011537",
+      "sharpratio1y": "-0.78856",
+      "sharpratio2y": "-0.78856",
+      "sharpratio3y": "-0.78856"
+    },
+    {
+      "code": "{6029D895-FA82-B725-E063-0C42C80A23D6}",
+      "sInfoWindcode": "930641.CSI",
+      "pctChgRecent1m": "0.407287",
+      "pctChgRecent1w": "-2.621322",
+      "pctChgRecent3m": "-5.506493",
+      "pctChgRecent6m": "-6.155609",
+      "pctChgRecent1y": "-17.821718",
+      "pctChgRecent2y": "-17.821718",
+      "pctChgRecent3y": "-23.083876",
+      "siPctChg": "-42.329962",
+      "stdDev1y": "0.011979",
+      "stdDev2y": "0.010958",
+      "stdDev3y": "0.013161",
+      "sharpratio1y": "-0.951485",
+      "sharpratio2y": "-0.951485",
+      "sharpratio3y": "-0.951485"
+    }
+  ]
+}

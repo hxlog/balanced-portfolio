@@ -1,0 +1,22 @@
+{
+  "responseCode": "0",
+  "currentDate": "2026-11-14",
+  "total": 3,
+  "rows": [
+    {
+      "code": "{9FFAB3DC-6F1B-4147-B460-FFC99212CF36}",
+      "tradeDt": "20261113",
+      "bAnalyield": "1.6123"
+    },
+    {
+      "code": "{446FFB34-21F3-47C5-B0F6-E629F205A8AD}",
+      "tradeDt": "20261112",
+      "bAnalyield": "1.6032"
+    },
+    {
+      "code": "{85077747-93BB-43AC-B062-E9526EDAE971}",
+      "tradeDt": "20261111",
+      "bAnalyield": "1.6039"
+    }
+  ]
+}
