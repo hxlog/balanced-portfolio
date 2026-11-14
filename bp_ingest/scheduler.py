@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 
@@ -49,7 +50,6 @@ def start(app: AppConfig) -> None:
             from .db import connect
 
             with connect(app.db) as conn:
-                conn.autocommit = False
                 stats = _cffex.cffex_sync(conn)
             logger.info("CFFEX 增量同步完成: %s", stats)
         except Exception as exc:  # noqa: BLE001
@@ -88,7 +88,6 @@ def start(app: AppConfig) -> None:
             from bp_api.crypto import invalidate_crypto_cache
 
             with connect(app.db) as conn:
-                conn.autocommit = False
                 stats = _cc.compute_and_store_crypto_corr(conn, full=False)
                 conn.commit()
             invalidate_crypto_cache()
@@ -125,7 +124,6 @@ def start(app: AppConfig) -> None:
             from .market_valuation import compute
 
             with connect(app.db) as conn:
-                conn.autocommit = False
                 result = compute(conn)
             logger.info("全市场估值快照完成: %s", result)
         except Exception as exc:  # noqa: BLE001
@@ -138,7 +136,6 @@ def start(app: AppConfig) -> None:
             from .db import connect
 
             with connect(app.db) as conn:
-                conn.autocommit = False
                 result = run_csindex(conn)
             logger.info("中证官网口径同步完成: %s", result)
         except Exception as exc:  # noqa: BLE001
@@ -150,6 +147,7 @@ def start(app: AppConfig) -> None:
     scheduler.add_job(valuation_backfill_job, "cron", hour="9", minute="0", id="valuation-backfill")
     scheduler.add_job(market_valuation_job, "cron", hour="21", minute="20", id="market-valuation")
     scheduler.add_job(csindex_value_job, "cron", hour="21", minute="40", id="csindex-value")
+
     scheduler.add_job(
         job,
         "interval",
@@ -196,9 +194,12 @@ def start(app: AppConfig) -> None:
         "调度器启动: 每 %d 小时增量更新 + 每 20 分钟巡检排队 + 每 %d 小时 CFFEX 增量 + 每 %d 小时 crypto 增量 + 每日 05:30 北京 crypto 兜底重算",
         app.schedule_hours, app.cffex_sync_hours, app.crypto_sync_hours,
     )
-    # 启动即先跑一轮, 再进入周期调度
-    job()
-    cffex_job()
+    # 关键顺序: 先 start 再跑首轮。
+    # 首轮全量增量会遍历数百个标的(每个 3~5s, 可达数十分钟)，若在 start 前同步执行，
+    # 5 分钟级的加密合约采集、20 分钟巡检等任务全部被阻塞。
+    # 首轮增量在后台线程里跑（BlockingScheduler.start() 会一直阻塞，之后的代码不会执行）
+    for target, name in ((job, "bp-initial-ingest"), (cffex_job, "bp-initial-cffex")):
+        threading.Thread(target=target, name=name, daemon=True).start()
     try:
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):

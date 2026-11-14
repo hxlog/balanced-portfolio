@@ -80,7 +80,6 @@ def gate(app: AppConfig, now: datetime | None = None) -> dict:
             return {"status": "exhausted", "as_of": as_of, "done": done, "total": total}
 
         _attempts[as_of] = attempts + 1
-        conn.autocommit = False
         summary = run_valuation_ingest(conn, as_of=as_of)
         conn.commit()
         logger.info("估值门控：第 %d 次抓取完成 %s", attempts + 1, summary)

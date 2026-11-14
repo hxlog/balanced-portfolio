@@ -524,10 +524,10 @@ def get_index_list(
                     AND jsonb_array_length(v.raw -> 'etf_fund') > 0,
                     FALSE
                 ) AS has_etf,
-                q1.close AS close_price,
+                qp.close_last AS close_price,
                 CASE
-                    WHEN q1.close > 0 AND q2.close > 0
-                    THEN ((q1.close / q2.close) - 1) * 100
+                    WHEN qp.close_last > 0 AND qp.close_prev > 0
+                    THEN ((qp.close_last / qp.close_prev) - 1) * 100
                 END AS change_pct,
                 pe.pct AS pe_percentile,
                 pe.as_of_date AS pe_pct_as_of,
@@ -564,22 +564,24 @@ def get_index_list(
                 ORDER BY p.as_of_date DESC
                 LIMIT 1
             ) pb ON TRUE
+            -- 两日收盘一次取回：bp_quote_clean 是 Timescale chunk 表，
+            -- 每多一个 LATERAL 就多扫一轮 chunk（521 指标 × 2 次曾耗时 79s）。
+            -- 加 90 天时间下界让 chunk 裁剪生效，并一次取最近 2 根。
             LEFT JOIN LATERAL (
-                SELECT q.close, q.trade_date
-                FROM bp_quote_clean q
-                WHERE q.symbol = m.index_code AND q.adjust = 'bfq'
-                ORDER BY q.trade_date DESC
-                LIMIT 1
-            ) q1 ON TRUE
-            LEFT JOIN LATERAL (
-                SELECT q.close
-                FROM bp_quote_clean q
-                WHERE q.symbol = m.index_code AND q.adjust = 'bfq'
-                  AND q1.trade_date IS NOT NULL
-                  AND q.trade_date < q1.trade_date
-                ORDER BY q.trade_date DESC
-                LIMIT 1
-            ) q2 ON TRUE
+                SELECT
+                    (array_agg(t.close ORDER BY t.trade_date DESC))[1] AS close_last,
+                    (array_agg(t.close ORDER BY t.trade_date DESC))[2] AS close_prev,
+                    max(t.trade_date) AS trade_date
+                FROM (
+                    SELECT q.close, q.trade_date
+                    FROM bp_quote_clean q
+                    WHERE q.symbol = m.index_code
+                      AND q.adjust = 'bfq'
+                      AND q.trade_date >= current_date - 90
+                    ORDER BY q.trade_date DESC
+                    LIMIT 2
+                ) t
+            ) qp ON TRUE
             WHERE (%(query)s::text IS NULL
                    OR m.index_code ILIKE %(query_like)s
                    OR m.name ILIKE %(query_like)s
