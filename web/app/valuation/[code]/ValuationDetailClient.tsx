@@ -174,7 +174,7 @@ export function ValuationDetailClient({
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto w-full max-w-[1440px] px-4 pb-16 pt-6 sm:px-6 sm:pt-8 lg:px-8">
+      <div className="mx-auto w-full max-w-[1600px] px-4 pb-16 pt-6 sm:px-6 sm:pt-8 lg:px-8">
         <Link
           href="/valuation"
           className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"

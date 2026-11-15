@@ -13,14 +13,14 @@ export function ValuationDetailSkeleton() {
     >
       <span className="sr-only">正在加载指数估值详情</span>
 
-      <div className="mx-auto w-full max-w-[1440px] px-4 pb-4 pt-6 sm:px-6 sm:pt-8 lg:px-8">
+      <div className="mx-auto w-full max-w-[1600px] px-4 pb-4 pt-6 sm:px-6 sm:pt-8 lg:px-8">
         <div className="h-3.5 w-20 animate-pulse rounded bg-muted" />
         <div className="mt-3 h-3 w-32 animate-pulse rounded bg-muted" />
         <div className="mt-2 h-8 w-52 animate-pulse rounded bg-muted" />
         <div className="mt-2 h-3 w-56 animate-pulse rounded bg-muted" />
       </div>
 
-      <div className="mx-auto w-full max-w-[1440px] px-4 pb-16 sm:px-6 lg:px-8">
+      <div className="mx-auto w-full max-w-[1600px] px-4 pb-16 sm:px-6 lg:px-8">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
           {Array.from({ length: 4 }).map((_, index) => (
             <div

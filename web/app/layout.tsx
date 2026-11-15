@@ -125,7 +125,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </AuthProvider>
           </Suspense>
           <footer className="border-t border-border py-8 text-center text-sm text-muted-foreground mt-auto">
-            <div className="container mx-auto max-w-[1440px] md:px-4 sm:px-6 flex flex-col items-center gap-3">
+            <div className="container mx-auto max-w-[1600px] md:px-4 sm:px-6 flex flex-col items-center gap-3">
               <p className="leading-relaxed max-w-2xl">
                 Balanced Portfolio 是开源的风险平价组合管理与回测项目。本工具仅供研究，不构成投资建议。
               </p>

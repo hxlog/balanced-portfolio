@@ -371,7 +371,10 @@ def airbag_analytic(
     pdi = barrier_analytic(s=s, strike=strike, barrier=barrier, rebate=0.0,
                            updown=UpDown.DOWN, inout=InOut.IN, callput=CallPut.PUT,
                            r=r, q=q, vol=vol, t=t)
-    return float(call_parti * cdo + reset_call_parti * cdi - knockin_parti * pdi)
+    # 金标（镒链 202104130944 / QuantLib AnalyticBarrierEngine）：
+    #   气囊 = 敲入参与率 × (下入看涨 − 下入看跌) + 参与率 × 下出看涨
+    # 即 cdi/pdi 的系数统一为 knockin_parti（reset_call_parti 仅用于 MC payoff 兼容）。
+    return float(knockin_parti * (cdi - pdi) + call_parti * cdo)
 
 
 # ---------------------------------------------------------------------------
@@ -523,4 +526,7 @@ def airbag_quad(
         updown=UpDown.DOWN, inout=InOut.IN, callput=CallPut.PUT,
         r=r, q=q, vol=vol, t=t, n_steps=n_steps, n_points=n_points,
     )
-    return float(call_parti * cdo + reset_call_parti * cdi - knockin_parti * pdi)
+    # 金标（镒链 202104130944 / QuantLib AnalyticBarrierEngine）：
+    #   气囊 = 敲入参与率 × (下入看涨 − 下入看跌) + 参与率 × 下出看涨
+    # 即 cdi/pdi 的系数统一为 knockin_parti（reset_call_parti 仅用于 MC payoff 兼容）。
+    return float(knockin_parti * (cdi - pdi) + call_parti * cdo)

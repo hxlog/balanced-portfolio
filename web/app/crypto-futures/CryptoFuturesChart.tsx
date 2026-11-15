@@ -10,7 +10,7 @@ import { EChart } from "@/components/EChart";
 import { getChartTheme, withAlpha } from "@/lib/chart-theme";
 import { cn } from "@/lib/utils";
 import {
-  formatNotional,
+  formatThousands,
   formatNotionalAxis,
   formatPrice,
   formatPriceAxis,
@@ -230,7 +230,7 @@ export function CryptoFuturesChart({
             if (param.seriesName === "标记价") {
               display = `USDT ${formatPrice(value)}`;
             } else if (param.seriesName === "OI 名义值") {
-              display = `${formatNotional(value)} USDT`;
+              display = `${formatThousands(value)} USDT`;
             } else {
               display = formatRatio(value, 3);
             }
@@ -454,7 +454,7 @@ export function CryptoFuturesChart({
           <div>
             <div className="text-muted-foreground">OI 名义值</div>
             <div className="mt-0.5 font-mono text-sm tabular-nums">
-              {formatNotional(contract.oi_notional)}
+              {formatThousands(contract.oi_notional)}
             </div>
           </div>
           <div>
@@ -509,7 +509,7 @@ export function CryptoFuturesChart({
                 ? `标记价 ${formatPrice(rangeSummary.price[0])} 至 ${formatPrice(rangeSummary.price[1])} USDT，`
                 : ""}
               {rangeSummary.oi
-                ? `OI 名义值 ${formatNotional(rangeSummary.oi[0])} 至 ${formatNotional(rangeSummary.oi[1])}，`
+                ? `OI 名义值 ${formatThousands(rangeSummary.oi[0])} 至 ${formatThousands(rangeSummary.oi[1])}，`
                 : ""}
               {rangeSummary.ratio
                 ? `多空比 ${formatRatio(rangeSummary.ratio[0], 3)} 至 ${formatRatio(rangeSummary.ratio[1], 3)}。`

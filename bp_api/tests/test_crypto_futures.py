@@ -301,6 +301,8 @@ def test_allowed_paths_match_worker_proxy_whitelist():
         cf.OI_HIST,
         cf.KLINE,
         cf.FUNDING_RATE,
+        cf.TOP_ACCOUNT,
+        cf.TOP_POSITION,
     }
 
 
@@ -404,13 +406,15 @@ def test_fetch_snapshot_5m_parses_and_upserts(monkeypatch):
     assert [r["contract_code"] for r in rows] == ["BTCUSDT", "ETHUSDT"]
     assert all(r["captured_at"] == datetime(2026, 11, 14, 12, 5, tzinfo=UTC) for r in rows)
     assert all(r["oi_notional"] == pytest.approx(1000.0) for r in rows)
-    assert len(calls) == 10  # 2 合约 × 5 端点
+    assert len(calls) == 14  # 2 合约 × 7 端点
     assert {p for p, _ in calls} == {
         "/fapi/v1/premiumIndex",
         "/fapi/v1/openInterest",
         "/futures/data/globalLongShortAccountRatio",
         "/futures/data/takerlongshortRatio",
         "/futures/data/openInterestHist",
+        "/futures/data/topLongShortAccountRatio",
+        "/futures/data/topLongShortPositionRatio",
     }
     sql, payload = cur.executemany.call_args.args
     assert "ON CONFLICT (contract_code, captured_at)" in sql

@@ -166,7 +166,7 @@ export default function AdminUsersPage() {
   }
 
   return (
-    <div className="max-w-[1440px] mx-auto w-full p-6 space-y-6">
+    <div className="max-w-[1600px] mx-auto w-full p-6 space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">用户管理</h1>
         <p className="text-sm text-muted-foreground mt-1">

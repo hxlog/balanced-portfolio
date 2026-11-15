@@ -818,7 +818,7 @@ export function OtcPricingClient() {
     v == null || !Number.isFinite(v) ? "—" : v.toLocaleString("zh-CN");
 
   return (
-    <div className="flex-1 px-4 py-4 sm:p-6 max-w-[1440px] mx-auto w-full min-w-0 space-y-4 sm:space-y-6">
+    <div className="flex-1 px-4 py-4 sm:p-6 max-w-[1600px] mx-auto w-full min-w-0 space-y-4 sm:space-y-6">
       {/* 顶部标题 + 迷你日历 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 bg-card border border-border rounded-xl p-5 space-y-3">

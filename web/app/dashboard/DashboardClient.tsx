@@ -942,7 +942,7 @@ function DashboardView({
   ];
 
   return (
-    <div className="flex-1 px-4 py-4 sm:p-6 max-w-[1440px] mx-auto w-full space-y-4 sm:space-y-6">
+    <div className="flex-1 px-4 py-4 sm:p-6 max-w-[1600px] mx-auto w-full space-y-4 sm:space-y-6">
       <div className="flex gap-6">
         <DashboardToc items={tocItems} />
         <div className="flex-1 min-w-0 space-y-4 sm:space-y-6">

@@ -479,7 +479,7 @@ export default function AdminAssetsPage() {
   })();
 
   return (
-    <div className="flex-1 p-6 max-w-[1440px] mx-auto w-full space-y-6">
+    <div className="flex-1 p-6 max-w-[1600px] mx-auto w-full space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">资产管理</h1>
         <p className="text-sm text-muted-foreground mt-1">

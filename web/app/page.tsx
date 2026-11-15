@@ -57,13 +57,23 @@ export default async function Home() {
               </Link>
             </Button>
             <Button asChild size="lg" className="rounded-full px-8 text-base">
-              <Link href="/cffex">
-                股指期货数据看板 <ArrowRight className="ml-2 w-4 h-4" />
+              <Link href="/valuation">
+                指数估值工作台 <ArrowRight className="ml-2 w-4 h-4" />
+              </Link>
+            </Button>
+            <Button asChild size="lg" className="rounded-full px-8 text-base">
+              <Link href="/crypto">
+                加密合约监控 <ArrowRight className="ml-2 w-4 h-4" />
               </Link>
             </Button>
             <Button asChild size="lg" className="rounded-full px-8 text-base">
               <Link href="/otc-derivatives-pricing">
-                场外衍生品定价 · Experiment <ArrowRight className="ml-2 w-4 h-4" />
+                场外衍生品定价 <ArrowRight className="ml-2 w-4 h-4" />
+              </Link>
+            </Button>
+            <Button asChild size="lg" variant="outline" className="rounded-full px-8 text-base">
+              <Link href="/cffex">
+                股指期货看板 <ArrowRight className="ml-2 w-4 h-4" />
               </Link>
             </Button>
             <Button
@@ -80,7 +90,7 @@ export default async function Home() {
 
       {/* Features */}
       <section className="py-24 px-6 bg-bg-subtle/50">
-        <div className="container mx-auto max-w-[1440px]">
+        <div className="container mx-auto max-w-[1600px]">
           <div className="grid md:grid-cols-3 gap-12">
             <div className="space-y-4">
               <div className="w-12 h-12 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
@@ -114,9 +124,56 @@ export default async function Home() {
         </div>
       </section>
 
+      {/* 新功能 */}
+      <section className="py-20 px-6">
+        <div className="container mx-auto max-w-[1600px]">
+          <div className="mb-10 flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h2 className="text-3xl font-semibold tracking-tight">新增能力</h2>
+              <p className="mt-2 text-muted-foreground">估值、加密、篮子与衍生品：同一套数据与研究框架。</p>
+            </div>
+            <Button asChild variant="outline">
+              <Link href="/valuation">
+                查看指数估值 <ArrowRight className="ml-2 w-4 h-4" />
+              </Link>
+            </Button>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <Link href="/valuation" className="group rounded-2xl border border-border bg-card p-6 transition-colors hover:border-primary/40">
+              <div className="text-xs font-medium text-primary">指数估值工作台</div>
+              <h3 className="mt-2 text-lg font-medium">MVI 市场估值指数</h3>
+              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                双仪表盘（估值分 / 风险分）+ Valuation Band + 红利指数吸引力 + 双散点矩阵，覆盖 521 只指数与多窗口分位。
+              </p>
+            </Link>
+            <Link href="/crypto" className="group rounded-2xl border border-border bg-card p-6 transition-colors hover:border-primary/40">
+              <div className="text-xs font-medium text-primary">加密看板</div>
+              <h3 className="mt-2 text-lg font-medium">合约监控 + 大户因子</h3>
+              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                OI / 资金费率 30 日分位 / 大户多空账户与持仓比 / Smart Money 乖离，附 BTC 与黄金、美股、DXY 的相关性。
+              </p>
+            </Link>
+            <Link href="/builder?mode=basket" className="group rounded-2xl border border-border bg-card p-6 transition-colors hover:border-primary/40">
+              <div className="text-xs font-medium text-primary">篮子组合</div>
+              <h3 className="mt-2 text-lg font-medium">等权对比 + 调仓明细</h3>
+              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                单层多资产回测：等权净值对比、调仓点权重变化明细、保存/复制/编辑，并在 Dashboard 统一管理。
+              </p>
+            </Link>
+            <Link href="/otc-derivatives-pricing" className="group rounded-2xl border border-border bg-card p-6 transition-colors hover:border-primary/40">
+              <div className="text-xs font-medium text-primary">场外衍生品</div>
+              <h3 className="mt-2 text-lg font-medium">雪球 / 凤凰 / 气囊 / 障碍</h3>
+              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                MC + 解析 + 数值积分三种引擎；金标复算 8/8 通过（双时钟 BUS252/ACT365），并展示 Greeks 与路径图。
+              </p>
+            </Link>
+          </div>
+        </div>
+      </section>
+
       {/* Methodology preview & Demo card */}
       <section id="methodology" className="py-32 px-6">
-        <div className="container mx-auto max-w-[1440px]">
+        <div className="container mx-auto max-w-[1600px]">
           <div className="grid lg:grid-cols-2 gap-16 items-center">
             <div className="space-y-8">
               <h2 className="text-3xl md:text-4xl font-semibold tracking-tight">
@@ -210,7 +267,7 @@ export default async function Home() {
 
       {/* CFFEX Futures Dashboard */}
       <section className="py-24 px-6 bg-bg-subtle/50 border-t border-border">
-        <div className="container mx-auto max-w-[1440px]">
+        <div className="container mx-auto max-w-[1600px]">
           <div className="grid lg:grid-cols-2 gap-16 items-center">
             <div className="space-y-8">
               <h2 className="text-3xl md:text-4xl font-semibold tracking-tight">
@@ -368,7 +425,7 @@ export default async function Home() {
       <Suspense
         fallback={
           <section className="py-24 px-6 border-t border-border">
-            <div className="container mx-auto max-w-[1440px]">
+            <div className="container mx-auto max-w-[1600px]">
               <div className="border border-border rounded-xl bg-card p-8 h-48 animate-pulse" />
             </div>
           </section>
@@ -379,7 +436,7 @@ export default async function Home() {
 
       {/* OTC Derivatives Pricing */}
       <section className="py-24 px-6 border-t border-border">
-        <div className="container mx-auto max-w-[1440px]">
+        <div className="container mx-auto max-w-[1600px]">
           <div className="grid lg:grid-cols-2 gap-16 items-center">
             <div className="space-y-8">
               <h2 className="text-3xl md:text-4xl font-semibold tracking-tight">

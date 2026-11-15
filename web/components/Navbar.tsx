@@ -22,7 +22,7 @@ const NAV_LINKS = [
   { href: "/dashboard", label: "风险平价回测" },
   { href: "/cffex", label: "股指期货看板" },
   { href: "/crypto", label: "加密货币看板" },
-  { href: "/otc-derivatives-pricing", label: "场外衍生品定价 · Experiment" },
+  { href: "/otc-derivatives-pricing", label: "场外衍生品定价" },
   { href: "/methodology", label: "方法论" },
 ] as const;
 
@@ -68,7 +68,7 @@ export function Navbar() {
       <Setup2faDialog open onOpenChange={() => {}} onDone={refresh} forced />
     )}
     <header className="sticky top-0 z-50 w-full border-b border-border bg-background/80 backdrop-blur-md">
-      <div className="container mx-auto max-w-[1440px] px-4 sm:px-6 lg:px-8 flex h-14 sm:h-16 items-center justify-between gap-3">
+      <div className="container mx-auto max-w-[1600px] px-4 sm:px-6 lg:px-8 flex h-14 sm:h-16 items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
           <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
             <SheetTrigger asChild>

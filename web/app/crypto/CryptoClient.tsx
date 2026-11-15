@@ -352,7 +352,7 @@ export function CryptoClient({ data: initialData }: { data: CorrelationResponse 
     <div className="min-h-screen bg-background text-foreground pb-24">
       {/* Page Header */}
       <div className="border-b border-border/40 bg-card/30 backdrop-blur-sm">
-        <div className="container mx-auto max-w-[1440px] px-4 sm:px-6 py-6 sm:py-8">
+        <div className="container mx-auto max-w-[1600px] px-4 sm:px-6 py-6 sm:py-8">
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
             <div>
               <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mb-2">加密货币看板</h1>
@@ -393,7 +393,7 @@ export function CryptoClient({ data: initialData }: { data: CorrelationResponse 
         </div>
       </div>
 
-      <div className="container mx-auto max-w-[1440px] px-4 sm:px-6 py-6 sm:py-8 space-y-8">
+      <div className="container mx-auto max-w-[1600px] px-4 sm:px-6 py-6 sm:py-8 space-y-8">
         {error && (
           <div className="bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-3 text-sm text-destructive">
             数据加载异常: {error}

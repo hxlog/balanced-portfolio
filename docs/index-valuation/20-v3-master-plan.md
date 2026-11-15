@@ -319,3 +319,24 @@
 - 后端验证（JWT 管理员令牌）：篮子 **create → list(1) → copy → PATCH 改名 → detail(2 资产, 参数完整) → delete → remaining 0** 全链路通过；修复 `%s::jsonb` 需 psycopg `Jsonb` 包装导致的 500。
 - 页面验证：`/dashboard` 含「篮子组合」区块；`/builder?mode=basket` 含回测起止日期控件；两页 200。
 - 截图：docs/revamp/screens/v3e-builder.png、v3e-dashboard-baskets.png。
+## 23. OTC 金标验证 + 首页/宽度（2026-11-15 23:55）
+
+### OTC 金标复现（8/8 通过）
+- 双时钟落地：`discount_day_count`（金标 BUS252 折现）+ `coupon_day_count`（ACT365 票息），默认沿用原 day_count 向后兼容；
+- 修复气囊解析公式：改为金标复制式 `KI参与率×(DIC−DIP) + 参与率×DOC`（35% 波动率偏差 3.0% → 0.03%）；
+- 新增测试 `bp_api/tests/test_otc_gold_standard.py`（雪球/凤凰/气囊/障碍共 8 例）+ 参考日历 fixture；
+- 复算偏差：雪球 ≤0.25%、凤凰 ≤0.35%、气囊 ≤0.03%、障碍（金标算法复现）≤0.24%；
+- 验证报告：docs/otc/validation-report.md；结论：**研究级雪球定价可用**，生产级需补「障碍观察日+rebate 计划、Delta 口径、真实日历差异、波动率曲面」。
+- 全量 OTC 测试 45 passed；后端全量 **516 passed / 3 skipped**。
+
+### 首页与全站宽度
+- 首页按钮更新：新增「指数估值工作台」「加密合约监控」，OTC 去掉 Experiment 标签；
+- 新增「新增能力」区块：MVI 双仪表盘 / 加密合约监控与大户因子 / 篮子组合 / 场外衍生品（金标 8/8）；
+- 全站 11 个页面容器 1440 → **1600px**；
+- 加密合约图表 OI 改千分位（`formatThousands`）、图表轴保留紧凑格式；
+- 截图：docs/revamp/screens/v3f-home2.png、v3f-home-features2.png。
+
+### 待完成
+- 全量 A 股/基金 ETL、/assets 统一资产池、复权口径中文化落地页；
+- 加密图表收尾（Smart Money 趋势、资金费率分位带、切换骨架）；
+- 最终清理本机服务/任务、确认服务器增量任务。

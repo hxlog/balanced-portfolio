@@ -116,6 +116,9 @@ def _price_once(
     maturity = _parse_date(spec["maturity_date"])
     start = _parse_date(spec["start_date"])
     day_count = DayCount(spec.get("day_count", "ACT365"))
+    # 金标准双时钟：折现（BUS252）与票息（ACT365）可不同；未显式指定时沿用 day_count。
+    coupon_day_count = DayCount(spec.get("coupon_day_count", spec.get("day_count", "ACT365")))
+    discount_day_count = DayCount(spec.get("discount_day_count", spec.get("day_count", "ACT365")))
     t_step = int(spec.get("t_step_per_year", 252))
     n_paths = int(spec.get("n_paths", 100_000))
     dt = 1.0 / t_step
@@ -130,7 +133,7 @@ def _price_once(
         return (0.0, None) if return_paths else 0.0
     # 扩散用交易日时钟; 现金流 DF 用 day_count (见 _df)
     t_year = n_steps / t_step
-    mat_discount = _df(r, day_count, valuation, maturity, cal)
+    mat_discount = _df(r, discount_day_count, valuation, maturity, cal)
     sgn = sign_of(spec.get("direction", "buy"))
 
     def _lvl(pct) -> float:
@@ -138,6 +141,7 @@ def _price_once(
 
     # ---- 解析解/积分法 (障碍/气囊) ----
     if engine in (EngineType.ANALYTIC, EngineType.QUAD) and product in (ProductType.BARRIER, ProductType.AIRBAG):
+        t_year = year_fraction(discount_day_count, valuation, maturity, cal)
         if product == ProductType.BARRIER:
             if engine == EngineType.QUAD:
                 pv_unit = eng.barrier_quad(
@@ -186,9 +190,9 @@ def _price_once(
         ko_idx = np.array([cal.business_offset(valuation, d) for d in ko_future], dtype=int)
         coupon_out = float(_f(spec, "coupon_out", 0.0))
         coupon_div = float(_f(spec, "coupon_div", coupon_out))
-        ko_amounts = np.array([coupon_out * year_fraction(day_count, start, d, cal) * notional for d in ko_future])
-        ko_discounts = np.array([_df(r, day_count, valuation, d, cal) for d in ko_future])
-        maturity_div_amount = coupon_div * year_fraction(day_count, start, maturity, cal) * notional
+        ko_amounts = np.array([coupon_out * year_fraction(coupon_day_count, start, d, cal) * notional for d in ko_future])
+        ko_discounts = np.array([_df(r, discount_day_count, valuation, d, cal) for d in ko_future])
+        maturity_div_amount = coupon_div * year_fraction(coupon_day_count, start, maturity, cal) * notional
         ko_barrier = _lvl(_f(spec, "ko_barrier_pct", 103))
         ki_barrier = _lvl(_f(spec, "ki_barrier_pct", 75))
         ki_strike = _lvl(_f(spec, "ki_strike_pct", 80))
@@ -206,7 +210,7 @@ def _price_once(
         ko_future = [d for d in _resolve_ko_dates(spec, cal, start, maturity) if d > valuation]
         obs_idx = np.array([cal.business_offset(valuation, d) for d in ko_future], dtype=int)
         period_coupon = float(_f(spec, "period_coupon", 0.0)) * notional
-        discounts = np.array([_df(r, day_count, valuation, d, cal) for d in ko_future])
+        discounts = np.array([_df(r, discount_day_count, valuation, d, cal) for d in ko_future])
         ko_barrier = _lvl(_f(spec, "ko_barrier_pct", 103))
         coupon_barrier = _lvl(_f(spec, "coupon_barrier_pct", _f(spec, "ki_barrier_pct", 75)))
         ki_barrier = _lvl(_f(spec, "ki_barrier_pct", 75))
