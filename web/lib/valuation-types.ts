@@ -221,3 +221,28 @@ export interface ValuationDetail {
   /** 抓取/入库时间，PiT 审计用。 */
   captured_at: string;
 }
+
+
+/** 市场估值指数 MVI（0=极度低估 / 100=极度高估）。 */
+export interface MviLatest {
+  as_of: string;
+  mvi: number;
+  cheap_score: number | null;
+  risk_score: number | null;
+  zone: string;
+  factors: Record<string, number> | null;
+  weights: Record<string, number> | null;
+  contributions: Record<string, number> | null;
+  risk_factors: Record<string, number | null> | null;
+}
+
+export interface MviPoint {
+  as_of: string;
+  mvi: number | null;
+  risk: number | null;
+}
+
+export interface MviInfo {
+  latest: MviLatest | null;
+  history: MviPoint[];
+}

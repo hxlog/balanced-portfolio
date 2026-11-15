@@ -1,5 +1,6 @@
 /** 后端 /api/valuation/* 响应 -> 前端类型映射（唯一入口，字段口径在这里收口）。 */
 import type {
+  MviInfo,
   BroadProxyCard,
   HistoryPoint,
   IndexCategory,
@@ -157,5 +158,33 @@ export function mapMarketCard(raw: Record<string, unknown>): MarketValuationCard
     as_of: String(raw.trade_date ?? raw.as_of ?? ""),
     sample_size: num(raw.sample_size) ?? 0,
     history_days: num(raw.history_days) ?? 0,
+  };
+}
+
+/** 映射 overview.meta.mvi。 */
+export function mapMvi(raw: unknown): MviInfo | null {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  const latestRaw = record.latest as Record<string, unknown> | null | undefined;
+  if (!latestRaw) return null;
+  return {
+    latest: {
+      as_of: String(latestRaw.as_of ?? ""),
+      mvi: Number(latestRaw.mvi ?? 0),
+      cheap_score: num(latestRaw.cheap_score),
+      risk_score: num(latestRaw.risk_score),
+      zone: String(latestRaw.zone ?? ""),
+      factors: (latestRaw.factors as Record<string, number>) ?? null,
+      weights: (latestRaw.weights as Record<string, number>) ?? null,
+      contributions: (latestRaw.contributions as Record<string, number>) ?? null,
+      risk_factors: (latestRaw.risk_factors as Record<string, number | null>) ?? null,
+    },
+    history: Array.isArray(record.history)
+      ? (record.history as Record<string, unknown>[]).map((item) => ({
+          as_of: String(item.as_of ?? ""),
+          mvi: num(item.mvi),
+          risk: num(item.risk),
+        }))
+      : [],
   };
 }

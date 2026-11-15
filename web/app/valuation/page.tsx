@@ -10,6 +10,7 @@ import {
   mapBroadProxy,
   mapIndexRow,
   mapMarketCard,
+  mapMvi,
   mapValuationHistory,
 } from "@/lib/valuation-api-map";
 import type {
@@ -61,6 +62,7 @@ async function ValuationContent({
   let boards: MarketValuationCard[] = [];
   let proxies: BroadProxyCard[] = [];
   let history: ValuationHistory | null = null;
+  let mvi: ReturnType<typeof mapMvi> = null;
   try {
     const [indices, overview, historyPayload] = await Promise.all([
       getCachedValuationIndices(1000, window, metric),
@@ -73,6 +75,7 @@ async function ValuationContent({
     proxies = Array.isArray(rawProxies)
       ? rawProxies.map((item) => mapBroadProxy(item as Record<string, unknown>))
       : [];
+    mvi = mapMvi(overview.meta?.mvi);
     history = mapValuationHistory(DEFAULT_PROXY, historyPayload, metric, window);
   } catch {
     // 不伪造数据：异常时渲染空态
@@ -83,6 +86,7 @@ async function ValuationContent({
       boards={boards}
       proxies={proxies}
       history={history}
+      mvi={mvi}
       window={window}
       metric={metric}
     />

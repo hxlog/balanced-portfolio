@@ -168,6 +168,10 @@ def register_routes(app: FastAPI) -> None:
             proxies = repositories_valuation.get_broad_proxies(
                 conn, _BROAD_PROXY_CODES, window
             )
+            try:
+                mvi = repositories_valuation.get_market_valuation_index(conn)
+            except Exception:  # noqa: BLE001
+                mvi = {"latest": None, "history": []}
         payload = _envelope(
             rows,
             as_of=_latest_as_of(rows),
@@ -175,6 +179,7 @@ def register_routes(app: FastAPI) -> None:
             window=window,
             proxies=proxies,
             proxy_codes=list(_BROAD_PROXY_CODES),
+            mvi=mvi,
         )
         cache.set_json(key, payload, ttl_seconds=CACHE_TTL_SECONDS)
         return payload

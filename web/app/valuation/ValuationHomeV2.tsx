@@ -19,6 +19,7 @@ import type {
   BroadProxyCard,
   IndexQuoteRow,
   MarketValuationCard,
+  MviInfo,
   PercentileWindow,
   ValuationHistory,
   ValuationMetric,
@@ -40,6 +41,7 @@ import {
 import {
   ChartCard,
   DividendValueChart,
+  MviPanel,
   PbDividendMatrix,
   RoePeMatrix,
   V2_METRICS,
@@ -140,6 +142,7 @@ export interface ValuationHomeV2Props {
   boards: MarketValuationCard[];
   proxies: BroadProxyCard[];
   history: ValuationHistory | null;
+  mvi: MviInfo | null;
   window: PercentileWindow;
   metric: ValuationMetric;
 }
@@ -149,6 +152,7 @@ export function ValuationHomeV2({
   boards: initialBoards,
   proxies: initialProxies,
   history: initialHistory,
+  mvi,
   window: initialWindow,
   metric: initialMetric,
 }: ValuationHomeV2Props) {
@@ -404,27 +408,11 @@ export function ValuationHomeV2({
         >
           <DividendValueChart rows={rows} />
         </ChartCard>
-        <ChartCard title="全市场截面" desc="东财截面 PE/PB（分位需积累 ≥60 个交易日）">
-          <div className="grid grid-cols-2 gap-2">
-            {boards.slice(0, 4).map((board) => {
-              const ready = board.history_days >= 60;
-              return (
-                <div key={board.board} className="rounded-lg border border-border p-2.5">
-                  <div className="text-[11px] text-muted-foreground">{board.label}</div>
-                  <div className="mt-0.5 text-lg font-semibold tabular-nums">
-                    {board.pe == null ? "—" : board.pe.toFixed(2)}
-                    <span className="ml-1 text-[10px] font-normal text-muted-foreground">PE</span>
-                  </div>
-                  <div className="text-[11px] tabular-nums text-muted-foreground">
-                    PB {board.pb == null ? "—" : board.pb.toFixed(2)} ·{" "}
-                    {ready && board.pe_percentile != null
-                      ? "分位 " + board.pe_percentile.toFixed(0) + "%"
-                      : "分位 " + board.history_days + "/60"}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+        <ChartCard
+          title="市场估值指数 MVI"
+          desc="双仪表盘 · 0=极度低估 / 100=极度高估 · 每日 17:05 刷新"
+        >
+          <MviPanel mvi={mvi} />
         </ChartCard>
       </section>
 

@@ -1171,6 +1171,62 @@ def upsert_fund_performance(conn: psycopg.Connection, rows: list[dict]) -> int:
     return len(rows)
 
 
+def upsert_market_valuation_index(conn: psycopg.Connection, rows: list[dict]) -> int:
+    """写入 MVI 时间序列（按 as_of 幂等）。"""
+    if not rows:
+        return 0
+    sql = """
+        INSERT INTO bp_market_valuation_index (
+            as_of, mvi, cheap_score, risk_score, zone,
+            factors, weights, contributions, risk_factors
+        ) VALUES (
+            %(as_of)s, %(mvi)s, %(cheap_score)s, %(risk_score)s, %(zone)s,
+            %(factors)s, %(weights)s, %(contributions)s, %(risk_factors)s
+        )
+        ON CONFLICT (as_of) DO UPDATE SET
+            mvi = EXCLUDED.mvi,
+            cheap_score = EXCLUDED.cheap_score,
+            risk_score = EXCLUDED.risk_score,
+            zone = EXCLUDED.zone,
+            factors = EXCLUDED.factors,
+            weights = EXCLUDED.weights,
+            contributions = EXCLUDED.contributions,
+            risk_factors = EXCLUDED.risk_factors,
+            updated_at = now()
+    """
+    with conn.cursor() as cur:
+        cur.executemany(sql, rows)
+    return len(rows)
+
+
+def get_market_valuation_index(conn: psycopg.Connection, history_limit: int = 160) -> dict:
+    """返回最新 MVI + 最近 history_limit 个点（周频）。"""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT as_of, mvi, cheap_score, risk_score, zone, factors, weights, contributions, risk_factors"
+            " FROM bp_market_valuation_index ORDER BY as_of DESC LIMIT 1"
+        )
+        row = cur.fetchone()
+        columns = [desc.name for desc in cur.description] if cur.description else []
+        latest = dict(zip(columns, row)) if row else None
+        cur.execute(
+            "SELECT as_of, mvi, risk_score FROM bp_market_valuation_index ORDER BY as_of DESC LIMIT %s",
+            (history_limit,),
+        )
+        history = [
+            {"as_of": item[0].isoformat() if hasattr(item[0], "isoformat") else str(item[0]),
+             "mvi": float(item[1]) if item[1] is not None else None,
+             "risk": float(item[2]) if item[2] is not None else None}
+            for item in cur.fetchall()
+        ]
+    if latest:
+        for key in ("mvi", "cheap_score", "risk_score"):
+            latest[key] = float(latest[key]) if latest.get(key) is not None else None
+        latest["as_of"] = latest["as_of"].isoformat() if hasattr(latest["as_of"], "isoformat") else str(latest["as_of"])
+        history.reverse()
+    return {"latest": latest, "history": history}
+
+
 def upsert_quote_health(conn: psycopg.Connection, rows: list[dict]) -> int:
     """写入指数行情覆盖率看护结果。"""
     if not rows:

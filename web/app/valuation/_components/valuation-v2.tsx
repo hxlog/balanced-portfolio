@@ -14,7 +14,7 @@ import { useMemo, useTransition, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { EChart } from "@/components/EChart";
-import type { IndexQuoteRow, PercentileWindow, ValuationMetric } from "@/lib/valuation-types";
+import type { IndexQuoteRow, MviInfo, PercentileWindow, ValuationMetric } from "@/lib/valuation-types";
 
 export const V2_METRICS: ReadonlyArray<{ value: ValuationMetric; label: string }> = [
   { value: "pe_ttm", label: "PE" },
@@ -386,6 +386,145 @@ function EmptyChart({ text }: { text: string }) {
   return (
     <div className="flex h-[280px] items-center justify-center rounded-lg border border-dashed border-border text-xs text-muted-foreground">
       {text}
+    </div>
+  );
+}
+
+/** 半环仪表盘（纯 SVG，双指数：估值分 / 风险分）。 */
+export function ScoreGauge({
+  score,
+  title,
+  subtitle,
+  leftLabel = "0",
+  rightLabel = "100",
+  palette,
+}: {
+  score: number;
+  title: string;
+  subtitle: string;
+  leftLabel?: string;
+  rightLabel?: string;
+  palette: string[];
+}) {
+  const size = 190;
+  const cx = size / 2;
+  const cy = size / 2 + 14;
+  const radius = size / 2 - 16;
+  const zones = [
+    { from: 0, to: 20, color: palette[0] },
+    { from: 20, to: 40, color: palette[1] },
+    { from: 40, to: 60, color: palette[2] },
+    { from: 60, to: 80, color: palette[3] },
+    { from: 80, to: 100, color: palette[4] },
+  ];
+  const angleOf = (value: number) => Math.PI - (value / 100) * Math.PI;
+  const point = (angle: number, dist: number) => [cx + dist * Math.cos(angle), cy - dist * Math.sin(angle)];
+  const arcs = zones.map((zone) => {
+    const [x0, y0] = point(angleOf(zone.from), radius);
+    const [x1, y1] = point(angleOf(zone.to), radius);
+    return <path key={zone.from} d={"M " + x0 + " " + y0 + " A " + radius + " " + radius + " 0 0 1 " + x1 + " " + y1} stroke={zone.color} strokeWidth={14} fill="none" />;
+  });
+  const [nx, ny] = point(angleOf(score), radius - 6);
+  return (
+    <div className="flex flex-col items-center">
+      <svg viewBox={"0 0 " + size + " " + (size - 8)} className="w-full max-w-[200px]">
+        {arcs}
+        <line x1={cx} y1={cy} x2={nx} y2={ny} stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" />
+        <circle cx={cx} cy={cy} r={4.5} fill="currentColor" />
+        <text x={cx} y={cy - 30} textAnchor="middle" fontSize={26} fontWeight={700} fill="currentColor">
+          {Math.round(score)}
+        </text>
+        <text x={cx - radius - 4} y={cy + 20} textAnchor="middle" fontSize={9} fill="#94a3b8">
+          {leftLabel}
+        </text>
+        <text x={cx + radius + 4} y={cy + 20} textAnchor="middle" fontSize={9} fill="#94a3b8">
+          {rightLabel}
+        </text>
+      </svg>
+      <div className="text-xs font-medium">{title}</div>
+    </div>
+  );
+}
+
+/** 市场估值指数面板（双仪表盘 + 因子贡献 + 历史走势）。 */
+export function MviPanel({ mvi }: { mvi: MviInfo | null }) {
+  const latest = mvi?.latest ?? null;
+  if (!latest) {
+    return <EmptyChart text="MVI 数据准备中（每日 17:05 刷新）" />;
+  }
+  const history = (mvi?.history ?? []).filter((item) => item.mvi != null);
+  const option = {
+    animation: false,
+    grid: { left: 4, right: 6, top: 8, bottom: 16, containLabel: false },
+    xAxis: { type: "category", show: false, data: history.map((item) => item.as_of) },
+    yAxis: { type: "value", show: false, min: 0, max: 100 },
+    series: [
+      {
+        type: "line",
+        showSymbol: false,
+        smooth: true,
+        data: history.map((item) => item.mvi),
+        lineStyle: { color: "#4f46e5", width: 1.6 },
+        areaStyle: { color: "rgba(79,70,229,0.10)" },
+      },
+    ],
+  };
+  const factors = latest.factors ?? {};
+  const weights = latest.weights ?? {};
+  const contributions = latest.contributions ?? {};
+  const riskF = latest.risk_factors ?? {};
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-2">
+        <ScoreGauge
+          score={latest.mvi}
+          title="估值分（0 便宜 → 100 贵）"
+          subtitle={latest.zone}
+          leftLabel="便宜"
+          rightLabel="贵"
+          palette={["#16a34a", "#65a30d", "#eab308", "#f97316", "#dc2626"]}
+        />
+        <ScoreGauge
+          score={latest.risk_score ?? 0}
+          title="风险分（0 安全 → 100 危险）"
+          subtitle={""}
+          leftLabel="安全"
+          rightLabel="危险"
+          palette={["#16a34a", "#65a30d", "#eab308", "#f97316", "#dc2626"]}
+        />
+      </div>
+      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+        <span>估值分低 + 风险分低 = 安全边际高</span>
+        <span className="tabular-nums">更新 {latest.as_of}</span>
+      </div>
+      <div className="space-y-1.5">
+        {Object.keys(factors).map((label) => {
+          const value = factors[label] ?? 0;
+          const weight = (weights[label] ?? 0) * 100;
+          return (
+            <div key={label}>
+              <div className="flex items-center justify-between text-[11px]">
+                <span>{label}</span>
+                <span className="tabular-nums text-muted-foreground">
+                  {value.toFixed(1)}% · 权重 {weight.toFixed(1)}%
+                </span>
+              </div>
+              <div className="mt-0.5 h-1.5 overflow-hidden rounded-full bg-muted">
+                <div className="h-full rounded-full bg-primary" style={{ width: Math.max(2, Math.min(100, value)) + "%" }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div>
+        <div className="mb-1 text-[11px] text-muted-foreground">MVI 近 5 年走势（0 便宜 / 100 贵）</div>
+        <EChart option={option} style={{ height: 72, width: "100%" }} />
+      </div>
+      <p className="text-[10px] leading-relaxed text-muted-foreground/80">
+        因子：PE/PB 分位（反向）、股息率、风险溢价、ROE 分位（2 年滚动分位，5 大宽基等权）。权重由「未来 1 年收益 IC
+        最大化」训练，滚动 3 年重估；重叠窗口 IC 偏乐观，仅作研究参考，不构成投资建议。
+        {latest.contributions ? <span className="hidden">{Object.keys(contributions).length}</span> : null}
+      </p>
     </div>
   );
 }
