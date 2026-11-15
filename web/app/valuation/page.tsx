@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { connection } from "next/server";
-import { ValuationHome } from "./ValuationHome";
 import {
   getCachedValuationHistory,
   getCachedValuationIndices,
@@ -19,99 +18,126 @@ import type {
   MarketValuationCard,
   PercentileWindow,
   ValuationHistory,
+  ValuationMetric,
 } from "@/lib/valuation-types";
-
-const DEFAULT_WINDOW: PercentileWindow = "5y";
-const DEFAULT_PROXY = "000300";
+import { ValuationHomeV2 } from "./ValuationHomeV2";
+import { ValuationToolbar } from "./_components/valuation-v2";
 
 export const metadata: Metadata = {
-  title: "指数估值 — PE/PB 分位与风险溢价",
+  title: "指数估值 — Valuation Band 与分位矩阵",
   description:
-    "指数估值看板：沪深300、中证500、中证1000 等宽基与行业指数的 PE/PB 历史分位、股息率与风险溢价。",
+    "指数估值看板：代表性宽基与 521 只指数的 PE/PB/股息率/风险溢价分位、Valuation Band、红利指数吸引力与估值矩阵。",
   alternates: { canonical: "/valuation" },
   openGraph: {
     title: "指数估值 | Balanced Portfolio",
     description:
-      "指数估值看板：沪深300、中证500、中证1000 等宽基与行业指数的 PE/PB 历史分位、股息率与风险溢价。",
+      "指数估值看板：Valuation Band、多窗口分位、红利指数吸引力与估值矩阵。",
     url: "/valuation",
   },
 };
 
-/** 骨架屏：SSR 首屏占位，数据流式到达后替换。 */
-function ValuationSkeleton() {
-  return (
-    <div className="min-h-screen bg-background text-foreground" role="status">
-      <span className="sr-only">正在加载指数估值数据</span>
-      <div className="mx-auto w-full max-w-[1440px] px-4 pb-16 pt-7 sm:px-6 sm:pt-9 lg:px-8">
-        <div className="h-8 w-40 animate-pulse rounded bg-muted" />
-        <div className="mt-2 h-4 w-72 max-w-full animate-pulse rounded bg-muted" />
-        <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-          {Array.from({ length: 5 }).map((_, index) => (
-            <div
-              key={index}
-              className="h-[156px] animate-pulse rounded-xl border border-border bg-card"
-            />
-          ))}
-        </div>
-        <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
-          {Array.from({ length: 2 }).map((_, index) => (
-            <div
-              key={index}
-              className="h-[304px] animate-pulse rounded-xl border border-border bg-card"
-            />
-          ))}
-        </div>
-        <div className="mt-6 h-[520px] animate-pulse rounded-xl border border-border bg-card" />
-      </div>
-    </div>
-  );
+const DEFAULT_PROXY = "000300";
+const WINDOWS = new Set<PercentileWindow>(["1y", "3y", "5y", "10y", "all"]);
+const METRICS = new Set<ValuationMetric>(["pe_ttm", "pb", "dividend_yield_ttm", "erp"]);
+
+function normalizeWindow(value: string | string[] | undefined): PercentileWindow {
+  const text = Array.isArray(value) ? value[0] : value;
+  return text && WINDOWS.has(text as PercentileWindow) ? (text as PercentileWindow) : "5y";
 }
 
-/** 数据层：连接后端读取预计算表；后端不可用时回退示例数据。 */
-async function ValuationData() {
-  // PPR：显式声明请求期数据，避免构建期预渲染去连后端。
+function normalizeMetric(value: string | string[] | undefined): ValuationMetric {
+  const text = Array.isArray(value) ? value[0] : value;
+  return text && METRICS.has(text as ValuationMetric) ? (text as ValuationMetric) : "pe_ttm";
+}
+
+async function ValuationContent({
+  window,
+  metric,
+}: {
+  window: PercentileWindow;
+  metric: ValuationMetric;
+}) {
   await connection();
   let rows: IndexQuoteRow[] = [];
-  let cards: MarketValuationCard[] = [];
+  let boards: MarketValuationCard[] = [];
   let proxies: BroadProxyCard[] = [];
   let history: ValuationHistory | null = null;
-  let asOf = "";
   try {
     const [indices, overview, historyPayload] = await Promise.all([
-      getCachedValuationIndices(1000, DEFAULT_WINDOW, "pe_ttm"),
-      getCachedValuationOverview(DEFAULT_WINDOW),
-      getCachedValuationHistory(DEFAULT_PROXY, "pe_ttm", DEFAULT_WINDOW),
+      getCachedValuationIndices(1000, window, metric),
+      getCachedValuationOverview(window),
+      getCachedValuationHistory(DEFAULT_PROXY, metric, window),
     ]);
     rows = (indices.data ?? []).map(mapIndexRow).filter((row) => row.index_code);
-    asOf = indices.meta?.as_of
-      ? String(indices.meta.as_of)
-      : rows.find((row) => row.trade_date)?.trade_date || "";
-    cards = (overview.data ?? []).map(mapMarketCard);
+    boards = (overview.data ?? []).map(mapMarketCard);
     const rawProxies = overview.meta?.proxies;
     proxies = Array.isArray(rawProxies)
       ? rawProxies.map((item) => mapBroadProxy(item as Record<string, unknown>))
       : [];
-    history = mapValuationHistory(DEFAULT_PROXY, historyPayload, "pe_ttm", DEFAULT_WINDOW);
+    history = mapValuationHistory(DEFAULT_PROXY, historyPayload, metric, window);
   } catch {
-    // 后端不可用时不伪造数据：页面展示空状态与错误提示
+    // 不伪造数据：异常时渲染空态
   }
   return (
-    <ValuationHome
+    <ValuationHomeV2
       rows={rows}
+      boards={boards}
       proxies={proxies}
-      boards={cards}
       history={history}
-      asOf={asOf}
-      total={rows.length}
-      defaultWindow={DEFAULT_WINDOW}
+      window={window}
+      metric={metric}
     />
   );
 }
 
-export default function ValuationPage() {
+function ContentSkeleton() {
   return (
-    <Suspense fallback={<ValuationSkeleton />}>
-      <ValuationData />
-    </Suspense>
+    <div className="mx-auto w-full max-w-[1440px] px-4 pb-16 pt-4 sm:px-6 lg:px-8" role="status">
+      <span className="sr-only">正在加载估值数据</span>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+        {Array.from({ length: 5 }).map((_, index) => (
+          <div key={index} className="h-[120px] animate-pulse rounded-xl border border-border bg-muted/40" />
+        ))}
+      </div>
+      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <div className="h-[340px] animate-pulse rounded-xl border border-border bg-muted/40 xl:col-span-2" />
+        <div className="h-[340px] animate-pulse rounded-xl border border-border bg-muted/40" />
+      </div>
+      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <div className="h-[320px] animate-pulse rounded-xl border border-border bg-muted/40 xl:col-span-2" />
+        <div className="h-[320px] animate-pulse rounded-xl border border-border bg-muted/40" />
+      </div>
+      <div className="mt-4 h-[420px] animate-pulse rounded-xl border border-border bg-muted/40" />
+    </div>
+  );
+}
+
+function ToolbarSkeleton() {
+  return <div className="h-8 w-72 animate-pulse rounded-lg bg-muted/50" />;
+}
+
+export default async function ValuationPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const params = await searchParams;
+  const window = normalizeWindow(params.window);
+  const metric = normalizeMetric(params.metric);
+
+  return (
+    <div className="min-h-screen bg-background text-foreground">
+      <div className="mx-auto w-full max-w-[1440px] px-4 pt-7 sm:px-6 sm:pt-9 lg:px-8">
+        <header className="flex flex-wrap items-end justify-between gap-4 border-b border-border pb-4">
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">指数估值</h1>
+          <Suspense fallback={<ToolbarSkeleton />}>
+            <ValuationToolbar window={window} metric={metric} />
+          </Suspense>
+        </header>
+      </div>
+      <Suspense key={window + ":" + metric} fallback={<ContentSkeleton />}>
+        <ValuationContent window={window} metric={metric} />
+      </Suspense>
+    </div>
   );
 }

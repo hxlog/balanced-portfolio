@@ -82,7 +82,7 @@ export function PeBandChart({
   metric,
   mode,
   sigma,
-  title,
+  frequency = "周线",
   style,
 }: {
   series: HistoryPoint[];
@@ -90,7 +90,7 @@ export function PeBandChart({
   metric: ValuationMetric;
   mode: BandMode;
   sigma: number;
-  title: string;
+  frequency?: string;
   style?: CSSProperties;
 }) {
   const dates = series.map((point) => point.trade_date.slice(0, 10));
@@ -148,7 +148,11 @@ export function PeBandChart({
         return high + pad;
       },
       splitLine: { lineStyle: { color: "#f1f2f5" } },
-      axisLabel: { color: "#9ca3af", fontSize: 10 },
+      axisLabel: {
+        color: "#9ca3af",
+        fontSize: 10,
+        formatter: (value: number) => Number(value).toFixed(2),
+      },
     },
     series: [
       {
@@ -192,15 +196,17 @@ export function PeBandChart({
     <div>
       <EChart option={option} style={style || { height: 240, width: "100%" }} />
       <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-        <span>{title}</span>
-        <span className="tabular-nums">
+        <span className="tabular-nums text-foreground">
           当前 {last == null ? "—" : last.toFixed(2) + unit}
         </span>
+        <span>{frequency}</span>
         <span className="tabular-nums">
           分位 {stats?.pct == null ? "—" : stats.pct.toFixed(1) + "%"}
         </span>
+        <span className="tabular-nums">样本 {stats?.sample_size ?? 0} 点</span>
         <span className="tabular-nums">
-          样本 {stats?.sample_size ?? 0} 点
+          均值 {stats?.mean == null ? "—" : stats.mean.toFixed(2) + unit}
+          {stats?.p50 == null ? "" : " · 中位数 " + stats.p50.toFixed(2) + unit}
         </span>
       </div>
     </div>

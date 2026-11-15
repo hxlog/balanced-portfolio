@@ -80,6 +80,9 @@ export function mapIndexRow(raw: Record<string, unknown>): IndexQuoteRow {
     metric_percentile: num(raw.metric_percentile),
     high_all: num(raw.high_all),
     distance_from_all_high_pct: num(raw.dist_from_all_high_pct),
+    roe_ttm: num(raw.roe_ttm),
+    fund_aum: num(raw.fund_aum),
+    fund_count: num(raw.fund_count),
   };
 }
 

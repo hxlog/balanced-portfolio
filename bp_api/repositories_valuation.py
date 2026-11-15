@@ -671,6 +671,8 @@ def get_index_list(
                 m.index_type,
                 m.industry,
                 m.market,
+                fs.fund_count,
+                fs.aum_sum AS fund_aum,
                 m.publisher,
                 v.trade_date,
                 v.calc_src,
@@ -678,6 +680,7 @@ def get_index_list(
                 v.pb,
                 v.dividend_yield_ttm,
                 v.erp,
+                v.roe_ttm,
                 v.level_pe,
                 v.level_pb,
                 v.level_dividend,
@@ -744,8 +747,8 @@ def get_index_list(
             LEFT JOIN LATERAL (
                 SELECT
                     d.index_code, d.trade_date, d.calc_src, d.pe_ttm, d.pb,
-                    d.dividend_yield_ttm, d.erp, d.level_pe, d.level_pb,
-                    d.level_dividend, d.captured_at, d.raw
+                    d.dividend_yield_ttm, d.erp, d.roe_ttm,
+                    d.level_pe, d.level_pb, d.level_dividend, d.captured_at, d.raw
                 FROM bp_index_valuation_daily d
                 WHERE d.index_code = m.index_code AND d.is_primary
                 ORDER BY d.trade_date DESC
@@ -787,6 +790,8 @@ def get_index_list(
                       AND q.trade_date >= current_date - 400
                 ) t
             ) qp ON TRUE
+            -- 跟踪基金规模：读预计算表（65 号迁移），避免 521 次 LATERAL 聚合
+            LEFT JOIN bp_index_fund_scale fs ON fs.index_code = m.index_code
             -- 区间最高 / 52 周前收盘：读预计算表（64 号迁移），避免每次全历史扫行情表
             LEFT JOIN bp_index_quote_extremes qh ON qh.symbol = m.index_code
             WHERE (%(query)s::text IS NULL
@@ -837,6 +842,9 @@ def get_index_list(
         "high_all",
         "dist_from_all_high_pct",
         "change_52w_pct",
+        "roe_ttm",
+        "fund_aum",
+        "fund_count",
     }
     with conn.cursor() as cur:
         cur.execute(sql, params)

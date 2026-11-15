@@ -343,7 +343,7 @@ export function ValuationDetailClient({
                     metric={metric}
                     mode={mode}
                     sigma={sigma}
-                    title={WINDOW_LABEL[window]}
+                    frequency="周线"
                   />
                 </div>
               ) : (

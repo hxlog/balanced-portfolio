@@ -119,6 +119,12 @@ export interface IndexQuoteRow {
   high_all?: number | null;
   /** 距区间最高点的跌幅（百分数点，通常为负）。 */
   distance_from_all_high_pct?: number | null;
+  /** ROE(TTM)，百分数点。 */
+  roe_ttm?: number | null;
+  /** 跟踪基金规模合计（元）。 */
+  fund_aum?: number | null;
+  /** 跟踪基金数量。 */
+  fund_count?: number | null;
 }
 
 /** 估值历史序列点（bp_index_valuation_series）。 */
