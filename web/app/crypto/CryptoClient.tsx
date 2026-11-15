@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EChart } from "@/components/EChart";
 import { getChartTheme, withAlpha } from "@/lib/chart-theme";
+import { cn } from "@/lib/utils";
 
 import type {
   CryptoCorrelationResponse as CorrelationResponse,
@@ -126,6 +127,25 @@ export function CryptoClient({ data: initialData }: { data: CorrelationResponse 
     }
     return result;
   }, [currentRolling]);
+
+  // 相关性数据表：同一方法下，各资产对在 4 个窗口的最新相关系数（取最后一个非空值）
+  const corrTable = useMemo(() => {
+    if (!data) return [] as Array<{ key: string; label: string; values: Array<number | null> }>;
+    const rows = new Map<string, { label: string; values: Array<number | null> }>();
+    for (const win of WINDOWS) {
+      const byMethod = data.rolling[win.value]?.[corrMethod] ?? {};
+      for (const [key, pair] of Object.entries(byMethod)) {
+        const entry = rows.get(key) ?? { label: pair.label, values: [null, null, null, null] };
+        const valid = (pair.correlation ?? []).filter((v): v is number => v != null);
+        const index = WINDOWS.findIndex((item) => item.value === win.value);
+        if (index >= 0 && valid.length > 0) entry.values[index] = valid[valid.length - 1];
+        rows.set(key, entry);
+      }
+    }
+    return [...rows.entries()]
+      .map(([key, entry]) => ({ key, ...entry }))
+      .sort((a, b) => a.label.localeCompare(b.label, "zh-CN"));
+  }, [data, corrMethod]);
 
   // --- Chart 1: 滚动相关性 + BTC 价格 (双 Y 轴, NYSE 日历) ---
   const chart1Option = useMemo(() => {
@@ -432,6 +452,60 @@ export function CryptoClient({ data: initialData }: { data: CorrelationResponse 
               <EChart option={chart1Option} style={{ height: 440, width: "100%" }} />
             ) : (
               <div className="flex items-center justify-center h-[440px] text-muted-foreground text-sm">
+                {error ? "数据加载失败" : "数据加载中..."}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 相关性数据表 */}
+        <Card className="border-border/50 bg-card/30 backdrop-blur-sm">
+          <CardHeader className="border-b border-border/40 pb-4">
+            <CardTitle className="text-base">相关性数据表</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">
+              {methodLabel} · 各资产对在不同窗口的最新滚动相关系数（取序列最后一个有效值）
+            </p>
+          </CardHeader>
+          <CardContent className="pt-4">
+            {corrTable.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[520px] border-collapse text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-[11px] text-muted-foreground">
+                      <th className="py-2 text-left font-medium">资产对</th>
+                      {WINDOWS.map((w) => (
+                        <th key={w.value} className="py-2 text-right font-medium">
+                          {w.label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {corrTable.map((row) => (
+                      <tr key={row.key} className="border-b border-border/50 last:border-0">
+                        <td className="py-2 text-xs">{row.label}</td>
+                        {row.values.map((value, index) => (
+                          <td
+                            key={WINDOWS[index].value}
+                            className={cn(
+                              "py-2 text-right font-mono text-xs tabular-nums",
+                              value == null
+                                ? "text-muted-foreground"
+                                : value >= 0
+                                  ? "text-up"
+                                  : "text-down",
+                            )}
+                          >
+                            {value == null ? "—" : value.toFixed(3)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="flex h-24 items-center justify-center text-sm text-muted-foreground">
                 {error ? "数据加载失败" : "数据加载中..."}
               </div>
             )}

@@ -26,6 +26,15 @@ import type {
 
 const SERIES_REFRESH_MS = 60_000;
 
+/** 序列窗口：回补 Binance 历史后可查看 7 天 / 30 天。 */
+const SERIES_WINDOWS = [
+  { hours: 24, label: "24H", desc: "最近 24 小时" },
+  { hours: 168, label: "7D", desc: "最近 7 天" },
+  { hours: 720, label: "30D", desc: "最近 30 天" },
+] as const;
+
+type SeriesWindowHours = (typeof SERIES_WINDOWS)[number]["hours"];
+
 type SeriesStatus = "loading" | "ready" | "error";
 
 interface SeriesState {
@@ -83,8 +92,10 @@ export function CryptoFuturesChart({
     error: null,
   });
   const [retryToken, setRetryToken] = useState(0);
+  const [hours, setHours] = useState<SeriesWindowHours>(24);
 
   const contractCode = contract.contract_code;
+  const windowMeta = SERIES_WINDOWS.find((item) => item.hours === hours) ?? SERIES_WINDOWS[0];
 
   useEffect(() => {
     let cancelled = false;
@@ -98,7 +109,7 @@ export function CryptoFuturesChart({
       controller = nextController;
       try {
         const response = await fetch(
-          `/api/crypto/futures/${encodeURIComponent(contractCode)}/series?hours=24`,
+          `/api/crypto/futures/${encodeURIComponent(contractCode)}/series?hours=${hours}`,
           {
             cache: "no-store",
             headers: { Accept: "application/json" },
@@ -141,7 +152,7 @@ export function CryptoFuturesChart({
       controller?.abort();
       window.clearInterval(timer);
     };
-  }, [contractCode, retryToken]);
+  }, [contractCode, retryToken, hours]);
 
   const points = state.data;
   const spansMultipleDays = useMemo(
@@ -175,7 +186,7 @@ export function CryptoFuturesChart({
       textStyle: { color: theme.text },
       aria: {
         enabled: true,
-        description: `${contractCode} 最近 24 小时：标记价折线、OI 名义值面积图与多空比折线。`,
+        description: `${contractCode} ${windowMeta.desc}：标记价折线、OI 名义值面积图与多空比折线。`,
       },
       legend: {
         top: 0,
@@ -411,12 +422,26 @@ export function CryptoFuturesChart({
               </CardTitle>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              最近 24 小时 · 5 分钟快照 · 上海时间
+              {windowMeta.desc} · 5 分钟快照（历史为 1 小时补采） · 上海时间
             </p>
           </div>
-          <Badge variant="outline" className="shrink-0 font-mono tabular-nums">
-            24H
-          </Badge>
+          <div className="flex shrink-0 items-center gap-1">
+            {SERIES_WINDOWS.map((item) => (
+              <button
+                key={item.hours}
+                type="button"
+                onClick={() => setHours(item.hours)}
+                className={cn(
+                  "rounded-md border px-2 py-1 font-mono text-[11px] tabular-nums transition-colors",
+                  hours === item.hours
+                    ? "border-foreground bg-foreground text-background"
+                    : "border-border text-muted-foreground hover:bg-muted",
+                )}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="mt-4 grid grid-cols-3 gap-3 text-xs">

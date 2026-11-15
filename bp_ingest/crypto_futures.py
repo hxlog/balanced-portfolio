@@ -55,6 +55,8 @@ PROXY_ENV = "BP_BINANCE_PROXY_URL"
 TOP_CONTRACTS = 30
 SNAPSHOT_PERIOD = "5m"
 PERCENTILE_WINDOWS: tuple[int, ...] = (30, 90, 180)
+# 每个窗口要求的最小样本天数：样本不足时宁可不输出，避免「30 个样本冒充 90 天分位」。
+MIN_SAMPLE_BY_WINDOW: dict[int, int] = {30: 20, 90: 60, 180: 120}
 PERCENTILE_METRICS: tuple[str, ...] = (
     "mark_price",
     "oi_notional",
@@ -72,6 +74,8 @@ PREMIUM_INDEX = "/fapi/v1/premiumIndex"
 OPEN_INTEREST = "/fapi/v1/openInterest"
 GLOBAL_LONG_SHORT = "/futures/data/globalLongShortAccountRatio"
 TAKER_LONG_SHORT = "/futures/data/takerlongshortRatio"
+KLINE = "/fapi/v1/klines"
+FUNDING_RATE = "/fapi/v1/fundingRate"
 OI_HIST = "/futures/data/openInterestHist"
 
 ALLOWED_PATHS: frozenset[str] = frozenset(
@@ -83,6 +87,8 @@ ALLOWED_PATHS: frozenset[str] = frozenset(
         GLOBAL_LONG_SHORT,
         TAKER_LONG_SHORT,
         OI_HIST,
+        KLINE,
+        FUNDING_RATE,
     }
 )
 
@@ -618,6 +624,8 @@ def compute_percentiles(
                     if start <= trade_date <= metric_as_of
                 ]
                 if not values:
+                    continue
+                if len(values) < MIN_SAMPLE_BY_WINDOW.get(window_days, 1):
                     continue
                 pct = percentile(values, values[-1])
                 if pct is None:
