@@ -20,7 +20,7 @@ def register_routes(app: FastAPI) -> None:
         adjust: str = Query("bfq", description="行情口径 bfq/qfq/hfq"),
         limit: int = Query(50, ge=1, le=200),
         offset: int = Query(0, ge=0),
-        _user: auth.UserContext | None = Depends(auth.optional_user),
+        _user: auth.UserContext = Depends(auth.require_asset_editor),
     ) -> dict:
         if adjust not in ADJUST_LABELS:
             adjust = "bfq"

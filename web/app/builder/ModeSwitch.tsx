@@ -20,7 +20,14 @@ const MODES: { value: BuilderMode; label: string; icon: typeof LayoutGrid }[] = 
  *   避免 cacheComponents + 多层 Suspense 下 soft navigation 偶发不提交的问题；
  * - 切到四象限时删除 mode/basket，保留 id/copy 等编辑参数。
  */
-export function ModeSwitch({ mode }: { mode: BuilderMode }) {
+export function ModeSwitch({
+  mode,
+  basePath = "/builder",
+}: {
+  mode: BuilderMode;
+  /** 复用的页面路径：/builder 或 /dashboard。 */
+  basePath?: string;
+}) {
   const searchParams = useSearchParams();
 
   const hrefFor = (next: BuilderMode) => {
@@ -31,7 +38,7 @@ export function ModeSwitch({ mode }: { mode: BuilderMode }) {
       params.delete("basket");
     }
     const qs = params.toString();
-    return "/builder" + (qs ? "?" + qs : "");
+    return basePath + (qs ? "?" + qs : "");
   };
 
   return (

@@ -24,6 +24,7 @@ import {
 } from "@/lib/asset-form";
 import { useAuth } from "@/lib/auth";
 import { BacktestProgressDialog } from "@/components/BacktestProgressDialog";
+import { UnifiedAssetsPanel } from "@/components/UnifiedAssetsPanel";
 
 /** 资产分类枚举(对应 bp_index_config.category) */
 const CATEGORY_OPTIONS: { value: string; label: string }[] = [
@@ -486,6 +487,18 @@ export default function AdminAssetsPage() {
           管理可选投资品、测试数据源读取，并查看最近行情与清洗状态。
         </p>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">统一资产池（全市场搜索）</CardTitle>
+          <CardDescription>
+            A 股 / 指数 / 基金 / ETF 全市场检索与行情覆盖状态；复权口径：不复权 / 前复权 / 后复权（回测默认后复权）。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pt-0 sm:pt-0">
+          <UnifiedAssetsPanel className="max-h-[420px] overflow-y-auto pr-1" />
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

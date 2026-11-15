@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, Search } from "lucide-react";
+import { getToken } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
@@ -31,7 +32,7 @@ const ADJUST_OPTIONS = [
   { value: "hfq", label: "后复权" },
 ];
 
-export function AssetsClient() {
+export function UnifiedAssetsPanel({ className }: { className?: string }) {
   const [q, setQ] = useState("");
   const [type, setType] = useState("");
   const [adjust, setAdjust] = useState("bfq");
@@ -50,7 +51,10 @@ export function AssetsClient() {
     params.set("adjust", adjust);
     params.set("limit", String(nextLimit));
     try {
-      const response = await fetch("/api/assets/unified?" + params.toString());
+      const token = getToken();
+      const response = await fetch("/api/assets/unified?" + params.toString(), {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
       if (!response.ok) throw new Error("请求失败");
       const payload = await response.json();
       setRows((payload?.data ?? []) as AssetRow[]);
@@ -74,7 +78,7 @@ export function AssetsClient() {
   }, [rows]);
 
   return (
-    <div className="mt-5">
+    <div className={className}>
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-[240px] flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />

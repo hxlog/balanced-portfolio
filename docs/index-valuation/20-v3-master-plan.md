@@ -372,3 +372,14 @@
 - 全站页面轻量过渡动画（`main` 淡入，尊重 reduce-motion）；
 - OTC 页面标题与正文去掉 Experiment 标签；
 - 操作文档：docs/data/asset-pool-etl.md。
+## 26. dashboard 模式切换 + 资产池并入管理后台（2026-11-16 00:10）
+- **/dashboard 不再单独显示「篮子组合」**：新增与 /builder 完全相同的 `ModeSwitch` 按钮（四象限组合 / 一篮子资产），复用同一组件；
+  - `/dashboard`：四象限组合回测看板；`/dashboard?mode=basket`：一篮子资产管理（列表/打开/复制/删除/新建）；
+  - 模式由服务端根据 `?mode=` 解析后传给客户端门组件，basket 模式不触发默认组合 307 重定向、不拉 demo 回测结果；
+  - `ModeSwitch` 增加 `basePath` 参数，builder 与 dashboard 共用一套按钮实现。
+- **/assets 不再对外暴露**：
+  - 删除 `/assets` 路由（现返回 404），Navbar 移除「资产池」入口；
+  - 统一资产池面板迁移到 `/admin/assets` 顶部（卡片「统一资产池（全市场搜索）」，股票/指数/基金/ETF + 三口径状态）；
+  - `/api/assets/unified` 改为 `require_asset_editor`（管理员或资产编辑权限），匿名返回 401；
+  - 前端面板请求自动携带 `Authorization: Bearer`。
+- 验证：`/dashboard` 默认显示四象限 + 两个切换按钮；点击「一篮子资产」→ `/dashboard?mode=basket` 显示篮子管理与「新建篮子」；`/assets` 404；管理员 `/admin/assets` 显示统一资产池并加载出数据。

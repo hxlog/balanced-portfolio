@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * /dashboard 的「篮子组合」区块：展示已保存的 basket，
+ * /dashboard 的「一篮子资产」区块：展示已保存的 basket，
  * 支持打开（编辑）、复制、删除（与四象限组合的操作入口保持一致）。
  */
 import { useEffect, useState } from "react";
@@ -100,7 +100,7 @@ export function DashboardBaskets() {
             <Layers className="h-4 w-4" /> 篮子组合
           </CardTitle>
           <CardDescription>
-            在「篮子模式」保存的单层配置，可打开编辑、复制或删除（与四象限组合分开管理）。
+            在「一篮子资产」模式保存的单层配置，可打开编辑、复制或删除（与四象限组合分开管理）。
           </CardDescription>
         </div>
         <Button variant="outline" size="sm" asChild>
