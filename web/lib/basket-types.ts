@@ -113,6 +113,9 @@ export interface BasketOptimizeInput {
   lookback_days: number;
   risk_free: number;
   risk_budget?: Record<string, number>;
+  /** 回测/优化区间（含），ISO 日期；未指定则用全部可用历史。 */
+  start?: string;
+  end?: string;
 }
 
 export interface BasketBacktestInput extends BasketOptimizeInput {
@@ -167,12 +170,50 @@ export interface BasketRebalance {
   turnover?: number;
 }
 
+export interface BasketEqualNavPoint {
+  trade_date: string;
+  nav: number;
+}
+
+export interface BasketRebalanceAsset {
+  key: string;
+  symbol: string;
+  source: string;
+  prev_weight: number;
+  target_weight: number;
+  delta: number;
+}
+
+export interface BasketRebalanceEvent {
+  trade_date: string;
+  reason?: string | null;
+  turnover: number;
+  max_deviation: number;
+  assets: BasketRebalanceAsset[];
+}
+
+export interface BasketRecord {
+  basket_id: number;
+  owner_user_id: number | null;
+  name: string;
+  description: string | null;
+  method: string;
+  assets: Array<{ symbol: string; source: string }>;
+  params: Record<string, unknown>;
+  latest_result: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface BasketBacktestResult {
   method: string;
   effective_start: string;
   lookback: number;
   n_obs: number;
   nav: BasketNavPoint[];
+  equal_weight_nav?: BasketEqualNavPoint[];
+  equal_weight_metrics?: Record<string, number | null>;
+  rebalance_events?: BasketRebalanceEvent[];
   annualized_return: number;
   annualized_vol: number;
   max_drawdown: number;

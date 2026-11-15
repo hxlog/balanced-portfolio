@@ -9,6 +9,7 @@ from datetime import date
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException
+from psycopg.types.json import Jsonb
 
 from . import auth, db
 from .repositories import _json_safe
@@ -94,9 +95,9 @@ def register_routes(app: FastAPI) -> None:
                     payload.name,
                     payload.description,
                     payload.method,
-                    _json_safe(assets),
-                    _json_safe(payload.params or {}),
-                    _json_safe(payload.latest_result) if payload.latest_result else None,
+                    Jsonb(_json_safe(assets)),
+                    Jsonb(_json_safe(payload.params or {})),
+                    Jsonb(_json_safe(payload.latest_result)) if payload.latest_result else None,
                 ),
             )
             row = cur.fetchone()
@@ -128,13 +129,13 @@ def register_routes(app: FastAPI) -> None:
                 values.append(payload.method)
             if payload.assets is not None:
                 sets.append("assets = %s::jsonb")
-                values.append(_json_safe([{"symbol": a.symbol, "source": a.source} for a in payload.assets]))
+                values.append(Jsonb(_json_safe([{"symbol": a.symbol, "source": a.source} for a in payload.assets])))
             if payload.params is not None:
                 sets.append("params = %s::jsonb")
-                values.append(_json_safe(payload.params))
+                values.append(Jsonb(_json_safe(payload.params)))
             if payload.latest_result is not None:
                 sets.append("latest_result = %s::jsonb")
-                values.append(_json_safe(payload.latest_result))
+                values.append(Jsonb(_json_safe(payload.latest_result)))
             if not sets:
                 return {"data": basket}
             sets.append("updated_at = now()")
@@ -169,9 +170,9 @@ def register_routes(app: FastAPI) -> None:
                     new_name,
                     basket.get("description"),
                     basket.get("method"),
-                    _json_safe(basket.get("assets")),
-                    _json_safe(basket.get("params")),
-                    _json_safe(basket.get("latest_result")) if basket.get("latest_result") else None,
+                    Jsonb(_json_safe(basket.get("assets"))),
+                    Jsonb(_json_safe(basket.get("params"))),
+                    Jsonb(_json_safe(basket.get("latest_result"))) if basket.get("latest_result") else None,
                 ),
             )
             new_id = cur.fetchone()[0]

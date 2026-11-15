@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import {
@@ -8,6 +9,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Save,
   Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -19,12 +21,23 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { api, type Asset } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import {
   backtestBasket,
   basketErrorMessage,
+  fetchBasket,
   optimizeBasket,
+  saveBasket,
+  updateBasket,
 } from "@/lib/basket-api";
 import { formatPct, normalizeRiskBudget } from "@/lib/basket-format";
 import {
@@ -43,6 +56,7 @@ import {
   type BasketMethod,
   type BasketOptimizeInput,
   type BasketOptimizeResult,
+  type BasketRecord,
   type StockSearchItem,
 } from "@/lib/basket-types";
 import { cn } from "@/lib/utils";
@@ -54,6 +68,17 @@ import {
 } from "./BasketAssets";
 import { BasketErrorPanel, BasketResults } from "./BasketResults";
 import { ModeSwitch } from "./ModeSwitch";
+
+function isoDate(value: Date): string {
+  return value.toISOString().slice(0, 10);
+}
+
+function defaultDateRange(): { start: string; end: string } {
+  const end = new Date();
+  const start = new Date(end);
+  start.setFullYear(start.getFullYear() - 3);
+  return { start: isoDate(start), end: isoDate(end) };
+}
 
 function canSaveAfterProbeError(error: unknown): boolean {
   const detail = (
@@ -72,6 +97,11 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
   const [poolAssets, setPoolAssets] = useState<Asset[]>(initialAssets);
   const [items, setItems] = useState<BasketItem[]>([]);
   const [method, setMethod] = useState<BasketMethod>("risk_parity");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const initialRange = useMemo(() => defaultDateRange(), []);
+  const [startDate, setStartDate] = useState(initialRange.start);
+  const [endDate, setEndDate] = useState(initialRange.end);
   const [lookback, setLookback] = useState(156);
   const [riskFreePct, setRiskFreePct] = useState(0);
   const [bandPct, setBandPct] = useState(5);
@@ -90,6 +120,11 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
   const [backtestError, setBacktestError] = useState<string | null>(null);
   const [backtestSig, setBacktestSig] = useState<string | null>(null);
   const [ingestingKey, setIngestingKey] = useState<string | null>(null);
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [saveName, setSaveName] = useState("");
+  const [saveDesc, setSaveDesc] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [loadedBasket, setLoadedBasket] = useState<BasketRecord | null>(null);
   const backtestController = useRef<AbortController | null>(null);
 
   useEffect(
@@ -98,6 +133,111 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
     },
     [],
   );
+
+  // ?basket=<id>：载入已保存的篮子配置（编辑模式）。
+  useEffect(() => {
+    const raw = searchParams.get("basket");
+    if (!raw) return;
+    const basketId = Number(raw);
+    if (!Number.isFinite(basketId)) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const record = await fetchBasket<BasketRecord>(basketId);
+        if (cancelled) return;
+        setLoadedBasket(record);
+        setItems(
+          record.assets.map((asset) => {
+            const hit = initialAssets.find(
+              (item) => item.symbol === asset.symbol && item.source === asset.source,
+            );
+            if (hit) return basketItemFromAsset(hit);
+            return {
+              key: basketKey(asset.symbol, asset.source),
+              symbol: asset.symbol,
+              source: asset.source,
+              name: asset.symbol,
+              adjustView: "hfq" as BasketAdjust,
+              inPool: false,
+              hasData: true,
+            };
+          }),
+        );
+        setMethod(record.method as BasketMethod);
+        const params = (record.params ?? {}) as Record<string, unknown>;
+        if (typeof params.lookback_days === "number") setLookback(params.lookback_days);
+        if (typeof params.rebalance_band === "number") setBandPct(Number(params.rebalance_band) * 100);
+        if (typeof params.risk_free === "number") setRiskFreePct(Number(params.risk_free) * 100);
+        if (typeof params.start === "string") setStartDate(params.start);
+        if (typeof params.end === "string") setEndDate(params.end);
+        setSaveName(record.name);
+        setSaveDesc(record.description ?? "");
+        toast.success("已载入篮子「" + record.name + "」，可修改后重新运行回测");
+      } catch (error) {
+        if (!cancelled) toast.error(basketErrorMessage(error));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams, initialAssets]);
+
+  const handleSaveBasket = async () => {
+    if (!saveName.trim()) {
+      toast.error("请输入篮子名称");
+      return;
+    }
+    if (items.length === 0) {
+      toast.error("请先添加资产");
+      return;
+    }
+    setSaving(true);
+    try {
+      const params: Record<string, unknown> = {
+        lookback_days: lookbackDays,
+        rebalance_band: band,
+        risk_free: riskFree,
+        start: startDate || undefined,
+        end: endDate || undefined,
+      };
+      if (method === "risk_budget") params.risk_budget = budgetValues;
+      const latestResult = backtest
+        ? {
+            method: backtest.method,
+            effective_start: backtest.effective_start,
+            annualized_return: backtest.annualized_return,
+            annualized_vol: backtest.annualized_vol,
+            max_drawdown: backtest.max_drawdown,
+            sharpe: backtest.sharpe,
+            rebalance_count: backtest.rebalance_count,
+            n_obs: backtest.n_obs,
+          }
+        : null;
+      const payload = {
+        name: saveName.trim(),
+        description: saveDesc.trim() || null,
+        method,
+        assets: items.map((item) => ({ symbol: item.symbol, source: item.source })),
+        params,
+        latest_result: latestResult,
+      };
+      if (loadedBasket) {
+        await updateBasket(loadedBasket.basket_id, payload);
+        toast.success("篮子已更新");
+        setSaveOpen(false);
+      } else {
+        const created = await saveBasket(payload);
+        toast.success("篮子已保存，可在 /dashboard 查看");
+        setLoadedBasket({ ...payload, basket_id: created.basket_id, owner_user_id: null, created_at: "", updated_at: "" } as unknown as BasketRecord);
+        setSaveOpen(false);
+        router.replace("/builder?mode=basket&basket=" + created.basket_id, { scroll: false });
+      }
+    } catch (error) {
+      toast.error(basketErrorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const selectedKeys = useMemo(
     () => new Set(items.map((item) => item.key)),
@@ -152,6 +292,8 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
       method,
       lookback_days: lookbackDays,
       risk_free: riskFree,
+      ...(startDate ? { start: startDate } : {}),
+      ...(endDate ? { end: endDate } : {}),
       ...(method === "risk_budget" ? { risk_budget: budgetValues } : {}),
     };
   }, [
@@ -491,6 +633,27 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
 
                 <div className="grid grid-cols-2 gap-3">
                   <label className="block space-y-1 text-xs">
+                    <span className="font-medium">回测开始</span>
+                    <Input
+                      type="date"
+                      value={startDate}
+                      onChange={(event) => setStartDate(event.target.value)}
+                      className="w-full font-mono text-xs"
+                    />
+                  </label>
+                  <label className="block space-y-1 text-xs">
+                    <span className="font-medium">回测结束</span>
+                    <Input
+                      type="date"
+                      value={endDate}
+                      onChange={(event) => setEndDate(event.target.value)}
+                      className="w-full font-mono text-xs"
+                    />
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="block space-y-1 text-xs">
                     <span className="font-medium">无风险利率</span>
                     <div className="flex items-center gap-1.5">
                       <Input
@@ -551,6 +714,18 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
                   运行回测
                 </Button>
               </div>
+              <Button
+                variant="outline"
+                className="mt-2 w-full"
+                onClick={() => {
+                  if (!saveName) setSaveName(loadedBasket?.name ?? "");
+                  setSaveOpen(true);
+                }}
+                disabled={items.length === 0}
+              >
+                <Save className="mr-1 h-4 w-4" />
+                {loadedBasket ? "保存更改" : "保存这个篮子"}
+              </Button>
               {items.length === 0 && (
                 <p className="text-[11px] text-muted-foreground">
                   先添加至少一个资产，按钮才会启用。
@@ -580,6 +755,35 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
           />
         </div>
       </div>
+
+      <Dialog open={saveOpen} onOpenChange={setSaveOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{loadedBasket ? "保存篮子更改" : "保存篮子"}</DialogTitle>
+            <DialogDescription>保存后可在 /dashboard 查看、编辑与复制。</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <label className="block space-y-1 text-xs">
+              <span className="font-medium">名称</span>
+              <Input value={saveName} onChange={(event) => setSaveName(event.target.value)} placeholder="例如：红利+黄金 风险平价" maxLength={80} />
+            </label>
+            <label className="block space-y-1 text-xs">
+              <span className="font-medium">描述（可选）</span>
+              <Input value={saveDesc} onChange={(event) => setSaveDesc(event.target.value)} placeholder="一句话说明" maxLength={500} />
+            </label>
+            <p className="text-[11px] text-muted-foreground">
+              {items.length} 项资产 · {basketMethodLabel(method)} · {startDate} ~ {endDate}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSaveOpen(false)} disabled={saving}>取消</Button>
+            <Button onClick={handleSaveBasket} disabled={saving}>
+              {saving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+              保存
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AssetPoolDialog
         open={poolOpen}

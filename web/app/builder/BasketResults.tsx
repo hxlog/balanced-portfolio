@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -11,6 +11,13 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { EChart } from "@/components/EChart";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { formatDateCN } from "@/lib/asset-range";
 import { getChartTheme, withAlpha } from "@/lib/chart-theme";
 import {
@@ -22,6 +29,7 @@ import {
 import type {
   BasketBacktestResult,
   BasketDiagnostics,
+  BasketRebalanceEvent,
   BasketWeight,
 } from "@/lib/basket-types";
 import { cn } from "@/lib/utils";
@@ -74,6 +82,7 @@ export function BasketResults({
   isDark: boolean;
 }) {
   const theme = useMemo(() => getChartTheme(isDark), [isDark]);
+  const [rebalanceDetail, setRebalanceDetail] = useState<BasketRebalanceEvent | null>(null);
   const rows = useMemo(
     () => basketWeightRows(weights, nameByKey, isDark),
     [weights, nameByKey, isDark],
@@ -129,8 +138,19 @@ export function BasketResults({
 
   const navOption = useMemo<Record<string, unknown>>(() => {
     const points = backtest?.nav ?? [];
+    const eqPoints = backtest?.equal_weight_nav ?? [];
+    const events = backtest?.rebalance_events ?? [];
+    const navByDate = new Map(points.map((point) => [point.trade_date, point.nav]));
     return {
       animationDuration: 320,
+      legend: {
+        top: 0,
+        left: 0,
+        itemWidth: 14,
+        itemHeight: 8,
+        textStyle: { color: theme.subtext, fontSize: 11 },
+        data: ["篮子净值", "等权净值", "调仓"],
+      },
       tooltip: {
         trigger: "axis",
         backgroundColor: theme.tooltipBg,
@@ -140,7 +160,7 @@ export function BasketResults({
         valueFormatter: (value: number) =>
           value == null || !Number.isFinite(value) ? "-" : Number(value).toFixed(4),
       },
-      grid: { top: 20, right: 18, bottom: 30, left: 52 },
+      grid: { top: 34, right: 18, bottom: 30, left: 52 },
       xAxis: {
         type: "category",
         data: points.map((point) => point.trade_date),
@@ -169,15 +189,64 @@ export function BasketResults({
               x2: 0,
               y2: 1,
               colorStops: [
-                { offset: 0, color: withAlpha(theme.palette[0], 0.3) },
+                { offset: 0, color: withAlpha(theme.palette[0], 0.28) },
                 { offset: 1, color: withAlpha(theme.palette[0], 0) },
               ],
+            },
+          },
+        },
+        {
+          name: "等权净值",
+          type: "line",
+          showSymbol: false,
+          smooth: true,
+          data: eqPoints.length > 0 ? eqPoints.map((point) => point.nav) : [],
+          lineStyle: { width: 1.6, color: theme.palette[1], type: "dashed" },
+          itemStyle: { color: theme.palette[1] },
+        },
+        {
+          name: "调仓",
+          type: "scatter",
+          symbol: "diamond",
+          symbolSize: 11,
+          z: 5,
+          data: events.map((event) => ({
+            value: [event.trade_date, navByDate.get(event.trade_date) ?? 1.0],
+            rb: event,
+          })),
+          itemStyle: { color: "#d97706", borderColor: "#fff", borderWidth: 1 },
+          tooltip: {
+            formatter: (params: { data?: { rb?: BasketRebalanceEvent } }) => {
+              const rb = params.data?.rb;
+              if (!rb) return "";
+              return (
+                "<b>调仓 " + rb.trade_date + "</b><br/>" +
+                "换手 " + formatPct(rb.turnover, 2) + "<br/>" +
+                "点击查看权重变化"
+              );
             },
           },
         },
       ],
     };
   }, [backtest, theme]);
+
+  const clickEvents = useMemo(
+    () => ({
+      click: (params: unknown) => {
+        const detail = params as { seriesName?: string; data?: { rb?: BasketRebalanceEvent } } | null;
+        if (detail?.seriesName === "调仓" && detail?.data?.rb) {
+          setRebalanceDetail(detail.data.rb);
+        }
+      },
+    }),
+    [],
+  );
+
+  const sortedLatestWeights = useMemo(
+    () => [...activeRows].sort((a, b) => b.weight - a.weight),
+    [activeRows],
+  );
 
   const showWeightsSkeleton = optimizeLoading && rows.length === 0;
   const showDiagSkeleton = optimizeLoading && diagnostics == null;
@@ -388,8 +457,12 @@ export function BasketResults({
             <>
               <EChart
                 option={navOption}
-                style={{ height: 320, width: "100%" }}
+                style={{ height: 330, width: "100%" }}
+                onEvents={clickEvents}
               />
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                实线=篮子净值（{methodShort}） · 虚线=等权净值 · <span className="text-warning">◆ 调仓点</span>（点击查看权重变化）
+              </p>
               <div className="mt-4 grid grid-cols-2 gap-3 border-t border-border pt-4 sm:grid-cols-4">
                 <MiniStat
                   label="年化收益"
@@ -417,6 +490,64 @@ export function BasketResults({
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={rebalanceDetail != null} onOpenChange={(open) => { if (!open) setRebalanceDetail(null); }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>调仓明细 · {rebalanceDetail?.trade_date ?? ""}</DialogTitle>
+            <DialogDescription>
+              {rebalanceDetail?.reason ?? "再平衡"}
+              {rebalanceDetail ? " · 换手 " + formatPct(rebalanceDetail.turnover, 2) : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[52vh] overflow-auto">
+            <table className="w-full border-collapse text-xs">
+              <thead className="sticky top-0 bg-background">
+                <tr className="border-b border-border text-muted-foreground">
+                  <th className="py-1.5 text-left font-medium">资产</th>
+                  <th className="py-1.5 text-right font-medium">变化前</th>
+                  <th className="py-1.5 text-right font-medium">变化后</th>
+                  <th className="py-1.5 text-right font-medium">变化量</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(rebalanceDetail?.assets ?? [])
+                  .filter((item) => Math.abs(item.delta) > 1e-8)
+                  .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+                  .map((item) => (
+                    <tr key={item.key} className="border-b border-border/50 last:border-0">
+                      <td className="py-1.5">
+                        {nameByKey.get(item.key) ?? item.symbol}
+                        <span className="ml-1 font-mono text-[10px] text-muted-foreground">{item.symbol}</span>
+                      </td>
+                      <td className="py-1.5 text-right font-mono tabular-nums">{formatPct(item.prev_weight, 2)}</td>
+                      <td className="py-1.5 text-right font-mono tabular-nums">{formatPct(item.target_weight, 2)}</td>
+                      <td className={cn("py-1.5 text-right font-mono tabular-nums", item.delta > 0 ? "text-up" : item.delta < 0 ? "text-down" : "")}>
+                        {item.delta > 0 ? "+" : ""}
+                        {formatPct(item.delta, 2)}
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="border-t border-border pt-3">
+            <p className="mb-1 text-xs font-medium">最新一期权重</p>
+            <div className="max-h-40 overflow-auto">
+              <table className="w-full border-collapse text-xs">
+                <tbody>
+                  {sortedLatestWeights.map((row) => (
+                    <tr key={row.key ?? row.name} className="border-b border-border/40 last:border-0">
+                      <td className="py-1 text-left">{row.name}</td>
+                      <td className="py-1 text-right font-mono tabular-nums">{formatPct(row.weight, 2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

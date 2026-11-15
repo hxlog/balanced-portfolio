@@ -311,3 +311,11 @@
 - 保存按钮（命名/描述）+ 成功后跳转/提示；
 - /dashboard 篮子列表（与组合并列）：打开/编辑/复制/删除；
 - 编辑态：URL `?basket=<id>` 载入配置并重算。
+### 2026-11-15 23:30 更新（篮子前端）
+- 前端完成：净值图新增**等权净值虚线** + **调仓点（◆，可点击）**；点击弹出「调仓明细」对话框（逐资产 变化前/变化后/变化量 + 换手/原因 + 底部**最新一期权重**）；
+- 回测控制区新增**回测开始/结束日期**（默认过去 3 年）；新增**保存这个篮子 / 保存更改**按钮 + 命名/描述对话框（POST 或 PATCH）；
+- `/dashboard` 新增「**篮子组合**」区块：名称/方法/资产数/最近回测摘要 + 打开（`/builder?mode=basket&basket=<id>` 编辑模式）/复制/删除；
+- 编辑模式：`?basket=<id>` 自动载入配置并填充参数（lookback/band/risk-free/起止日期），可修改后保存（PATCH）。
+- 后端验证（JWT 管理员令牌）：篮子 **create → list(1) → copy → PATCH 改名 → detail(2 资产, 参数完整) → delete → remaining 0** 全链路通过；修复 `%s::jsonb` 需 psycopg `Jsonb` 包装导致的 500。
+- 页面验证：`/dashboard` 含「篮子组合」区块；`/builder?mode=basket` 含回测起止日期控件；两页 200。
+- 截图：docs/revamp/screens/v3e-builder.png、v3e-dashboard-baskets.png。

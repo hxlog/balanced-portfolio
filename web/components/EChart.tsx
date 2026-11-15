@@ -10,9 +10,12 @@ import type { CSSProperties } from "react";
 export function EChart({
   option,
   style,
+  onEvents,
 }: {
   option: Record<string, unknown>;
   style?: CSSProperties;
+  /** ECharts 事件绑定（如 click）；handler 参数为 ECharts event params。 */
+  onEvents?: Record<string, (params: unknown) => void>;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
@@ -27,13 +30,17 @@ export function EChart({
     ro.observe(ref.current);
     // 兜底: 容器尺寸在挂载瞬间尚未就绪(如 flex/calc 高度)时, 主动 resize 一次强制刷新 canvas 尺寸。
     chart.resize();
+    const events = onEvents || {};
+    for (const [name, handler] of Object.entries(events)) {
+      chart.on(name, handler);
+    }
 
     return () => {
       ro.disconnect();
       chart.dispose();
       chartRef.current = null;
     };
-  }, []);
+  }, [onEvents]);
 
   // option 变化时更新
   useLayoutEffect(() => {

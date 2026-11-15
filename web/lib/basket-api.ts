@@ -156,3 +156,62 @@ export function basketErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
 }
+
+// ---------------------------------------------------------------------------
+// 篮子保存（/api/baskets/*）
+// ---------------------------------------------------------------------------
+export interface BasketSaveInput {
+  name: string;
+  description?: string | null;
+  method: string;
+  assets: Array<{ symbol: string; source: string }>;
+  params: Record<string, unknown>;
+  latest_result?: Record<string, unknown> | null;
+}
+
+export interface BasketUpdateInput {
+  name?: string;
+  description?: string | null;
+  method?: string;
+  assets?: Array<{ symbol: string; source: string }>;
+  params?: Record<string, unknown>;
+  latest_result?: Record<string, unknown> | null;
+}
+
+export async function saveBasket(input: BasketSaveInput): Promise<{ basket_id: number }> {
+  const body = await requestJson<unknown>("/api/baskets", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return unwrapData<{ basket_id: number }>(body);
+}
+
+export async function listBaskets<T = unknown>(): Promise<T[]> {
+  const body = await requestJson<unknown>("/api/baskets");
+  return unwrapData<T[]>(body);
+}
+
+export async function fetchBasket<T = unknown>(basketId: number): Promise<T> {
+  const body = await requestJson<unknown>("/api/baskets/" + basketId);
+  return unwrapData<T>(body);
+}
+
+export async function updateBasket(basketId: number, input: BasketUpdateInput): Promise<{ basket_id: number }> {
+  const body = await requestJson<unknown>("/api/baskets/" + basketId, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+  return unwrapData<{ basket_id: number }>(body);
+}
+
+export async function copyBasket(basketId: number, name?: string): Promise<{ basket_id: number }> {
+  const body = await requestJson<unknown>("/api/baskets/" + basketId + "/copy", {
+    method: "POST",
+    body: JSON.stringify(name ? { name } : {}),
+  });
+  return unwrapData<{ basket_id: number }>(body);
+}
+
+export async function deleteBasket(basketId: number): Promise<void> {
+  await requestJson<unknown>("/api/baskets/" + basketId, { method: "DELETE" });
+}

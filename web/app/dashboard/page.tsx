@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getCachedDemoResult, resolveDefaultPortfolioId } from "@/lib/cached-data";
 import DashboardClient from "./DashboardClient";
+import { DashboardBaskets } from "./DashboardBaskets";
 
 export const metadata: Metadata = {
   title: "产品 Dashboard",
@@ -43,8 +44,13 @@ export default async function DashboardPage({
       : null;
 
   return (
-    <Suspense fallback={<div className="p-12 text-center text-muted-foreground">加载中...</div>}>
-      <DashboardClient initialDemo={initialDemo} />
-    </Suspense>
+    <>
+      <Suspense fallback={<div className="p-12 text-center text-muted-foreground">加载中...</div>}>
+        <DashboardClient initialDemo={initialDemo} />
+      </Suspense>
+      <div className="mx-auto w-full max-w-[1600px] px-4 pb-10 sm:px-6 lg:px-8">
+        <DashboardBaskets />
+      </div>
+    </>
   );
 }
