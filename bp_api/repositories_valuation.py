@@ -673,6 +673,8 @@ def get_index_list(
                 m.market,
                 fs.fund_count,
                 fs.aum_sum AS fund_aum,
+                h.quote_status,
+                h.lag_trading_days,
                 m.publisher,
                 v.trade_date,
                 v.calc_src,
@@ -792,6 +794,7 @@ def get_index_list(
             ) qp ON TRUE
             -- 跟踪基金规模：读预计算表（65 号迁移），避免 521 次 LATERAL 聚合
             LEFT JOIN bp_index_fund_scale fs ON fs.index_code = m.index_code
+            LEFT JOIN bp_index_quote_health h ON h.symbol = m.index_code
             -- 区间最高 / 52 周前收盘：读预计算表（64 号迁移），避免每次全历史扫行情表
             LEFT JOIN bp_index_quote_extremes qh ON qh.symbol = m.index_code
             WHERE (%(query)s::text IS NULL
@@ -845,6 +848,7 @@ def get_index_list(
         "roe_ttm",
         "fund_aum",
         "fund_count",
+        "quote_lag_days",
     }
     with conn.cursor() as cur:
         cur.execute(sql, params)
@@ -1111,13 +1115,80 @@ def upsert_fund_master(conn: psycopg.Connection, rows: list[dict]) -> int:
     if not rows:
         return 0
     sql = """
-        INSERT INTO bp_fund_master (fund_code, name, company_name, risk_grade)
-        VALUES (%(fund_code)s, %(name)s, %(company_name)s, %(risk_grade)s)
+        INSERT INTO bp_fund_master (
+            fund_code, name, company_name, risk_grade,
+            manager, fund_type, management_fee, custody_fee, established_date, fund_scale
+        )
+        VALUES (
+            %(fund_code)s, %(name)s, %(company_name)s, %(risk_grade)s,
+            %(manager)s, %(fund_type)s, %(management_fee)s, %(custody_fee)s,
+            %(established_date)s, %(fund_scale)s
+        )
         ON CONFLICT (fund_code) DO UPDATE SET
             name = EXCLUDED.name,
             company_name = COALESCE(EXCLUDED.company_name, bp_fund_master.company_name),
             risk_grade = COALESCE(EXCLUDED.risk_grade, bp_fund_master.risk_grade),
+            manager = COALESCE(EXCLUDED.manager, bp_fund_master.manager),
+            fund_type = COALESCE(EXCLUDED.fund_type, bp_fund_master.fund_type),
+            management_fee = COALESCE(EXCLUDED.management_fee, bp_fund_master.management_fee),
+            custody_fee = COALESCE(EXCLUDED.custody_fee, bp_fund_master.custody_fee),
+            established_date = COALESCE(EXCLUDED.established_date, bp_fund_master.established_date),
+            fund_scale = COALESCE(EXCLUDED.fund_scale, bp_fund_master.fund_scale),
             updated_at = now()
+    """
+    with conn.cursor() as cur:
+        cur.executemany(sql, rows)
+    return len(rows)
+
+
+def upsert_fund_performance(conn: psycopg.Connection, rows: list[dict]) -> int:
+    """写入基金业绩与规模（按 fund_code + as_of 幂等）。"""
+    if not rows:
+        return 0
+    sql = """
+        INSERT INTO bp_fund_performance (
+            fund_code, as_of, aum, ret_1m, ret_3m, ret_6m, ret_12m,
+            ret_2y, ret_3y, ret_5y, ytd, manager
+        ) VALUES (
+            %(fund_code)s, %(as_of)s, %(aum)s, %(ret_1m)s, %(ret_3m)s, %(ret_6m)s, %(ret_12m)s,
+            %(ret_2y)s, %(ret_3y)s, %(ret_5y)s, %(ytd)s, %(manager)s
+        )
+        ON CONFLICT (fund_code, as_of) DO UPDATE SET
+            aum = COALESCE(EXCLUDED.aum, bp_fund_performance.aum),
+            ret_1m = COALESCE(EXCLUDED.ret_1m, bp_fund_performance.ret_1m),
+            ret_3m = COALESCE(EXCLUDED.ret_3m, bp_fund_performance.ret_3m),
+            ret_6m = COALESCE(EXCLUDED.ret_6m, bp_fund_performance.ret_6m),
+            ret_12m = COALESCE(EXCLUDED.ret_12m, bp_fund_performance.ret_12m),
+            ret_2y = COALESCE(EXCLUDED.ret_2y, bp_fund_performance.ret_2y),
+            ret_3y = COALESCE(EXCLUDED.ret_3y, bp_fund_performance.ret_3y),
+            ret_5y = COALESCE(EXCLUDED.ret_5y, bp_fund_performance.ret_5y),
+            ytd = COALESCE(EXCLUDED.ytd, bp_fund_performance.ytd),
+            manager = COALESCE(EXCLUDED.manager, bp_fund_performance.manager),
+            captured_at = now()
+    """
+    with conn.cursor() as cur:
+        cur.executemany(sql, rows)
+    return len(rows)
+
+
+def upsert_quote_health(conn: psycopg.Connection, rows: list[dict]) -> int:
+    """写入指数行情覆盖率看护结果。"""
+    if not rows:
+        return 0
+    sql = """
+        INSERT INTO bp_index_quote_health (
+            symbol, last_trade_date, expected_trade_date, lag_trading_days, has_quote, status, checked_at
+        ) VALUES (
+            %(symbol)s, %(last_trade_date)s, %(expected_trade_date)s,
+            %(lag_trading_days)s, %(has_quote)s, %(status)s, now()
+        )
+        ON CONFLICT (symbol) DO UPDATE SET
+            last_trade_date = EXCLUDED.last_trade_date,
+            expected_trade_date = EXCLUDED.expected_trade_date,
+            lag_trading_days = EXCLUDED.lag_trading_days,
+            has_quote = EXCLUDED.has_quote,
+            status = EXCLUDED.status,
+            checked_at = now()
     """
     with conn.cursor() as cur:
         cur.executemany(sql, rows)
@@ -1174,16 +1245,26 @@ def get_index_constituents(
 def get_index_tracker_funds(
     conn: psycopg.Connection, index_code: str
 ) -> list[dict]:
-    """最新交易日的跟踪基金与规模。"""
+    """最新交易日的跟踪基金：规模 + 费率 + 成立日 + 各期业绩。"""
     sql = """
         WITH latest AS (
             SELECT max(trade_date) AS d
             FROM bp_index_tracker_fund WHERE index_code = %(code)s
         )
         SELECT t.fund_code, COALESCE(f.name, t.fund_code) AS name,
-               f.company_name, f.risk_grade, t.aum, t.trade_date
+               f.company_name, f.risk_grade, t.aum, t.trade_date,
+               f.manager, f.fund_type, f.management_fee, f.custody_fee,
+               f.established_date, f.fund_scale,
+               p.ret_1m, p.ret_3m, p.ret_6m, p.ret_12m,
+               p.ret_2y, p.ret_3y, p.ret_5y, p.ytd
         FROM bp_index_tracker_fund t
         LEFT JOIN bp_fund_master f USING (fund_code)
+        LEFT JOIN LATERAL (
+            SELECT * FROM bp_fund_performance perf
+            WHERE perf.fund_code = t.fund_code
+            ORDER BY perf.as_of DESC
+            LIMIT 1
+        ) p ON TRUE
         WHERE t.index_code = %(code)s AND t.trade_date = (SELECT d FROM latest)
         ORDER BY t.aum DESC NULLS LAST
     """
@@ -1194,7 +1275,11 @@ def get_index_tracker_funds(
     out: list[dict] = []
     for record in records:
         item = dict(zip(columns, record))
-        item["aum"] = _to_float(item.get("aum"))
+        for key in (
+            "aum", "management_fee", "custody_fee", "fund_scale",
+            "ret_1m", "ret_3m", "ret_6m", "ret_12m", "ret_2y", "ret_3y", "ret_5y", "ytd",
+        ):
+            item[key] = _to_float(item.get(key))
         out.append(item)
     return out
 

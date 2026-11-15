@@ -467,6 +467,21 @@ export function ValuationHomeV2({
                         {row.category}
                         {row.industry ? " · " + row.industry : ""}
                       </span>
+                      {row.quote_lag_days != null && row.quote_lag_days > 0 ? (
+                        <span
+                          className="ml-1.5 rounded bg-warning/20 px-1 py-0.5 text-[10px] text-warning-foreground"
+                          title={"行情落后最新交易日 " + row.quote_lag_days + " 个交易日"}
+                        >
+                          行情滞后 {row.quote_lag_days} 日
+                        </span>
+                      ) : row.quote_status === "missing" ? (
+                        <span
+                          className="ml-1.5 rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground"
+                          title="该指数暂无行情数据源"
+                        >
+                          无行情
+                        </span>
+                      ) : null}
                     </Link>
                   </td>
                   {COLUMNS.filter((column) => columns.includes(column.key)).map((column) => {

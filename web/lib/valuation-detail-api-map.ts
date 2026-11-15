@@ -80,6 +80,20 @@ function mapTrackerFund(raw: unknown): DetailTrackerFund | null {
     risk_grade: str(item.risk_grade),
     aum: num(item.aum),
     trade_date: dateStr(item.trade_date),
+    manager: str(item.manager),
+    fund_type: str(item.fund_type),
+    management_fee: num(item.management_fee),
+    custody_fee: num(item.custody_fee),
+    established_date: dateStr(item.established_date),
+    fund_scale: num(item.fund_scale),
+    ret_1m: num(item.ret_1m),
+    ret_3m: num(item.ret_3m),
+    ret_6m: num(item.ret_6m),
+    ret_12m: num(item.ret_12m),
+    ret_2y: num(item.ret_2y),
+    ret_3y: num(item.ret_3y),
+    ret_5y: num(item.ret_5y),
+    ytd: num(item.ytd),
   };
 }
 
@@ -161,6 +175,7 @@ export function mapValuationDetail(
     base_date: dateStr(raw.base_date),
     base_point: num(raw.base_point),
     income_method: str(raw.income_method),
+    weight_method: str(raw.weight_method),
     intro: str(raw.intro),
     trade_date: dateStr(raw.trade_date),
     industry: str(raw.industry),

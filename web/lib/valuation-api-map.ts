@@ -83,6 +83,8 @@ export function mapIndexRow(raw: Record<string, unknown>): IndexQuoteRow {
     roe_ttm: num(raw.roe_ttm),
     fund_aum: num(raw.fund_aum),
     fund_count: num(raw.fund_count),
+    quote_status: str(raw.quote_status),
+    quote_lag_days: num(raw.quote_lag_days),
   };
 }
 

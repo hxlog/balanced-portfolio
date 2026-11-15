@@ -31,6 +31,27 @@ export interface DetailTrackerFund {
   /** 规模（元）；展示层除以 1e8 转亿元。 */
   aum: number | null;
   trade_date: string | null;
+  /** 基金经理。 */
+  manager: string | null;
+  /** 基金类型。 */
+  fund_type: string | null;
+  /** 管理费率（%/年）。 */
+  management_fee: number | null;
+  /** 托管费率（%/年）。 */
+  custody_fee: number | null;
+  /** 成立日期。 */
+  established_date: string | null;
+  /** 最新基金规模（元）。 */
+  fund_scale: number | null;
+  /** 各期收益（百分数点）。 */
+  ret_1m: number | null;
+  ret_3m: number | null;
+  ret_6m: number | null;
+  ret_12m: number | null;
+  ret_2y: number | null;
+  ret_3y: number | null;
+  ret_5y: number | null;
+  ytd: number | null;
 }
 
 /** 分位窗口统计（详情 `percentiles[]` 与 history `stats` 共用）。 */
@@ -66,6 +87,7 @@ export interface ValuationDetailData {
   base_date: string | null;
   base_point: number | null;
   income_method: string | null;
+  weight_method: string | null;
   intro: string | null;
   trade_date: string | null;
   /** 申万一级行业（宽基为 null）。 */

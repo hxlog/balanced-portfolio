@@ -125,6 +125,10 @@ export interface IndexQuoteRow {
   fund_aum?: number | null;
   /** 跟踪基金数量。 */
   fund_count?: number | null;
+  /** 行情健康状态：ok/stale/dead/missing。 */
+  quote_status?: string | null;
+  /** 行情滞后交易日数。 */
+  quote_lag_days?: number | null;
 }
 
 /** 估值历史序列点（bp_index_valuation_series）。 */

@@ -141,7 +141,7 @@ export function ValuationDetailClient({
 
   const disclosure = detail?.constituents[0]?.effective_date ?? null;
   const funds = detail?.tracker_funds ?? [];
-  const totalAum = funds.reduce((sum, fund) => sum + (fund.aum ?? 0), 0);
+  const totalAum = funds.reduce((sum, fund) => sum + (fund.fund_scale ?? fund.aum ?? 0), 0);
   const constituents = detail?.constituents ?? [];
   const cr10 = constituents.slice(0, 10).reduce((sum, item) => sum + (item.weight ?? 0), 0);
 
@@ -493,6 +493,7 @@ export function ValuationDetailClient({
                 {detail.base_date ? <span className="rounded border border-border px-1.5 py-0.5">基日 {detail.base_date}</span> : null}
                 {detail.base_point ? <span className="rounded border border-border px-1.5 py-0.5">基点 {formatNumber(detail.base_point, 0)}</span> : null}
                 {detail.income_method ? <span className="rounded border border-border px-1.5 py-0.5">{detail.income_method}</span> : null}
+                {detail.weight_method ? <span className="rounded border border-border px-1.5 py-0.5">加权：{detail.weight_method}</span> : null}
                 {detail.publisher ? <span className="rounded border border-border px-1.5 py-0.5">{detail.publisher}</span> : null}
               </div>
             </section>
@@ -568,20 +569,81 @@ export function ValuationDetailClient({
                 title="跟踪基金"
                 hint={funds.length > 0 ? "规模合计 " + (totalAum / 1e8).toFixed(0) + " 亿" : "暂无跟踪基金"}
               />
-              <div className="mt-2 space-y-1.5">
-                {funds.slice(0, 8).map((fund) => (
-                  <div key={fund.fund_code} className="flex items-center justify-between gap-2 text-[11px]">
-                    <span className="truncate">
-                      <span className="font-mono text-muted-foreground">{fund.fund_code}</span>{" "}
-                      {fund.name}
-                    </span>
-                    <span className="shrink-0 font-mono tabular-nums text-muted-foreground">
-                      {fund.aum == null ? "—" : (fund.aum / 1e8).toFixed(0) + " 亿"}
-                    </span>
-                  </div>
-                ))}
+              <div className="mt-2 overflow-x-auto">
+                <table className="w-full min-w-[720px] border-collapse text-[11px]">
+                  <thead>
+                    <tr className="border-b border-border text-muted-foreground">
+                      <th className="py-1.5 text-left font-medium">基金</th>
+                      <th className="py-1.5 text-right font-medium">规模</th>
+                      <th className="py-1.5 text-right font-medium">管理费</th>
+                      <th className="py-1.5 text-right font-medium">托管费</th>
+                      <th className="py-1.5 text-right font-medium">成立日期</th>
+                      <th className="py-1.5 text-right font-medium">近1月</th>
+                      <th className="py-1.5 text-right font-medium">近3月</th>
+                      <th className="py-1.5 text-right font-medium">近6月</th>
+                      <th className="py-1.5 text-right font-medium">近1年</th>
+                      <th className="py-1.5 text-right font-medium">近3年</th>
+                      <th className="py-1.5 text-right font-medium">近5年</th>
+                      <th className="py-1.5 text-right font-medium">今年以来</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {funds.slice(0, 8).map((fund) => {
+                      const scale = fund.fund_scale ?? fund.aum;
+                      const returns: Array<{ key: string; value: number | null }> = [
+                        { key: "1m", value: fund.ret_1m },
+                        { key: "3m", value: fund.ret_3m },
+                        { key: "6m", value: fund.ret_6m },
+                        { key: "12m", value: fund.ret_12m },
+                        { key: "3y", value: fund.ret_3y },
+                        { key: "5y", value: fund.ret_5y },
+                        { key: "ytd", value: fund.ytd },
+                      ];
+                      return (
+                        <tr key={fund.fund_code} className="border-b border-border/50 last:border-0">
+                          <td className="py-1.5">
+                            <div className="truncate">
+                              <span className="font-mono text-muted-foreground">{fund.fund_code}</span>{" "}
+                              {fund.name}
+                            </div>
+                            <div className="truncate text-[10px] text-muted-foreground">
+                              {[fund.company_name, fund.manager, fund.fund_type].filter(Boolean).join(" · ") || "—"}
+                            </div>
+                          </td>
+                          <td className="py-1.5 text-right font-mono tabular-nums">
+                            {scale == null ? "—" : (scale / 1e8).toFixed(2) + " 亿"}
+                          </td>
+                          <td className="py-1.5 text-right font-mono tabular-nums">
+                            {fund.management_fee == null ? "—" : fund.management_fee.toFixed(2) + "%"}
+                          </td>
+                          <td className="py-1.5 text-right font-mono tabular-nums">
+                            {fund.custody_fee == null ? "—" : fund.custody_fee.toFixed(2) + "%"}
+                          </td>
+                          <td className="py-1.5 text-right font-mono tabular-nums text-muted-foreground">
+                            {fund.established_date ?? "—"}
+                          </td>
+                          {returns.map((item) => (
+                            <td
+                              key={item.key}
+                              className={cn(
+                                "py-1.5 text-right font-mono tabular-nums",
+                                item.value == null
+                                  ? "text-muted-foreground"
+                                  : item.value >= 0
+                                    ? "text-up"
+                                    : "text-down",
+                              )}
+                            >
+                              {item.value == null ? "—" : item.value.toFixed(2) + "%"}
+                            </td>
+                          ))}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
                 {funds.length > 8 ? (
-                  <div className="text-[11px] text-muted-foreground">另有 {funds.length - 8} 只未展示</div>
+                  <div className="mt-1 text-[11px] text-muted-foreground">另有 {funds.length - 8} 只未展示</div>
                 ) : null}
               </div>
             </section>

@@ -28,6 +28,7 @@ from bp_api.repositories_valuation import (
     upsert_macro_series,
     upsert_constituents,
     upsert_fund_master,
+    upsert_fund_performance,
     upsert_stock_master,
     upsert_tracker_funds,
     CALC_SRC_PINGAN,
@@ -347,9 +348,10 @@ def _build_fund_rows(
     merged: Mapping[str, Mapping[str, Any]],
     tracker_raw: Sequence[Mapping[str, Any]],
     trade_date: date,
-) -> tuple[list[dict], list[dict]]:
-    """(基金主数据行, 指数-基金跟踪关系行)。"""
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """(基金主数据行, 指数-基金跟踪关系行, 基金业绩行)。"""
     fund_meta: dict[str, dict] = {}
+    perf_meta: dict[str, dict] = {}
     for row in tracker_raw:
         if not isinstance(row, Mapping):
             continue
@@ -358,22 +360,59 @@ def _build_fund_rows(
             continue
         raw_position = row.get("positionDTO")
         position = raw_position if isinstance(raw_position, Mapping) else {}
+        nav_raw = position.get("newFundDrFundnv")
+        nav = nav_raw if isinstance(nav_raw, Mapping) else {}
+        sessions = position.get("drFmpfmanceDTOS")
+        manager = None
+        if isinstance(sessions, list) and sessions and isinstance(sessions[0], Mapping):
+            manager = _text(sessions[0].get("manager"))
+        aum = _float(position.get("fnvsum"))
         fund_meta[code] = {
             "fund_code": code,
             "name": _text(row.get("ommName")) or code,
             "company_name": _text(row.get("companyName")),
             "risk_grade": _text(row.get("riskGrade")),
-            "aum": _float(position.get("fnvsum")) if position else None,
+            "manager": manager,
+            "fund_type": _text(row.get("investmentType")) or _text(row.get("fundCSRCType")),
+            "management_fee": None,
+            "custody_fee": None,
+            "established_date": None,
+            "fund_scale": aum,
+            "aum": aum,
+        }
+        perf_meta[code] = {
+            "fund_code": code,
+            "as_of": trade_date,
+            "aum": aum,
+            "ret_1m": _float(nav.get("nvgr4w")),
+            "ret_3m": _float(nav.get("nvgr13w")),
+            "ret_6m": _float(nav.get("nvgr26w")),
+            "ret_12m": _float(nav.get("nvgr52w")),
+            "ret_2y": _float(nav.get("yield2ya")),
+            "ret_3y": _float(nav.get("yield3ya")),
+            "ret_5y": _float(nav.get("yield5ya")),
+            "ytd": _float(nav.get("nvgrty")) or _float(nav.get("yieldly")),
+            "manager": manager,
         }
 
     master_rows: list[dict] = []
     tracker_rows: list[dict] = []
+    perf_rows: list[dict] = []
     for index_code, normalized in merged.items():
         for fund_code in normalized.get("etf_fund") or []:
             meta = fund_meta.get(str(fund_code))
             if meta is None:
                 continue
-            master_rows.append({k: meta[k] for k in ("fund_code", "name", "company_name", "risk_grade")})
+            master_rows.append({
+                k: meta[k]
+                for k in (
+                    "fund_code", "name", "company_name", "risk_grade", "manager",
+                    "fund_type", "management_fee", "custody_fee", "established_date",
+                    "fund_scale",
+                )
+            })
+            if meta["fund_code"] in perf_meta:
+                perf_rows.append(perf_meta[meta["fund_code"]])
             tracker_rows.append({
                 "index_code": index_code,
                 "fund_code": meta["fund_code"],
@@ -381,7 +420,7 @@ def _build_fund_rows(
                 "aum": meta["aum"],
                 "source": CALC_SRC_PINGAN,
             })
-    return master_rows, tracker_rows
+    return master_rows, tracker_rows, perf_rows
 
 def _build_daily(index_code: str, normalized: Mapping[str, Any], trade_date: date) -> dict:
     pe, pb, dividend, bond10y, erp_value = _daily_values(normalized)
@@ -661,10 +700,11 @@ def run_valuation_ingest(
     if tracker_raw:
         try:
             with _savepoint(conn, "valuation_funds"):
-                fund_master_rows, tracker_rows = _build_fund_rows(
+                fund_master_rows, tracker_rows, fund_perf_rows = _build_fund_rows(
                     merged, tracker_raw, summary_as_of
                 )
                 upsert_fund_master(conn, fund_master_rows)
+                upsert_fund_performance(conn, fund_perf_rows)
                 upsert_tracker_funds(conn, tracker_rows)
         except Exception as exc:  # noqa: BLE001
             errors.append(f"tracker_funds: {exc}")
