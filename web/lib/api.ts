@@ -633,8 +633,10 @@ export function shouldRefreshToken(token: string | null): boolean {
 }
 
 async function sessionFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  // sessionFetch timeout: 8s —— 避免鉴权接口异常时 AuthProvider 卡在 ready=false
   const res = await fetch(path, {
     ...init,
+    signal: AbortSignal.timeout(8_000),
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers || {}),

@@ -340,3 +340,27 @@
 - 全量 A 股/基金 ETL、/assets 统一资产池、复权口径中文化落地页；
 - 加密图表收尾（Smart Money 趋势、资金费率分位带、切换骨架）；
 - 最终清理本机服务/任务、确认服务器增量任务。
+## 24. 路由/缓存修复 + 资产池（2026-11-15 23:35）
+
+### 用户反馈修复
+1. **/dashboard 看不到篮子组合**：
+   - 根因：`DashboardBaskets` 原渲染在 DashboardClient 之后（页面最底部，且在页脚下方），视觉上被忽略；且请求无超时，后端慢时永久「加载篮子…」；
+   - 修复：区块移动到 dashboard **最顶部**；请求加 12s 超时 + 重试按钮；
+   - 实测（管理员 JWT）：`篮子组合` 出现在页面顶部，已保存的 `一篮子股票example` 可见。
+2. **/builder 模式锁死**：
+   - 根因组合：`ModeSwitch` 用 `router.replace` 在 cacheComponents + 多层 Suspense 下偶发不提交；`BuilderInner` 在 `useAuth().ready=false` 时整页「加载中」，会话接口无超时；服务端 `getCachedAssets` 拉取无超时，资产接口慢时整页停留在 Suspense fallback；
+   - 修复：
+     - 模式切换改为**普通 `<a>` 整页导航**（页面级分支，URL 与渲染树严格一致）；
+     - builder 页不再等服务端资产接口：壳立即渲染，客户端自行拉取资产；
+     - 移除 `!ready` 的整页 loading 门；`sessionFetch` 加 8s 超时；`serverFetch` 全局 10s 超时；
+   - 实测：basket → 四象限 URL 变 `/builder?v=5` 且渲染四象限；再切回 basket URL `?mode=basket` 且渲染篮子（双向通过）。
+
+### 全量数据（进行中，已限流暂停）
+- 迁移 71：`bp_stock_quote_daily`（三口径 bfq/qfq/hfq）；本机回填脚本 `local_backfill_stocks.py`（腾讯 kline，支持断点续跑）；
+- 基金全量脚本 `local_backfill_funds.py`（天天基金 pingzhongdata，含基金列表 ~2 万只）；
+- 已完成：A 股 235 只 × 3 口径 34 万行；基金 1,565 只 / 215 万净值；
+- 因本机回填写入压垮生产库（页面请求超时）已暂停；后续改为低并发/夜间分批 + 服务端增量。
+- 新增统一资产池 API `/api/assets/unified`（股票/指数/基金/ETF + 覆盖状态 + 三口径）与 `/assets` 页面（已上线）。
+
+### 部署提示
+- 连续多次 rebuild 后，旧页面客户端 chunk 会与 Server Action 失配（日志出现 Failed to find Server Action）。用户侧**强制刷新一次**即可恢复；后续部署尽量一次性构建。

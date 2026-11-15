@@ -156,12 +156,14 @@ from . import otc_api as _otc
 from . import public_api as _public_api
 from . import stocks as _stocks
 from . import valuation
+from . import assets_unified
 
 app = FastAPI(title="Balanced Portfolio API", version="1.0.0", lifespan=lifespan)
 _cffex.register_routes(app)
 _crypto.register_routes(app)
 _otc.register_routes(app)
 valuation.register_routes(app)
+assets_unified.register_routes(app)
 _public_api.register_routes(app)
 _stocks.register_routes(app)
 basket.register_routes(app)

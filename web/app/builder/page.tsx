@@ -1,6 +1,5 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
-import { getCachedAssets } from "@/lib/cached-data";
 import BuilderClient from "./BuilderClient";
 
 export const metadata: Metadata = {
@@ -17,14 +16,11 @@ export const metadata: Metadata = {
 };
 
 export default function BuilderPage() {
+  // 不在服务端阻塞资产清单：BuilderClient 内部会自行拉取 /api/assets。
+  // 这样即使后端慢/不可用，页面壳与模式切换也能立即交互（避免整页停在“加载中”）。
   return (
     <Suspense fallback={<div className="p-12 text-center text-muted-foreground">加载中...</div>}>
-      <BuilderLoader />
+      <BuilderClient initialAssets={[]} />
     </Suspense>
   );
-}
-
-async function BuilderLoader() {
-  const initialAssets = await getCachedAssets();
-  return <BuilderClient initialAssets={initialAssets} />;
 }

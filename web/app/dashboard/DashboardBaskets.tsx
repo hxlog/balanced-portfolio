@@ -45,7 +45,13 @@ export function DashboardBaskets() {
     setLoading(true);
     setError(null);
     try {
-      const rows = await listBaskets<BasketRecord>();
+      // 12s 超时：避免后端慢时面板永远停在「加载篮子…」
+      const rows = await Promise.race([
+        listBaskets<BasketRecord>(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("请求超时，请重试")), 12_000),
+        ),
+      ]);
       setBaskets(rows);
     } catch (err) {
       setError(basketErrorMessage(err));
@@ -110,9 +116,14 @@ export function DashboardBaskets() {
             <Loader2 className="h-4 w-4 animate-spin" /> 加载篮子…
           </div>
         ) : error ? (
-          <p className="text-sm text-destructive">
-            {error}（登录后可见自己的篮子）
-          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm text-destructive">
+              {error}（登录后可见自己的篮子）
+            </p>
+            <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => void load()}>
+              重试
+            </Button>
+          </div>
         ) : baskets.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             还没有保存的篮子。前往{" "}

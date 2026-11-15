@@ -533,9 +533,7 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
     return () => { cancelled = true; };
   }, [diffOpen, selected, startDate, lookback, assets]);
 
-  if (!ready) {
-    return <div className="p-12 text-center text-muted-foreground">加载中...</div>;
-  }
+  // 不因登录态接口慢而阻断页面渲染：未登录时按钮操作会提示登录。
 
   if (!isWhitelisted) {
     return (

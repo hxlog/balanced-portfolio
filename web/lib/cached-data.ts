@@ -3,7 +3,9 @@ import type { Asset, BacktestResult, CryptoCorrelationResponse } from "./api";
 import { apiBase, readSessionClaims, readSessionToken } from "./session-server";
 
 async function serverFetch<T>(path: string): Promise<T> {
-  const res = await fetch(`${apiBase()}${path}`);
+  const res = await fetch(`${apiBase()}${path}`, {
+    signal: AbortSignal.timeout(10_000),
+  });
   if (!res.ok) {
     throw new Error(`API ${path}: ${res.status}`);
   }

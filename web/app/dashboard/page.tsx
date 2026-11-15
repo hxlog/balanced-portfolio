@@ -45,12 +45,12 @@ export default async function DashboardPage({
 
   return (
     <>
+      <div className="mx-auto w-full max-w-[1600px] px-4 pt-6 sm:px-6 lg:px-8">
+        <DashboardBaskets />
+      </div>
       <Suspense fallback={<div className="p-12 text-center text-muted-foreground">加载中...</div>}>
         <DashboardClient initialDemo={initialDemo} />
       </Suspense>
-      <div className="mx-auto w-full max-w-[1600px] px-4 pb-10 sm:px-6 lg:px-8">
-        <DashboardBaskets />
-      </div>
     </>
   );
 }

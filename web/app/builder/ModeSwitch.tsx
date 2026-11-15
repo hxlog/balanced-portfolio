@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { LayoutGrid, PieChart } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -12,22 +12,26 @@ const MODES: { value: BuilderMode; label: string; icon: typeof LayoutGrid }[] = 
 ];
 
 /**
- * /builder 的顶层模式切换。
+ * /builder 的顶层模式切换（URL 驱动）。
  *
- * `mode=basket` 写入 URL 以保持可分享；切回四象限时删除该参数，
- * 同时保留 `id` / `copy` 等既有参数，避免打断编辑流。
+ * 用普通 <a> 整页导航（而不是 router.replace / soft navigation）：
+ * - 与 Next.js App Router 的 URL 状态模型一致，返回/刷新/分享都可复原；
+ * - 模式是页面级分支（两套独立构建器），整页导航能保证 URL 与渲染树严格一致，
+ *   避免 cacheComponents + 多层 Suspense 下 soft navigation 偶发不提交的问题；
+ * - 切到四象限时删除 mode/basket，保留 id/copy 等编辑参数。
  */
 export function ModeSwitch({ mode }: { mode: BuilderMode }) {
-  const router = useRouter();
   const searchParams = useSearchParams();
 
-  const switchTo = (next: BuilderMode) => {
-    if (next === mode) return;
+  const hrefFor = (next: BuilderMode) => {
     const params = new URLSearchParams(searchParams.toString());
     if (next === "basket") params.set("mode", "basket");
-    else params.delete("mode");
+    else {
+      params.delete("mode");
+      params.delete("basket");
+    }
     const qs = params.toString();
-    router.replace(`/builder${qs ? `?${qs}` : ""}`, { scroll: false });
+    return "/builder" + (qs ? "?" + qs : "");
   };
 
   return (
@@ -39,12 +43,12 @@ export function ModeSwitch({ mode }: { mode: BuilderMode }) {
       {MODES.map(({ value, label, icon: Icon }) => {
         const active = value === mode;
         return (
-          <button
+          <a
             key={value}
-            type="button"
+            href={hrefFor(value)}
             role="tab"
             aria-selected={active}
-            onClick={() => switchTo(value)}
+            aria-current={active ? "page" : undefined}
             className={cn(
               "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs sm:text-sm font-medium transition-colors whitespace-nowrap",
               active
@@ -54,7 +58,7 @@ export function ModeSwitch({ mode }: { mode: BuilderMode }) {
           >
             <Icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
             {label}
-          </button>
+          </a>
         );
       })}
     </div>
