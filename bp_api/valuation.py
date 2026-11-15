@@ -49,7 +49,7 @@ SeriesMetric = Literal[
     "dividend_yield_lyr",
     "erp",
 ]
-WindowKey = Literal["5y", "10y", "all"]
+WindowKey = Literal["1y", "3y", "5y", "10y", "all"]
 
 # 详情里的默认窗口分位字段(与前端 ValuationDetail 的 *_stats 同名)。
 _STATS_FIELD: dict[str, str] = {
@@ -145,20 +145,35 @@ def _history_stats(detail: dict, metric: str, window: str) -> Optional[dict]:
 # 路由注册
 # ---------------------------------------------------------------------------
 
+# 首页全市场估值卡片使用的代表性宽基（有完整估值历史，可算真实分位）
+_BROAD_PROXY_CODES = ["000016", "000300", "000510", "000852", "000985"]
+
+
 def register_routes(app: FastAPI) -> None:
 
     # 静态路径必须先于 /{code} 注册, 否则 "overview"/"indices" 会被当成代码。
     @app.get("/api/valuation/overview")
     def valuation_overview(
+        window: WindowKey = Query("5y", description="分位窗口"),
         _user: auth.UserContext | None = Depends(auth.optional_user),
     ) -> dict:
-        key = _cache_key("overview")
+        key = _cache_key("overview", window=window)
         hit = _get_cached(key)
         if hit is not None:
             return hit
         with db.get_conn() as conn:
             rows = repositories_valuation.get_market_overview(conn, date.today())
-        payload = _envelope(rows, as_of=_latest_as_of(rows), rows=len(rows))
+            proxies = repositories_valuation.get_broad_proxies(
+                conn, _BROAD_PROXY_CODES, window
+            )
+        payload = _envelope(
+            rows,
+            as_of=_latest_as_of(rows),
+            rows=len(rows),
+            window=window,
+            proxies=proxies,
+            proxy_codes=list(_BROAD_PROXY_CODES),
+        )
         cache.set_json(key, payload, ttl_seconds=CACHE_TTL_SECONDS)
         return payload
 
@@ -166,6 +181,9 @@ def register_routes(app: FastAPI) -> None:
     def valuation_indices(
         q: str | None = Query(None, max_length=100, description="名称或代码搜索"),
         index_type: str | None = Query(None, alias="type", max_length=20, description="指数类别"),
+        industry: str | None = Query(None, max_length=20, description="申万一级行业"),
+        window: WindowKey = Query("5y", description="分位窗口"),
+        metric: str = Query("pe_ttm", description="所选分位指标"),
         with_etf: bool = Query(False, description="仅看有跟踪 ETF 的指数"),
         with_val: bool = Query(False, description="仅看有估值的指数"),
         limit: int = Query(100, ge=1, le=1000, description="每页条数, 上限 500"),
@@ -176,6 +194,9 @@ def register_routes(app: FastAPI) -> None:
             "indices",
             q=q,
             type=index_type,
+            industry=industry,
+            window=window,
+            metric=metric,
             with_etf=with_etf,
             with_val=with_val,
             limit=limit,
@@ -189,6 +210,9 @@ def register_routes(app: FastAPI) -> None:
                 conn,
                 query=q,
                 index_type=index_type,
+                industry=industry,
+                window=window,
+                metric=metric,
                 only_with_etf=with_etf,
                 only_with_valuation=with_val,
                 limit=limit,
@@ -201,6 +225,9 @@ def register_routes(app: FastAPI) -> None:
             total=total,
             limit=limit,
             offset=offset,
+            window=window,
+            metric=metric,
+            industry=industry,
         )
         cache.set_json(key, payload, ttl_seconds=CACHE_TTL_SECONDS)
         return payload

@@ -186,8 +186,9 @@ def test_window_slice_drops_none_and_nan():
 
 
 def test_window_slice_rejects_unknown_window():
+    # 1y/3y/5y/10y/all 都是合法窗口；2y 未定义
     with pytest.raises(ValueError):
-        window_slice([], date(2026, 11, 14), "3y")
+        window_slice([], date(2026, 11, 14), "2y")
 
 
 def test_window_slice_5y_handles_leap_day():

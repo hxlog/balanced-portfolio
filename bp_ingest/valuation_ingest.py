@@ -23,7 +23,7 @@ from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
 import psycopg
 
 from bp_api.quant.valuation import erp as quant_erp
-from bp_api.quant.valuation import summarize, window_slice
+from bp_api.quant.valuation import min_sample_for, summarize, window_slice
 from bp_api.repositories_valuation import (
     upsert_macro_series,
     upsert_constituents,
@@ -41,9 +41,9 @@ from bp_api.repositories_valuation import (
 
 from .valuation_pingan import fetch_all, normalize_index_row
 
-# 分位重算的唯一口径：4 指标 × 3 窗口。
+# 分位重算的唯一口径：4 指标 × 5 窗口（1/3/5/10 年 + 全历史）。
 PERCENTILE_METRIC_ORDER = ("pe_ttm", "pb", "dividend_yield_ttm", "erp")
-PERCENTILE_WINDOW_ORDER = ("5y", "10y", "all")
+PERCENTILE_WINDOW_ORDER = ("1y", "3y", "5y", "10y", "all")
 
 _LEVEL_MAP = {
     "低估": "低估",
@@ -488,7 +488,7 @@ def _build_percentiles(
             conn, index_code, metric, CALC_SRC_PINGAN, None, trade_date
         )
         for window_key in PERCENTILE_WINDOW_ORDER:
-            stats = summarize(window_slice(series, trade_date, window_key))
+            stats = summarize(window_slice(series, trade_date, window_key), min_sample_for(window_key))
             rows.append(
                 {
                     "index_code": index_code,

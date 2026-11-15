@@ -34,7 +34,7 @@ SERIES_METRICS = frozenset(
         "erp",
     }
 )
-PERCENTILE_WINDOWS = frozenset({"5y", "10y", "all"})
+PERCENTILE_WINDOWS = frozenset({"1y", "3y", "5y", "10y", "all"})
 LEVELS = frozenset({"低估", "中性", "高估"})
 
 
@@ -479,11 +479,80 @@ def get_market_overview(
         return rows
 
 
+def get_broad_proxies(
+    conn: psycopg.Connection,
+    codes: list[str],
+    window: str = "5y",
+) -> list[dict]:
+    """代表性宽基指数的「最新估值 + 所选窗口分位」。
+
+    用于首页全市场估值卡片：用上证50/沪深300/中证A500/中证1000/中证全指等
+    有完整估值序列的宽基做代理，避免用只有单日样本的截面数据算假分位。
+    """
+    if not codes:
+        return []
+    safe_window = window if window in PERCENTILE_WINDOWS else "5y"
+    sql = """
+        SELECT
+            m.index_code,
+            m.name,
+            m.industry,
+            v.trade_date,
+            v.pe_ttm,
+            v.pb,
+            v.dividend_yield_ttm,
+            v.erp,
+            (array_agg(p.pct ORDER BY p.as_of_date DESC)
+                FILTER (WHERE p.metric = 'pe_ttm'))[1] AS pe_percentile,
+            (array_agg(p.pct ORDER BY p.as_of_date DESC)
+                FILTER (WHERE p.metric = 'pb'))[1] AS pb_percentile,
+            max(p.as_of_date) AS pct_as_of
+        FROM bp_index_master m
+        LEFT JOIN LATERAL (
+            SELECT d.index_code, d.trade_date, d.pe_ttm, d.pb,
+                   d.dividend_yield_ttm, d.erp, d.calc_src
+            FROM bp_index_valuation_daily d
+            WHERE d.index_code = m.index_code AND d.is_primary
+            ORDER BY d.trade_date DESC
+            LIMIT 1
+        ) v ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT p.pct, p.metric, p.as_of_date
+            FROM bp_index_percentile p
+            WHERE p.index_code = m.index_code
+              AND p.window_key = %(window)s
+              AND p.calc_src = v.calc_src
+        ) p ON TRUE
+        WHERE m.index_code = ANY(%(codes)s)
+        GROUP BY m.index_code, m.name, m.industry, v.trade_date,
+                 v.pe_ttm, v.pb, v.dividend_yield_ttm, v.erp
+        ORDER BY m.index_code
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql, {"codes": codes, "window": safe_window})
+        columns = [desc.name for desc in cur.description]
+        records = cur.fetchall()
+    numeric = {
+        "pe_ttm", "pb", "dividend_yield_ttm", "erp",
+        "pe_percentile", "pb_percentile",
+    }
+    out: list[dict] = []
+    for record in records:
+        item = dict(zip(columns, record))
+        for key in numeric:
+            item[key] = _to_float(item.get(key))
+        item["window"] = safe_window
+        out.append(item)
+    return out
+
 def get_index_list(
     conn: psycopg.Connection,
     *,
     query: Optional[str],
     index_type: Optional[str],
+    industry: Optional[str] = None,
+    window: str = "5y",
+    metric: str = "pe_ttm",
     only_with_etf: bool,
     only_with_valuation: bool,
     limit: int,
@@ -491,8 +560,11 @@ def get_index_list(
 ) -> tuple[list[dict], int]:
     """指数列表（单条 SQL）。
 
-    一条 CTE + 三个 LATERAL 完成「主数据 + 最新主口径估值 + 最新 PE/PB 分位」，
-    并用锚点行保证空页也能拿到 total，绝不产生 N+1。
+    一条 CTE + 若干 LATERAL 完成「主数据 + 最新主口径估值 + 多指标分位（按窗口）
+    + 全历史高低点」，并用锚点行保证空页也能拿到 total，绝不产生 N+1。
+
+    window/metric 只影响返回的分位口径；PE/PB/股息率/ERP 四个分位会一起返回，
+    前端切换指标与窗口无需新接口。
     """
     limit = max(0, int(limit))
     offset = max(0, int(offset))
@@ -506,6 +578,7 @@ def get_index_list(
                 m.name,
                 m.short_name,
                 m.index_type,
+                m.industry,
                 m.market,
                 m.publisher,
                 v.trade_date,
@@ -543,10 +616,6 @@ def get_index_list(
                     END
                 ) AS change_7d_pct,
                 CASE
-                    WHEN (v.raw ->> 'rise_year') ~ '^-?[0-9.]+$'
-                    THEN (v.raw ->> 'rise_year')::numeric
-                END AS change_52w_pct,
-                CASE
                     WHEN qp.obs_52w >= 200 AND qp.high_52w > 0 AND qp.close_last IS NOT NULL
                     THEN ((qp.close_last / qp.high_52w) - 1) * 100
                 END AS dist_from_high_pct,
@@ -554,10 +623,32 @@ def get_index_list(
                     WHEN qp.obs_52w >= 200 AND qp.high_52w > qp.low_52w AND qp.close_last IS NOT NULL
                     THEN ((qp.close_last - qp.low_52w) / (qp.high_52w - qp.low_52w)) * 100
                 END AS position_52w_pct,
-                pe.pct AS pe_percentile,
-                pe.as_of_date AS pe_pct_as_of,
-                pb.pct AS pb_percentile,
-                pb.as_of_date AS pb_pct_as_of
+                pc.pe_pct AS pe_percentile,
+                pc.pb_pct AS pb_percentile,
+                pc.div_pct AS dividend_percentile,
+                pc.erp_pct AS erp_percentile,
+                pc.as_of_date AS pct_as_of,
+                CASE %(metric)s
+                    WHEN 'pe_ttm' THEN pc.pe_pct
+                    WHEN 'pb' THEN pc.pb_pct
+                    WHEN 'dividend_yield_ttm' THEN pc.div_pct
+                    WHEN 'erp' THEN pc.erp_pct
+                END AS metric_percentile,
+                qh.high_all,
+                CASE
+                    WHEN qh.high_all > 0 AND qp.close_last IS NOT NULL
+                    THEN ((qp.close_last / qh.high_all) - 1) * 100
+                END AS dist_from_all_high_pct,
+                COALESCE(
+                    CASE
+                        WHEN qh.close_52w_ago > 0 AND qp.close_last > 0
+                        THEN ((qp.close_last / qh.close_52w_ago) - 1) * 100
+                    END,
+                    CASE
+                        WHEN (v.raw ->> 'rise_year') ~ '^-?[0-9.]+$'
+                        THEN (v.raw ->> 'rise_year')::numeric
+                    END
+                ) AS change_52w_pct
             FROM bp_index_master m
             LEFT JOIN LATERAL (
                 SELECT
@@ -570,25 +661,21 @@ def get_index_list(
                 LIMIT 1
             ) v ON TRUE
             LEFT JOIN LATERAL (
-                SELECT p.pct, p.as_of_date
+                SELECT
+                    (array_agg(p.pct ORDER BY p.as_of_date DESC)
+                        FILTER (WHERE p.metric = 'pe_ttm'))[1] AS pe_pct,
+                    (array_agg(p.pct ORDER BY p.as_of_date DESC)
+                        FILTER (WHERE p.metric = 'pb'))[1] AS pb_pct,
+                    (array_agg(p.pct ORDER BY p.as_of_date DESC)
+                        FILTER (WHERE p.metric = 'dividend_yield_ttm'))[1] AS div_pct,
+                    (array_agg(p.pct ORDER BY p.as_of_date DESC)
+                        FILTER (WHERE p.metric = 'erp'))[1] AS erp_pct,
+                    max(p.as_of_date) AS as_of_date
                 FROM bp_index_percentile p
                 WHERE p.index_code = m.index_code
-                  AND p.metric = 'pe_ttm'
-                  AND p.window_key = '5y'
+                  AND p.window_key = %(window)s
                   AND p.calc_src = v.calc_src
-                ORDER BY p.as_of_date DESC
-                LIMIT 1
-            ) pe ON TRUE
-            LEFT JOIN LATERAL (
-                SELECT p.pct, p.as_of_date
-                FROM bp_index_percentile p
-                WHERE p.index_code = m.index_code
-                  AND p.metric = 'pb'
-                  AND p.window_key = '5y'
-                  AND p.calc_src = v.calc_src
-                ORDER BY p.as_of_date DESC
-                LIMIT 1
-            ) pb ON TRUE
+            ) pc ON TRUE
             -- 一次扫过去 400 天：最近两根收盘 + 7 日前收盘 + 52 周高低（chunk 裁剪靠时间下界）。
             LEFT JOIN LATERAL (
                 SELECT
@@ -609,12 +696,23 @@ def get_index_list(
                       AND q.trade_date >= current_date - 400
                 ) t
             ) qp ON TRUE
+            -- 全历史最高点 + 52 周前收盘（etf.run 同款「历史最高 / 距最高」列）
+            LEFT JOIN LATERAL (
+                SELECT
+                    max(q.close) AS high_all,
+                    (array_agg(q.close ORDER BY q.trade_date DESC))[251] AS close_52w_ago
+                FROM bp_index_quote_daily q
+                WHERE q.symbol = m.index_code
+                  AND q.adjust = 'bfq'
+            ) qh ON TRUE
             WHERE (%(query)s::text IS NULL
                    OR m.index_code ILIKE %(query_like)s
                    OR m.name ILIKE %(query_like)s
                    OR COALESCE(m.short_name, '') ILIKE %(query_like)s)
               AND (%(index_type)s::text IS NULL
                    OR m.index_type = %(index_type)s::text)
+              AND (%(industry)s::text IS NULL
+                   OR m.industry = %(industry)s::text)
               AND (NOT %(only_with_valuation)s OR v.index_code IS NOT NULL)
               AND (NOT %(only_with_etf)s
                    OR (jsonb_typeof(v.raw -> 'etf_fund') = 'array'
@@ -632,6 +730,9 @@ def get_index_list(
         "query": query_text,
         "query_like": query_like,
         "index_type": _to_text(index_type),
+        "industry": _to_text(industry),
+        "window": window if window in PERCENTILE_WINDOWS else "5y",
+        "metric": metric if metric in SERIES_METRICS else "pe_ttm",
         "only_with_valuation": bool(only_with_valuation),
         "only_with_etf": bool(only_with_etf),
         "limit": limit,
@@ -644,8 +745,14 @@ def get_index_list(
         "erp",
         "pe_percentile",
         "pb_percentile",
+        "dividend_percentile",
+        "erp_percentile",
+        "metric_percentile",
         "close_price",
         "change_pct",
+        "high_all",
+        "dist_from_all_high_pct",
+        "change_52w_pct",
     }
     with conn.cursor() as cur:
         cur.execute(sql, params)
@@ -826,10 +933,9 @@ def get_index_history(
 
     end = raw_rows[-1][0]
     start = None
-    if window == "5y":
-        start = _shift_years(end, -5)
-    elif window == "10y":
-        start = _shift_years(end, -10)
+    _history_years = {"1y": 1, "3y": 3, "5y": 5, "10y": 10}
+    if window in _history_years:
+        start = _shift_years(end, -_history_years[window])
 
     result: list[dict] = []
     for trade_date, value, is_weekly, source in raw_rows:

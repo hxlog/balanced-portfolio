@@ -1,13 +1,20 @@
 /** 后端 /api/valuation/* 响应 -> 前端类型映射（唯一入口，字段口径在这里收口）。 */
 import type {
+  BroadProxyCard,
+  HistoryPoint,
   IndexCategory,
   IndexQuoteRow,
   MarketBoard,
   MarketValuationCard,
+  PercentileStats,
+  PercentileWindow,
+  ValuationHistory,
   ValuationLevel,
+  ValuationMetric,
 } from "./valuation-types";
 
 const CATEGORIES: ReadonlySet<string> = new Set(["宽基", "行业", "主题", "策略", "其他"]);
+const WINDOWS: ReadonlySet<string> = new Set(["1y", "3y", "5y", "10y", "all"]);
 const LEVELS: ReadonlySet<string> = new Set(["低估", "中性", "高估"]);
 const BOARDS: ReadonlySet<string> = new Set(["all", "main", "chinext", "star", "bse"]);
 const BOARD_LABEL: Record<MarketBoard, string> = {
@@ -58,6 +65,7 @@ export function mapIndexRow(raw: Record<string, unknown>): IndexQuoteRow {
     high_52w: num(raw.high_52w),
     low_52w: num(raw.low_52w),
     position_52w_pct: num(raw.position_52w_pct),
+    industry: str(raw.industry),
     pe_ttm: num(raw.pe_ttm),
     pe_percentile: num(raw.pe_percentile),
     pb: num(raw.pb),
@@ -67,7 +75,67 @@ export function mapIndexRow(raw: Record<string, unknown>): IndexQuoteRow {
     level_pe: asLevel(raw.level_pe),
     level_pb: asLevel(raw.level_pb),
     level_dividend: asLevel(raw.level_dividend),
+    dividend_percentile: num(raw.dividend_percentile),
+    erp_percentile: num(raw.erp_percentile),
+    metric_percentile: num(raw.metric_percentile),
+    high_all: num(raw.high_all),
+    distance_from_all_high_pct: num(raw.dist_from_all_high_pct),
   };
+}
+
+/** 代表性宽基卡（overview.meta.proxies）。 */
+export function mapBroadProxy(raw: Record<string, unknown>): BroadProxyCard {
+  const windowText = typeof raw.window === "string" ? raw.window : "5y";
+  const window = (WINDOWS.has(windowText) ? windowText : "5y") as PercentileWindow;
+  return {
+    index_code: String(raw.index_code ?? ""),
+    name: String(raw.name ?? ""),
+    industry: str(raw.industry),
+    trade_date: String(raw.trade_date ?? ""),
+    pe: num(raw.pe_ttm),
+    pe_percentile: num(raw.pe_percentile),
+    pb: num(raw.pb),
+    pb_percentile: num(raw.pb_percentile),
+    dividend_yield_pct: num(raw.dividend_yield_ttm),
+    risk_premium_pct: num(raw.erp),
+    window,
+  };
+}
+
+/** 详情页历史序列（/api/valuation/{code}/history）。 */
+export function mapValuationHistory(
+  code: string,
+  raw: Record<string, unknown>,
+  metric: ValuationMetric,
+  window: PercentileWindow,
+): ValuationHistory {
+  const payload = (raw.data ?? {}) as Record<string, unknown>;
+  const seriesRaw = Array.isArray(payload.series) ? payload.series : [];
+  const statsRaw = (payload.stats ?? null) as Record<string, unknown> | null;
+  const series = seriesRaw
+    .map((item) => {
+      const row = item as Record<string, unknown>;
+      const value = num(row.value);
+      const trade_date = String(row.trade_date ?? "");
+      return value == null || !trade_date ? null : { trade_date, value };
+    })
+    .filter((item): item is HistoryPoint => item !== null);
+  const stats: PercentileStats | null = statsRaw
+    ? {
+        metric,
+        window_key: window,
+        pct: num(statsRaw.pct),
+        mean: num(statsRaw.mean),
+        sd: num(statsRaw.sd),
+        p20: num(statsRaw.p20),
+        p50: num(statsRaw.p50),
+        p80: num(statsRaw.p80),
+        min: num(statsRaw.min_value),
+        max: num(statsRaw.max_value),
+        sample_size: Number(statsRaw.sample_size ?? 0),
+      }
+    : null;
+  return { code, metric, window, series, stats };
 }
 
 export function mapMarketCard(raw: Record<string, unknown>): MarketValuationCard {

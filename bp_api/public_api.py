@@ -57,7 +57,7 @@ PERCENTILE_METRICS = frozenset(
         "erp",
     }
 )
-PERCENTILE_WINDOWS = frozenset({"5y", "10y", "all"})
+PERCENTILE_WINDOWS = frozenset({"1y", "3y", "5y", "10y", "all"})
 BOND_SERIES_CODE = "cn_10y_yield"
 
 MARKET_DAILY_CSV_COLUMNS = (

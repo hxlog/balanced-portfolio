@@ -2,9 +2,27 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { connection } from "next/server";
 import { ValuationHome } from "./ValuationHome";
-import { getCachedValuationIndices, getCachedValuationOverview } from "@/lib/cached-data";
-import { mapIndexRow, mapMarketCard } from "@/lib/valuation-api-map";
-import type { IndexQuoteRow, MarketValuationCard } from "@/lib/valuation-types";
+import {
+  getCachedValuationHistory,
+  getCachedValuationIndices,
+  getCachedValuationOverview,
+} from "@/lib/cached-data";
+import {
+  mapBroadProxy,
+  mapIndexRow,
+  mapMarketCard,
+  mapValuationHistory,
+} from "@/lib/valuation-api-map";
+import type {
+  BroadProxyCard,
+  IndexQuoteRow,
+  MarketValuationCard,
+  PercentileWindow,
+  ValuationHistory,
+} from "@/lib/valuation-types";
+
+const DEFAULT_WINDOW: PercentileWindow = "5y";
+const DEFAULT_PROXY = "000300";
 
 export const metadata: Metadata = {
   title: "指数估值 — PE/PB 分位与风险溢价",
@@ -53,32 +71,39 @@ function ValuationSkeleton() {
 async function ValuationData() {
   // PPR：显式声明请求期数据，避免构建期预渲染去连后端。
   await connection();
-  let rows: IndexQuoteRow[] | undefined;
-  let cards: MarketValuationCard[] | undefined;
-  let asOf: string | undefined;
+  let rows: IndexQuoteRow[] = [];
+  let cards: MarketValuationCard[] = [];
+  let proxies: BroadProxyCard[] = [];
+  let history: ValuationHistory | null = null;
+  let asOf = "";
   try {
-    const [indices, overview] = await Promise.all([
-      getCachedValuationIndices(),
-      getCachedValuationOverview(),
+    const [indices, overview, historyPayload] = await Promise.all([
+      getCachedValuationIndices(1000, DEFAULT_WINDOW, "pe_ttm"),
+      getCachedValuationOverview(DEFAULT_WINDOW),
+      getCachedValuationHistory(DEFAULT_PROXY, "pe_ttm", DEFAULT_WINDOW),
     ]);
-    const mapped = (indices.data ?? []).map(mapIndexRow).filter((row) => row.index_code);
-    if (mapped.length > 0) {
-      rows = mapped;
-      asOf = indices.meta?.as_of
-        ? String(indices.meta.as_of)
-        : mapped.find((row) => row.trade_date)?.trade_date || undefined;
-      const mappedCards = (overview.data ?? []).map(mapMarketCard);
-      if (mappedCards.length > 0) cards = mappedCards;
-    }
+    rows = (indices.data ?? []).map(mapIndexRow).filter((row) => row.index_code);
+    asOf = indices.meta?.as_of
+      ? String(indices.meta.as_of)
+      : rows.find((row) => row.trade_date)?.trade_date || "";
+    cards = (overview.data ?? []).map(mapMarketCard);
+    const rawProxies = overview.meta?.proxies;
+    proxies = Array.isArray(rawProxies)
+      ? rawProxies.map((item) => mapBroadProxy(item as Record<string, unknown>))
+      : [];
+    history = mapValuationHistory(DEFAULT_PROXY, historyPayload, "pe_ttm", DEFAULT_WINDOW);
   } catch {
-    // 后端不可用/未落库时回退到示例数据，页面仍可访问。
+    // 后端不可用时不伪造数据：页面展示空状态与错误提示
   }
   return (
     <ValuationHome
       rows={rows}
-      cards={cards}
+      proxies={proxies}
+      boards={cards}
+      history={history}
       asOf={asOf}
-      isLive={Boolean(rows)}
+      total={rows.length}
+      defaultWindow={DEFAULT_WINDOW}
     />
   );
 }

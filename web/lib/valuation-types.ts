@@ -19,7 +19,7 @@ export type IndexCategory = "宽基" | "行业" | "主题" | "策略" | "其他"
 export type ValuationLevel = "低估" | "中性" | "高估";
 
 /** 分位窗口，对应 bp_index_percentile.window_key。 */
-export type PercentileWindow = "5y" | "10y" | "all";
+export type PercentileWindow = "1y" | "3y" | "5y" | "10y" | "all";
 
 /** 全市场板块，对应 bp_market_valuation_daily.board。 */
 export type MarketBoard = "all" | "main" | "chinext" | "star" | "bse";
@@ -107,6 +107,48 @@ export interface IndexQuoteRow {
   level_pb?: ValuationLevel | null;
   /** 后端给出的股息率估值等级。 */
   level_dividend?: ValuationLevel | null;
+  /** 申万一级行业（宽基为 null）。 */
+  industry?: string | null;
+  /** 股息率分位（所选窗口），0~100。 */
+  dividend_percentile?: number | null;
+  /** ERP 分位（所选窗口），0~100。 */
+  erp_percentile?: number | null;
+  /** 所选指标（metric）对应的分位，0~100。 */
+  metric_percentile?: number | null;
+  /** 数据区间内最高收盘（不是真正「历史最高」，页面上须注明区间）。 */
+  high_all?: number | null;
+  /** 距区间最高点的跌幅（百分数点，通常为负）。 */
+  distance_from_all_high_pct?: number | null;
+}
+
+/** 估值历史序列点（bp_index_valuation_series）。 */
+export interface HistoryPoint {
+  trade_date: string;
+  value: number;
+}
+
+/** 单指标单窗口的估值历史 + 区间统计。 */
+export interface ValuationHistory {
+  code: string;
+  metric: ValuationMetric;
+  window: PercentileWindow;
+  series: HistoryPoint[];
+  stats: PercentileStats | null;
+}
+
+/** 首页代表性宽基估值卡（真实历史分位）。 */
+export interface BroadProxyCard {
+  index_code: string;
+  name: string;
+  industry: string | null;
+  trade_date: string;
+  pe: number | null;
+  pe_percentile: number | null;
+  pb: number | null;
+  pb_percentile: number | null;
+  dividend_yield_pct: number | null;
+  risk_premium_pct: number | null;
+  window: PercentileWindow;
 }
 
 /**

@@ -22,10 +22,18 @@ from datetime import date
 from statistics import fmean, stdev
 from typing import Optional, Sequence
 
-# 分位样本量门槛：有效样本不足 120 个交易日时不输出 pct。
+# 分位样本量门槛：有效样本不足时不输出 pct。
+# 估值序列来自平安，频率为周频（约 52 点/年），因此 1 年窗口天然凑不满 120 个点，
+# 对 1y 采用 40 点的门槛（≥40 个周频样本仍可给出有意义的序位），其余窗口保持 120。
 MIN_SAMPLE = 120
+MIN_SAMPLE_BY_WINDOW = {"1y": 40, "3y": 120, "5y": 120, "10y": 120, "all": 120}
 
-_WINDOW_YEARS = {"5y": 5, "10y": 10}
+
+def min_sample_for(window: str) -> int:
+    """按窗口返回最小有效样本数。"""
+    return MIN_SAMPLE_BY_WINDOW.get(window, MIN_SAMPLE)
+
+_WINDOW_YEARS = {"1y": 1, "3y": 3, "5y": 5, "10y": 10}
 
 LEVEL_LOW = "低估"
 LEVEL_NEUTRAL = "中性"
@@ -73,8 +81,8 @@ def window_slice(
 ) -> list[float]:
     """截取 ``[as_of - window, as_of]`` 闭区间内的有效值，按日期升序返回。
 
-    ``window`` 仅接受 ``5y`` / ``10y`` / ``all``；``all`` 表示 as_of 之前的
-    全部历史。``as_of`` 当日及其之前（含 5y/10y 下边界当日）均包含。
+    ``window`` 接受 ``1y`` / ``3y`` / ``5y`` / ``10y`` / ``all``；``all`` 表示
+    as_of 之前的全部历史。``as_of`` 当日及其之前（含窗口下边界当日）均包含。
     """
     if window == "all":
         start: Optional[date] = None
@@ -111,13 +119,13 @@ def _quantile(sorted_values: Sequence[float], p: float) -> Optional[float]:
     return float(sorted_values[lo] + frac * (sorted_values[hi] - sorted_values[lo]))
 
 
-def summarize(values: Sequence[float]) -> dict:
+def summarize(values: Sequence[float], min_sample: int = MIN_SAMPLE) -> dict:
     """窗口统计量。
 
     返回键：``pct/mean/sd/p20/p50/p80/min/max/sample_size``。
     - ``pct`` 为最后一个有效值在该窗口内的分位；
     - ``sd`` 为样本标准差（n-1），n<2 时为 None；
-    - 有效样本 < ``MIN_SAMPLE`` 时 ``pct=None`` 并带
+    - 有效样本 < ``min_sample``（默认 ``MIN_SAMPLE``）时 ``pct=None`` 并带
       ``reason="insufficient_sample"``。
     """
     vals = _clean(values)
@@ -148,7 +156,7 @@ def summarize(values: Sequence[float]) -> dict:
         "max": float(ordered[-1]),
         "sample_size": n,
     }
-    if n < MIN_SAMPLE:
+    if n < min_sample:
         out["reason"] = "insufficient_sample"
     else:
         out["pct"] = percentile(vals, vals[-1])

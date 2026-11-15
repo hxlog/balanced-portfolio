@@ -102,19 +102,48 @@ export async function resolveDefaultPortfolioId(): Promise<number | null> {
  * 失败时 throw（不缓存 null），页面 catch 后回退示例数据。 */
 export async function getCachedValuationIndices(
   limit = 600,
+  window = "5y",
+  metric = "pe_ttm",
 ): Promise<{ data: Record<string, unknown>[]; meta: Record<string, unknown> }> {
   "use cache";
   cacheLife("hours");
   cacheTag("valuation");
-  const path = "/api/valuation/indices?limit=" + String(limit);
+  const path =
+    "/api/valuation/indices?limit=" +
+    String(limit) +
+    "&window=" +
+    window +
+    "&metric=" +
+    metric;
   return await serverFetch<{
     data: Record<string, unknown>[];
     meta: Record<string, unknown>;
   }>(path);
 }
 
+/** 估值历史序列（PE/PB Band 图 + 区间统计）。 */
+export async function getCachedValuationHistory(
+  code: string,
+  metric = "pe_ttm",
+  window = "5y",
+): Promise<Record<string, unknown>> {
+  "use cache";
+  cacheLife("hours");
+  cacheTag("valuation");
+  const path =
+    "/api/valuation/" +
+    encodeURIComponent(code) +
+    "/history?metric=" +
+    metric +
+    "&window=" +
+    window;
+  return await serverFetch<Record<string, unknown>>(path);
+}
+
 /** 估值首页：全市场板块估值卡（bp_market_valuation_daily）。 */
-export async function getCachedValuationOverview(): Promise<{
+export async function getCachedValuationOverview(
+  window = "5y",
+): Promise<{
   data: Record<string, unknown>[];
   meta: Record<string, unknown>;
 }> {
@@ -124,5 +153,5 @@ export async function getCachedValuationOverview(): Promise<{
   return await serverFetch<{
     data: Record<string, unknown>[];
     meta: Record<string, unknown>;
-  }>("/api/valuation/overview");
+  }>("/api/valuation/overview?window=" + window);
 }
