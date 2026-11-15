@@ -253,6 +253,7 @@ def register_routes(app: FastAPI) -> None:
                 detail["tracker_funds"] = repositories_valuation.get_index_tracker_funds(
                     conn, code
                 )
+                detail["risk"] = repositories_valuation.get_index_risk_stats(conn, code)
         if detail is None:
             raise HTTPException(404, "index_not_found")
         payload = _envelope(detail, as_of=_latest_as_of([detail]), rows=1)

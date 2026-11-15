@@ -77,6 +77,13 @@ const COLUMNS: ReadonlyArray<{ key: ColumnKey; label: string; numeric: boolean }
   { key: "position", label: "52 周位置", numeric: true },
 ];
 
+const METRIC_COLUMN: Record<ValuationMetric, ColumnKey> = {
+  pe_ttm: "pe_pct",
+  pb: "pb_pct",
+  dividend_yield_ttm: "dividend_pct",
+  erp: "erp_pct",
+};
+
 const DEFAULT_COLUMNS: ColumnKey[] = [
   "close",
   "change_pct",
@@ -282,6 +289,12 @@ export function ValuationHome({
     },
     [sortKey],
   );
+
+  // 切换指标时确保对应的分位列可见（否则用户看不出指标切换的效果）
+  useEffect(() => {
+    const column = METRIC_COLUMN[metric];
+    setColumns((current) => (current.includes(column) ? current : [...current, column]));
+  }, [metric]);
 
   const toggleColumn = useCallback((key: ColumnKey) => {
     setColumns((current) =>
@@ -637,7 +650,7 @@ export function ValuationHome({
                           <td key={column.key} className="px-3 py-2">
                             <div className="flex items-center justify-end gap-2">
                               <div className="w-16">
-                                <PercentileBar value={row.position_52w_pct ?? null} />
+                                <PercentileBar value={row.position_52w_pct ?? null} showLabels={false} />
                               </div>
                               <span className="w-9 text-right font-mono text-xs tabular-nums text-muted-foreground">
                                 {value == null ? "—" : value.toFixed(0) + "%"}

@@ -479,6 +479,97 @@ def get_market_overview(
         return rows
 
 
+def get_index_risk_stats(conn: psycopg.Connection, index_code: str) -> dict:
+    """指数区间收益风险统计（基于原始行情收盘）。
+
+    返回 1/3/5 年与全区间：区间收益、年化收益、年化波动、最大回撤、夏普（rf=0）。
+    数据来自 bp_index_quote_daily(bfq)，无行情的指数返回空 dict。
+    """
+    sql = """
+        SELECT trade_date, close
+        FROM bp_index_quote_daily
+        WHERE symbol = %s AND adjust = 'bfq' AND close IS NOT NULL
+        ORDER BY trade_date
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql, (index_code,))
+        rows = cur.fetchall()
+    if len(rows) < 30:
+        return {}
+
+    import math
+
+    def window_stats(points: list[tuple], years: float | None) -> dict | None:
+        if len(points) < 30:
+            return None
+        first = float(points[0][1])
+        last = float(points[-1][1])
+        if first <= 0:
+            return None
+        total = (last / first - 1) * 100
+        span_days = max((points[-1][0] - points[0][0]).days, 1)
+        ann_factor = 365.0 / span_days
+        annual = ((last / first) ** ann_factor - 1) * 100 if last > 0 else None
+        returns: list[float] = []
+        peak = first
+        max_dd = 0.0
+        for _, close in points[1:]:
+            value = float(close)
+            if value <= 0:
+                continue
+            returns.append(value / peak - 1)
+            peak = max(peak, value)
+        # 用相邻收盘算日收益（上面 returns 是相对峰值，仅用于回撤）
+        daily: list[float] = []
+        prev = first
+        for _, close in points[1:]:
+            value = float(close)
+            if prev > 0:
+                daily.append(value / prev - 1)
+            prev = value
+        peak = first
+        for value in [float(item[1]) for item in points]:
+            peak = max(peak, value)
+            if peak > 0:
+                max_dd = min(max_dd, value / peak - 1)
+        vol = None
+        if len(daily) > 2:
+            mean = sum(daily) / len(daily)
+            variance = sum((item - mean) ** 2 for item in daily) / (len(daily) - 1)
+            vol = math.sqrt(variance) * math.sqrt(252) * 100
+        sharpe = None
+        if ann_factor and vol and vol > 0 and years is not None:
+            # 年化收益减无风险收益（这里用 0，页面上注明未扣减）
+            sharpe = annual / vol if annual is not None else None
+        return {
+            "total_return_pct": round(total, 4),
+            "annualized_return_pct": None if annual is None else round(annual, 4),
+            "volatility_pct": None if vol is None else round(vol, 4),
+            "max_drawdown_pct": round(max_dd * 100, 4),
+            "sharpe": None if sharpe is None else round(sharpe, 4),
+            "sample_size": len(points),
+        }
+
+    def slice_years(points: list[tuple], years: float) -> list[tuple]:
+        if not points:
+            return []
+        end = points[-1][0]
+        target = end.replace(year=max(end.year - int(years), 1900))
+        return [item for item in points if item[0] >= target]
+
+    windows = {
+        "1y": slice_years(rows, 1),
+        "3y": slice_years(rows, 3),
+        "5y": slice_years(rows, 5),
+        "all": rows,
+    }
+    out: dict = {}
+    for key, points in windows.items():
+        stats = window_stats(points, None if key == "all" else int(key[0]))
+        if stats is not None:
+            out[key] = stats
+    return out
+
 def get_broad_proxies(
     conn: psycopg.Connection,
     codes: list[str],
@@ -696,15 +787,8 @@ def get_index_list(
                       AND q.trade_date >= current_date - 400
                 ) t
             ) qp ON TRUE
-            -- 全历史最高点 + 52 周前收盘（etf.run 同款「历史最高 / 距最高」列）
-            LEFT JOIN LATERAL (
-                SELECT
-                    max(q.close) AS high_all,
-                    (array_agg(q.close ORDER BY q.trade_date DESC))[251] AS close_52w_ago
-                FROM bp_index_quote_daily q
-                WHERE q.symbol = m.index_code
-                  AND q.adjust = 'bfq'
-            ) qh ON TRUE
+            -- 区间最高 / 52 周前收盘：读预计算表（64 号迁移），避免每次全历史扫行情表
+            LEFT JOIN bp_index_quote_extremes qh ON qh.symbol = m.index_code
             WHERE (%(query)s::text IS NULL
                    OR m.index_code ILIKE %(query_like)s
                    OR m.name ILIKE %(query_like)s
@@ -782,7 +866,7 @@ def get_index_detail(conn: psycopg.Connection, index_code: str) -> Optional[dict
         SELECT
             m.index_code, m.market, m.wind_code, m.name, m.short_name,
             m.index_type, m.publisher, m.base_date, m.base_point,
-            m.income_method, m.weight_method, m.intro, m.is_active, m.is_tracked,
+            m.income_method, m.weight_method, m.intro, m.is_active, m.is_tracked, m.industry,
             d.trade_date, d.calc_src, d.pe_ttm, d.pe_static, d.pb,
             d.dividend_yield_ttm, d.dividend_yield_lyr, d.roe_ttm, d.roa_ttm,
             d.bond10y, d.erp, d.pe_basis, d.pb_basis, d.div_basis,

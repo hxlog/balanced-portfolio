@@ -1,0 +1,206 @@
+diff --git a/bp_api/repositories_valuation.py b/bp_api/repositories_valuation.py
+index d0a1a8b..55876e2 100644
+--- a/bp_api/repositories_valuation.py
++++ b/bp_api/repositories_valuation.py
+@@ -529,6 +529,20 @@ def get_index_list(
+                     WHEN qp.close_last > 0 AND qp.close_prev > 0
+                     THEN ((qp.close_last / qp.close_prev) - 1) * 100
+                 END AS change_pct,
++                qp.high_52w,
++                qp.low_52w,
++                CASE
++                    WHEN qp.close_last > 0 AND qp.close_7d_ago > 0
++                    THEN ((qp.close_last / qp.close_7d_ago) - 1) * 100
++                END AS change_7d_pct,
++                CASE
++                    WHEN qp.high_52w > 0 AND qp.close_last IS NOT NULL
++                    THEN ((qp.close_last / qp.high_52w) - 1) * 100
++                END AS dist_from_high_pct,
++                CASE
++                    WHEN qp.high_52w > qp.low_52w AND qp.close_last IS NOT NULL
++                    THEN ((qp.close_last - qp.low_52w) / (qp.high_52w - qp.low_52w)) * 100
++                END AS position_52w_pct,
+                 pe.pct AS pe_percentile,
+                 pe.as_of_date AS pe_pct_as_of,
+                 pb.pct AS pb_percentile,
+@@ -564,22 +578,22 @@ def get_index_list(
+                 ORDER BY p.as_of_date DESC
+                 LIMIT 1
+             ) pb ON TRUE
+-            -- 两日收盘一次取回：bp_quote_clean 是 Timescale chunk 表，
+-            -- 每多一个 LATERAL 就多扫一轮 chunk（521 指标 × 2 次曾耗时 79s）。
+-            -- 加 90 天时间下界让 chunk 裁剪生效，并一次取最近 2 根。
++            -- 一次扫过去 400 天：最近两根收盘 + 7 日前收盘 + 52 周高低（chunk 裁剪靠时间下界）。
+             LEFT JOIN LATERAL (
+                 SELECT
+                     (array_agg(t.close ORDER BY t.trade_date DESC))[1] AS close_last,
+                     (array_agg(t.close ORDER BY t.trade_date DESC))[2] AS close_prev,
++                    (array_agg(t.close ORDER BY t.trade_date DESC))[8] AS close_7d_ago,
++                    max(t.close) AS high_52w,
++                    min(t.close) AS low_52w,
++                    count(*) AS obs_52w,
+                     max(t.trade_date) AS trade_date
+                 FROM (
+                     SELECT q.close, q.trade_date
+                     FROM bp_quote_clean q
+                     WHERE q.symbol = m.index_code
+                       AND q.adjust = 'bfq'
+-                      AND q.trade_date >= current_date - 90
+-                    ORDER BY q.trade_date DESC
+-                    LIMIT 2
++                      AND q.trade_date >= current_date - 400
+                 ) t
+             ) qp ON TRUE
+             WHERE (%(query)s::text IS NULL
+diff --git a/web/app/builder/BasketResults.tsx b/web/app/builder/BasketResults.tsx
+index f86b64b..9dcfa33 100644
+--- a/web/app/builder/BasketResults.tsx
++++ b/web/app/builder/BasketResults.tsx
+@@ -205,10 +205,9 @@ export function BasketResults({
+             </div>
+           </div>
+         </CardHeader>
+-        <CardContent>
+-          {optimizeError ? (
+-            <BasketErrorPanel message={optimizeError} />
+-          ) : showWeightsSkeleton ? (
++        <CardContent className="space-y-4">
++          {optimizeError && <BasketErrorPanel message={optimizeError} />}
++          {showWeightsSkeleton ? (
+             <div className="grid items-center gap-6 lg:grid-cols-[minmax(0,1fr)_260px]">
+               <div className="space-y-4">
+                 {Array.from({ length: 5 }).map((_, index) => (
+@@ -224,11 +223,13 @@ export function BasketResults({
+               <Pulse className="mx-auto h-[220px] w-[220px] rounded-full" />
+             </div>
+           ) : rows.length === 0 ? (
+-            <div className="rounded-lg border border-dashed border-border bg-bg-subtle/40 px-4 py-10 text-center text-sm text-muted-foreground">
+-              {assetCount === 0
+-                ? "添加资产后自动计算权重"
+-                : "暂无可展示的权重，请检查参数后重试"}
+-            </div>
++            optimizeError ? null : (
++              <div className="rounded-lg border border-dashed border-border bg-bg-subtle/40 px-4 py-10 text-center text-sm text-muted-foreground">
++                {assetCount === 0
++                  ? "添加资产后自动计算权重"
++                  : "暂无可展示的权重，请检查参数后重试"}
++              </div>
++            )
+           ) : (
+             <div className="grid items-center gap-6 lg:grid-cols-[minmax(0,1fr)_260px]">
+               <div className="space-y-3">
+diff --git a/web/app/builder/BuilderClient.tsx b/web/app/builder/BuilderClient.tsx
+index a9947c3..3dc592c 100644
+--- a/web/app/builder/BuilderClient.tsx
++++ b/web/app/builder/BuilderClient.tsx
+@@ -539,13 +539,18 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
+ 
+   if (!isWhitelisted) {
+     return (
+-      <div className="max-w-md mx-auto p-12 text-center space-y-4">
+-        <Lock className="w-10 h-10 mx-auto text-muted-foreground" />
+-        <h1 className="text-xl font-semibold">需要登录</h1>
+-        <p className="text-sm text-muted-foreground">
+-          仅白名单用户可{isEditMode ? "编辑" : "新建"}组合。请在右上角登录后重试。
+-        </p>
+-        <Button variant="outline" onClick={() => router.push("/dashboard")}>返回 Dashboard</Button>
++      <div className="p-6">
++        <div className="mb-8 flex justify-center">
++          <ModeSwitch mode="quadrant" />
++        </div>
++        <div className="max-w-md mx-auto p-12 text-center space-y-4">
++          <Lock className="w-10 h-10 mx-auto text-muted-foreground" />
++          <h1 className="text-xl font-semibold">需要登录</h1>
++          <p className="text-sm text-muted-foreground">
++            仅白名单用户可{isEditMode ? "编辑" : "新建"}组合。请在右上角登录后重试。
++          </p>
++          <Button variant="outline" onClick={() => router.push("/dashboard")}>返回 Dashboard</Button>
++        </div>
+       </div>
+     );
+   }
+diff --git a/web/app/valuation/ValuationHome.tsx b/web/app/valuation/ValuationHome.tsx
+index 72a5b2a..ad30feb 100644
+--- a/web/app/valuation/ValuationHome.tsx
++++ b/web/app/valuation/ValuationHome.tsx
+@@ -304,6 +304,13 @@ function IndexTable({
+                 onSort={onSort}
+                 title="接口提供 7 日涨跌时展示 7 日，否则展示最近交易日涨跌"
+               />
++              <th
++                scope="col"
++                className="px-3 py-2 text-right text-[11px] font-medium text-muted-foreground"
++                title="当前收盘在近 52 周高低区间中的位置（0=最低，100=最高）"
++              >
++                52 周位置
++              </th>
+               {optionalColumns.close && (
+                 <SortHeader
+                   label="收盘"
+@@ -420,6 +427,33 @@ function IndexTable({
+                   >
+                     {formatSignedPct(change)}
+                   </td>
++                  <td className="px-3 py-2.5">
++                    <div className="flex items-center justify-end gap-2">
++                      <div
++                        className="relative h-1.5 w-16 overflow-hidden rounded-full bg-muted sm:w-20"
++                        title={
++                          row.high_52w != null && row.low_52w != null
++                            ? `52 周区间 ${formatNumber(row.low_52w)} ~ ${formatNumber(row.high_52w)}`
++                            : "52 周区间数据不足"
++                        }
++                      >
++                        <div
++                          className="absolute inset-y-0 left-0 rounded-full bg-primary/70"
++                          style={{
++                            width: `${Math.max(
++                              0,
++                              Math.min(100, row.position_52w_pct ?? 0),
++                            )}%`,
++                          }}
++                        />
++                      </div>
++                      <span className="w-10 text-right font-mono text-xs tabular-nums text-muted-foreground">
++                        {row.position_52w_pct == null
++                          ? "—"
++                          : `${row.position_52w_pct.toFixed(0)}%`}
++                      </span>
++                    </div>
++                  </td>
+                   {optionalColumns.close && (
+                     <td className="px-3 py-2.5 text-right font-mono text-xs tabular-nums">
+                       {formatNumber(row.close)}
+diff --git a/web/lib/valuation-api-map.ts b/web/lib/valuation-api-map.ts
+index 3aaf513..cf2a6ee 100644
+--- a/web/lib/valuation-api-map.ts
++++ b/web/lib/valuation-api-map.ts
+@@ -54,7 +54,10 @@ export function mapIndexRow(raw: Record<string, unknown>): IndexQuoteRow {
+     change_7d_pct:
+       num(raw.change_7d_pct) ?? num(raw.change_7d) ?? num(raw.change_7d_pct_5),
+     change_52w_pct: null,
+-    distance_from_high_pct: null,
++    distance_from_high_pct: num(raw.dist_from_high_pct),
++    high_52w: num(raw.high_52w),
++    low_52w: num(raw.low_52w),
++    position_52w_pct: num(raw.position_52w_pct),
+     pe_ttm: num(raw.pe_ttm),
+     pe_percentile: num(raw.pe_percentile),
+     pb: num(raw.pb),
+diff --git a/web/lib/valuation-types.ts b/web/lib/valuation-types.ts
+index bb9e832..0f0e688 100644
+--- a/web/lib/valuation-types.ts
++++ b/web/lib/valuation-types.ts
+@@ -83,6 +83,12 @@ export interface IndexQuoteRow {
+   change_52w_pct: number | null;
+   /** 距历史最高点的跌幅（百分数点，通常为负）。 */
+   distance_from_high_pct: number | null;
++  /** 52 周最高（收盘价口径）。 */
++  high_52w?: number | null;
++  /** 52 周最低（收盘价口径）。 */
++  low_52w?: number | null;
++  /** 当前收盘在 52 周高低区间中的位置，0~100。 */
++  position_52w_pct?: number | null;
+   /** 市盈率 TTM。 */
+   pe_ttm: number | null;
+   /** PE 历史分位，0~100（与 DB/API 同口径）。 */
