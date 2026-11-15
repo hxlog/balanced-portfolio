@@ -336,3 +336,32 @@ class BasketBacktestIn(BasketOptimizeIn):
     """POST /api/basket/backtest 请求体：优化参数 + 再平衡漂移带。"""
 
     rebalance_band: float = Field(default=0.05, ge=0.0, le=1.0)
+
+
+# ---------------------------------------------------------------------------
+# 一篮子资产持久化（/api/baskets/*）
+# ---------------------------------------------------------------------------
+class BasketSaveIn(BaseModel):
+    """POST /api/baskets：保存当前篮子配置。"""
+
+    name: str = Field(min_length=1, max_length=80)
+    description: Optional[str] = Field(default=None, max_length=500)
+    method: str = "risk_parity"
+    assets: list[BasketAssetIn] = Field(min_length=1, max_length=64)
+    params: dict = Field(default_factory=dict)
+    latest_result: Optional[dict] = None
+
+
+class BasketUpdateIn(BaseModel):
+    """PATCH /api/baskets/{id}：改名 / 改描述 / 改参数。"""
+
+    name: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    description: Optional[str] = Field(default=None, max_length=500)
+    method: Optional[str] = None
+    assets: Optional[list[BasketAssetIn]] = None
+    params: Optional[dict] = None
+    latest_result: Optional[dict] = None
+
+
+class BasketCopyIn(BaseModel):
+    name: Optional[str] = Field(default=None, max_length=80)

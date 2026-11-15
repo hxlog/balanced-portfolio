@@ -20,6 +20,7 @@ from . import (
     api_tokens,
     auth,
     basket,
+    baskets,
     cache,
     crypto_futures as crypto_futures_api,
     db,
@@ -164,6 +165,7 @@ valuation.register_routes(app)
 _public_api.register_routes(app)
 _stocks.register_routes(app)
 basket.register_routes(app)
+baskets.register_routes(app)
 crypto_futures_api.register_routes(app)
 
 app.add_middleware(

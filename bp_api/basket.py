@@ -295,12 +295,49 @@ def register_routes(app: FastAPI) -> None:
             pairs, keys, np.array([result.latest_target.get(k, 0.0) for k in keys])
         )
 
+        eq_nav_rows = [
+            {"trade_date": _iso_date(index), "nav": float(value)}
+            for index, value in result.equal_weight_nav.items()
+        ]
+
+        rebalance_events = []
+        for rb in result.rebalances:
+            prev = rb.get("prev_weights") or {}
+            target_weights = rb.get("target_weights") or {}
+            event_assets = []
+            for key in sorted(set(prev) | set(target_weights)):
+                symbol, source = _split_key(str(key))
+                before = float(prev.get(key, 0.0))
+                after = float(target_weights.get(key, 0.0))
+                event_assets.append(
+                    {
+                        "key": key,
+                        "symbol": symbol,
+                        "source": source,
+                        "prev_weight": before,
+                        "target_weight": after,
+                        "delta": after - before,
+                    }
+                )
+            rebalance_events.append(
+                {
+                    "trade_date": _iso_date(rb["trade_date"]),
+                    "reason": rb.get("reason"),
+                    "turnover": float(rb.get("turnover") or 0.0),
+                    "max_deviation": float(rb.get("max_deviation") or 0.0),
+                    "assets": event_assets,
+                }
+            )
+
         body = {
             "method": payload.method,
             "effective_start": _iso_date(result.effective_start),
             "lookback": payload.lookback_days,
             "n_obs": int(result.n_obs),
             "nav": nav_rows,
+            "equal_weight_nav": eq_nav_rows,
+            "equal_weight_metrics": result.equal_weight_metrics,
+            "rebalance_events": rebalance_events,
             "annualized_return": float(result.metrics["annualized_return"]),
             "annualized_vol": float(result.metrics["annualized_vol"]),
             "max_drawdown": float(result.metrics["max_drawdown"]),

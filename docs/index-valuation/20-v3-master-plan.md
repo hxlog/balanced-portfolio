@@ -291,3 +291,23 @@
 ### 遗留（下一轮）
 - 右侧图表面板 OI 仍用「十亿」格式，统一改千分位；
 - 币种切换的 skeleton/过渡、Smart Money 因子趋势图、资金费率历史分位带、OI 与价格叠加图（数据已齐）。
+## 22. 新需求：篮子模式增强（2026-11-15 22:55，用户追加）
+
+### 需求
+1. basket 回测净值图增加**等权净值系列**；
+2. 图中标出**调仓时点**（竖线/上下点），点击弹出表格：各资产**变化前后权重与变化量**，下方展示**最新一期权重**；
+3. **保存篮子**按钮；/dashboard 展示已保存篮子；支持**编辑、复制**（与四象限组合一致）；
+4. 最终交付：完成全部计划任务、补充全量数据并校验完整性/准确性、删除本机服务与任务、确保服务器增量更新。
+
+### 已完成（后端）
+- `quant/basket.py`：新增**等权组合净值序列**（与优化组合同一可用集合，在相同调仓日再平衡并计入漂移）+ 等权指标（年化/波动/夏普/回撤等）；
+- `/api/basket/backtest` 新增：`equal_weight_nav`（693 点实测）、`equal_weight_metrics`、`rebalance_events`（每期逐资产 prev/target/delta、换手、触发原因）；
+- 迁移 70：`bp_basket`（owner/name/description/method/assets/params/latest_result）；
+- 新 API 模块 `bp_api/baskets.py`：POST 保存、GET 列表/详情、PATCH 编辑、POST copy、DELETE（均带 owner/admin 鉴权）；
+- 验证：等权 NAV 693 点、风险平价 NAV 693 点、5 次调仓事件；匿名 GET /api/baskets 返回空列表（需登录才有数据）。
+
+### 待完成（前端，下一轮）
+- BasketResults 图表：等权线 + 调仓竖线/标记 + 点击弹窗（权重变化表 + 最新权重）；
+- 保存按钮（命名/描述）+ 成功后跳转/提示；
+- /dashboard 篮子列表（与组合并列）：打开/编辑/复制/删除；
+- 编辑态：URL `?basket=<id>` 载入配置并重算。

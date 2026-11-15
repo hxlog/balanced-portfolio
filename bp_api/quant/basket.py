@@ -369,6 +369,8 @@ class BasketBacktestResult:
     n_obs: int
     latest_drift: dict = field(default_factory=dict)
     end_optimal_target: dict = field(default_factory=dict)
+    equal_weight_nav: pd.Series = field(default_factory=lambda: pd.Series(dtype=float))
+    equal_weight_metrics: dict = field(default_factory=dict)
 
 
 def _safe_numeric_dict(d: dict, ndigits: int = 10) -> dict[str, float]:
@@ -488,6 +490,17 @@ def run_basket_backtest(
             w = w / total
         return w
 
+    def equal_target(end_idx: int) -> pd.Series:
+        """当前可用资产的等权目标（与优化目标同一可用集合）。"""
+        avail = available_assets(end_idx)
+        w = pd.Series(0.0, index=assets)
+        if not avail:
+            return w
+        weight = 1.0 / len(avail)
+        for key in avail:
+            w[key] = weight
+        return w
+
     k_user = (
         next((k for k, d in enumerate(price_dates) if d >= user_start), len(price_dates))
         if user_start is not None
@@ -508,6 +521,9 @@ def run_basket_backtest(
     target = opt(k0 - 1)
     w_actual = target.copy()
     last_target = target
+    eq_weights = equal_target(k0 - 1)
+    eq_nav = 1.0
+    eq_rows: list[dict] = [{"trade_date": effective_start, "nav": 1.0}]
 
     total_turnover = 1.0  # 建仓 0 → target
     rebalances: list[dict] = [
@@ -574,7 +590,15 @@ def run_basket_backtest(
             )
             w_actual = target.copy()
             last_target = target
+            eq_weights = equal_target(k - 1)
 
+        eq_ret = float((eq_weights * r_t).sum())
+        eq_nav *= 1.0 + eq_ret
+        eq_grown = eq_weights * (1.0 + r_t)
+        eq_total = float(eq_grown.sum())
+        if eq_total > 0:
+            eq_weights = eq_grown / eq_total
+        eq_rows.append({"trade_date": day, "nav": float(eq_nav)})
         rows.append({"trade_date": day, "nav": float(nav), "ret": float(port_ret)})
 
     nav_df = pd.DataFrame(rows).set_index("trade_date")[["nav", "ret"]]
@@ -587,6 +611,11 @@ def run_basket_backtest(
 
     nav_series = nav_df["nav"]
     metrics = compute_metrics(nav_series, None, risk_free, trading_days)
+    eq_series = (
+        pd.DataFrame(eq_rows).set_index("trade_date")["nav"].astype(float)
+        if eq_rows else pd.Series(dtype=float)
+    )
+    eq_metrics = compute_metrics(eq_series, None, risk_free, trading_days) if len(eq_series) > 1 else {}
 
     # 逐资产贡献（Carino 链接，复用既有归因实现；无基准，β/系统性桶置 0）。
     try:
@@ -623,4 +652,6 @@ def run_basket_backtest(
         n_obs=n_days,
         latest_drift=_safe_dict(w_actual.to_dict()),
         end_optimal_target=_safe_dict(end_target.to_dict()),
+        equal_weight_nav=eq_series,
+        equal_weight_metrics={k: float(v) for k, v in eq_metrics.items() if isinstance(v, (int, float))},
     )
