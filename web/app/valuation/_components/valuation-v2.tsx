@@ -265,6 +265,35 @@ export function DividendValueChart({ rows }: { rows: IndexQuoteRow[] }) {
   }
 
   const option = scatterBaseOption(points, "PB（倍）", "股息率（%）");
+  const reg = linearRegression(points.map((p) => ({ x: p.x, y: p.y })));
+  if (reg) {
+    (option.series as Array<Record<string, unknown>>).push({
+      type: "line",
+      showSymbol: false,
+      data: [
+        [Math.min(...points.map((p) => p.x)), reg.slope * Math.min(...points.map((p) => p.x)) + reg.intercept],
+        [Math.max(...points.map((p) => p.x)), reg.slope * Math.max(...points.map((p) => p.x)) + reg.intercept],
+      ],
+      lineStyle: { color: "#ef4444", width: 1.5, type: "dashed" },
+      tooltip: { show: false },
+      z: 3,
+    });
+    (option as Record<string, unknown>).title = {
+      text: reg.equation + "   R² = " + reg.r2.toFixed(3),
+      left: 10,
+      top: 4,
+      textStyle: { color: "#6b7280", fontSize: 11, fontWeight: 400 },
+    };
+  }
+  // 自适应坐标轴：以数据范围 ±8% padding，避免 0–0.5 空白
+  const xs = points.map((p) => p.x);
+  const ys = points.map((p) => p.y);
+  const xPad = (Math.max(...xs) - Math.min(...xs)) * 0.08 || 0.05;
+  const yPad = (Math.max(...ys) - Math.min(...ys)) * 0.08 || 0.2;
+  (option.xAxis as Record<string, unknown>).min = Math.min(...xs) - xPad;
+  (option.xAxis as Record<string, unknown>).max = Math.max(...xs) + xPad;
+  (option.yAxis as Record<string, unknown>).min = Math.max(0, Math.min(...ys) - yPad);
+  (option.yAxis as Record<string, unknown>).max = Math.max(...ys) + yPad;
   (option as Record<string, unknown>).markLine = undefined;
   (option.series as Array<Record<string, unknown>>).push({
     type: "line",

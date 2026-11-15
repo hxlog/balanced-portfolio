@@ -21,7 +21,6 @@ import type {
   ValuationMetric,
 } from "@/lib/valuation-types";
 import { ValuationHomeV2 } from "./ValuationHomeV2";
-import { ValuationToolbar } from "./_components/valuation-v2";
 
 export const metadata: Metadata = {
   title: "指数估值 — Valuation Band 与分位矩阵",
@@ -92,7 +91,7 @@ async function ValuationContent({
 
 function ContentSkeleton() {
   return (
-    <div className="mx-auto w-full max-w-[1440px] px-4 pb-16 pt-4 sm:px-6 lg:px-8" role="status">
+    <div className="mx-auto w-full max-w-[1600px] px-4 pb-16 pt-4 sm:px-6 lg:px-8" role="status">
       <span className="sr-only">正在加载估值数据</span>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         {Array.from({ length: 5 }).map((_, index) => (
@@ -112,10 +111,6 @@ function ContentSkeleton() {
   );
 }
 
-function ToolbarSkeleton() {
-  return <div className="h-8 w-72 animate-pulse rounded-lg bg-muted/50" />;
-}
-
 export default async function ValuationPage({
   searchParams,
 }: {
@@ -127,15 +122,13 @@ export default async function ValuationPage({
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto w-full max-w-[1440px] px-4 pt-7 sm:px-6 sm:pt-9 lg:px-8">
+      <div className="mx-auto w-full max-w-[1600px] px-4 pt-7 sm:px-6 sm:pt-9 lg:px-8">
         <header className="flex flex-wrap items-end justify-between gap-4 border-b border-border pb-4">
           <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">指数估值</h1>
-          <Suspense fallback={<ToolbarSkeleton />}>
-            <ValuationToolbar window={window} metric={metric} />
-          </Suspense>
+          <p className="text-xs text-muted-foreground">Valuation Band · 市场估值指数 · 多窗口分位</p>
         </header>
       </div>
-      <Suspense key={window + ":" + metric} fallback={<ContentSkeleton />}>
+      <Suspense fallback={<ContentSkeleton />}>
         <ValuationContent window={window} metric={metric} />
       </Suspense>
     </div>

@@ -6,7 +6,8 @@
  * 窗口/指标已由 URL 驱动、服务端 Suspense 加载；本组件只负责本地交互
  * （搜索、排序、列设置、类别/行业筛选、图表口径切换）。
  */
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Search, SlidersHorizontal, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,12 @@ import type {
   ValuationMetric,
 } from "@/lib/valuation-types";
 import { changeClass, formatSignedPct } from "@/lib/valuation-mock";
+import {
+  mapBroadProxy,
+  mapIndexRow,
+  mapMarketCard,
+  mapValuationHistory,
+} from "@/lib/valuation-api-map";
 import {
   METRIC_LABEL,
   type BandMode,
@@ -138,13 +145,70 @@ export interface ValuationHomeV2Props {
 }
 
 export function ValuationHomeV2({
-  rows,
-  boards,
-  proxies,
-  history,
-  window,
-  metric,
+  rows: initialRows,
+  boards: initialBoards,
+  proxies: initialProxies,
+  history: initialHistory,
+  window: initialWindow,
+  metric: initialMetric,
 }: ValuationHomeV2Props) {
+  const router = useRouter();
+  const [rows, setRows] = useState(initialRows);
+  const [boards, setBoards] = useState(initialBoards);
+  const [proxies, setProxies] = useState(initialProxies);
+  const [history, setHistory] = useState(initialHistory);
+  const [window, setWindow] = useState<PercentileWindow>(initialWindow);
+  const [metric, setMetric] = useState<ValuationMetric>(initialMetric);
+  const [pending, startTransition] = useTransition();
+  const [switching, setSwitching] = useState(false);
+  const firstRender = useRef(true);
+
+  // 切换窗口/指标：客户端取数 + 保留旧图（半透明），不整页闪。
+  const applyFilter = useCallback(
+    (nextWindow: PercentileWindow, nextMetric: ValuationMetric) => {
+      if (nextWindow === window && nextMetric === metric) return;
+      setWindow(nextWindow);
+      setMetric(nextMetric);
+      setSwitching(true);
+      const base = nextWindow + ":" + nextMetric;
+      void Promise.all([
+        fetch("/api/valuation/indices?limit=1000&window=" + nextWindow + "&metric=" + nextMetric)
+          .then((response) => (response.ok ? response.json() : null))
+          .then((payload) => {
+            if (payload?.data) setRows((payload.data as Record<string, unknown>[]).map(mapIndexRow));
+          })
+          .catch(() => {}),
+        fetch("/api/valuation/overview?window=" + nextWindow)
+          .then((response) => (response.ok ? response.json() : null))
+          .then((payload) => {
+            if (!payload) return;
+            if (payload.data) setBoards((payload.data as Record<string, unknown>[]).map(mapMarketCard));
+            const proxyList = payload.meta?.proxies;
+            if (Array.isArray(proxyList)) {
+              setProxies(proxyList.map((item) => mapBroadProxy(item as Record<string, unknown>)));
+            }
+          })
+          .catch(() => {}),
+        fetch("/api/valuation/000300/history?metric=" + nextMetric + "&window=" + nextWindow)
+          .then((response) => (response.ok ? response.json() : null))
+          .then((payload) => {
+            if (payload) setHistory(mapValuationHistory("000300", payload, nextMetric, nextWindow));
+          })
+          .catch(() => {}),
+      ]).finally(() => {
+        setSwitching(false);
+        startTransition(() => {
+          router.replace("/valuation?window=" + nextWindow + "&metric=" + nextMetric, { scroll: false });
+        });
+      });
+    },
+    [window, metric, router],
+  );
+
+  useEffect(() => {
+    firstRender.current = false;
+  }, []);
+
   const [category, setCategory] = useState<CategoryFilter>("全部");
   const [industry, setIndustry] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -209,9 +273,35 @@ export function ValuationHomeV2({
   );
 
   return (
-    <div className="mx-auto w-full max-w-[1440px] px-4 pb-16 sm:px-6 lg:px-8">
+    <div className="relative mx-auto w-full max-w-[1600px] px-4 pb-16 sm:px-6 lg:px-8">
+      {(switching || pending) && (
+        <div className="fixed left-0 right-0 top-0 z-[60] h-0.5 overflow-hidden bg-primary/20">
+          <div className="h-full w-1/3 animate-[loadingbar_1.2s_ease-in-out_infinite] bg-primary" />
+        </div>
+      )}
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="muted text-xs">切换窗口/指标即时更新，不整页刷新</div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {V2_WINDOWS.map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              onClick={() => applyFilter(item.value, metric)}
+              className={cn(
+                "rounded-full border px-3 py-1 text-xs transition-colors",
+                window === item.value
+                  ? "border-foreground bg-foreground text-background"
+                  : "border-border text-muted-foreground hover:bg-muted",
+              )}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className={cn("transition-opacity", switching || pending ? "pointer-events-none opacity-50" : "opacity-100")}>
       {/* 代表性宽基 */}
-      <section className="mt-5">
+      <section className="mt-4">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           {proxies.map((card) => (
             <ProxyCard key={card.index_code} card={card} />
@@ -226,7 +316,23 @@ export function ValuationHomeV2({
           desc={METRIC_LABEL[metric] + " · " + (V2_WINDOWS.find((w) => w.value === window)?.label ?? "")}
           className="xl:col-span-2"
         >
-          <div className="mb-2 flex flex-wrap items-center gap-2">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="inline-flex overflow-hidden rounded-md border border-border text-[11px]">
+              {V2_METRICS.map((item) => (
+                <button
+                  key={item.value}
+                  type="button"
+                  onClick={() => applyFilter(window, item.value)}
+                  className={cn(
+                    "px-2.5 py-1 transition-colors",
+                    metric === item.value ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted",
+                  )}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
             <div className="inline-flex overflow-hidden rounded-md border border-border text-[11px]">
               <button
                 type="button"
@@ -266,6 +372,7 @@ export function ValuationHomeV2({
                 ))}
               </div>
             ) : null}
+            </div>
           </div>
           {history && history.series.length > 0 ? (
             <PeBandChart
@@ -323,10 +430,16 @@ export function ValuationHomeV2({
 
       {/* 两张估值矩阵 */}
       <section className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <ChartCard title="估值矩阵 · PB 分位 × 股息率" desc="回归线 + 方程 + R²；气泡=基金规模">
+        <ChartCard
+          title="估值矩阵 · PB 分位 × 股息率"
+          desc={"PB 分位窗口：" + (V2_WINDOWS.find((w) => w.value === window)?.label ?? "5 年") + " · 回归线 + 方程 + R²；气泡=基金规模"}
+        >
           <PbDividendMatrix rows={rows} />
         </ChartCard>
-        <ChartCard title="估值矩阵 · ROE × PE" desc="log 轴；回归线 + 方程 + R²；气泡=基金规模">
+        <ChartCard
+          title="估值矩阵 · ROE × PE"
+          desc={"ROE 当前值 · PE 窗口：" + (V2_WINDOWS.find((w) => w.value === window)?.label ?? "5 年") + " · log 轴；回归线 + 方程 + R²"}
+        >
           <RoePeMatrix rows={rows} />
         </ChartCard>
       </section>
@@ -569,6 +682,7 @@ export function ValuationHomeV2({
           ) : null}
         </div>
       </section>
+      </div>
     </div>
   );
 }
