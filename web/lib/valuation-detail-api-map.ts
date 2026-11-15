@@ -10,6 +10,7 @@ import type { IndexCategory, ValuationLevel } from "./valuation-types";
 import type {
   DetailConstituent,
   DetailPercentile,
+  DetailRiskStats,
   DetailTrackerFund,
   PercentileSummary,
   ValuationDetailData,
@@ -142,6 +143,15 @@ export function mapValuationDetail(
         .filter((item): item is DetailPercentile => item !== null)
     : [];
 
+  const rawRisk = raw.risk;
+  const risk: ValuationDetailData["risk"] = {};
+  if (rawRisk && typeof rawRisk === "object") {
+    for (const key of ["1y", "3y", "5y", "all"] as const) {
+      const stats = mapRiskStats((rawRisk as Record<string, unknown>)[key]);
+      if (stats) risk[key] = stats;
+    }
+  }
+
   return {
     index_code: code,
     name: str(raw.name) ?? code,
@@ -153,6 +163,9 @@ export function mapValuationDetail(
     income_method: str(raw.income_method),
     intro: str(raw.intro),
     trade_date: dateStr(raw.trade_date),
+    industry: str(raw.industry),
+    close: num(raw.close_price),
+    change_pct: num(raw.change_pct),
     pe_ttm: num(raw.pe_ttm),
     pb: num(raw.pb),
     dividend_yield_ttm: num(raw.dividend_yield_ttm),
@@ -165,6 +178,20 @@ export function mapValuationDetail(
     constituents,
     tracker_funds: trackerFunds,
     percentiles,
+    risk,
+  };
+}
+
+function mapRiskStats(raw: unknown): DetailRiskStats | null {
+  if (!raw || typeof raw !== "object") return null;
+  const item = raw as Record<string, unknown>;
+  return {
+    total_return_pct: num(item.total_return_pct),
+    annualized_return_pct: num(item.annualized_return_pct),
+    volatility_pct: num(item.volatility_pct),
+    max_drawdown_pct: num(item.max_drawdown_pct),
+    sharpe: num(item.sharpe),
+    sample_size: Math.max(0, Math.trunc(num(item.sample_size) ?? 0)),
   };
 }
 

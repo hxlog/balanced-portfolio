@@ -68,6 +68,12 @@ export interface ValuationDetailData {
   income_method: string | null;
   intro: string | null;
   trade_date: string | null;
+  /** 申万一级行业（宽基为 null）。 */
+  industry: string | null;
+  /** 最新收盘点位。 */
+  close: number | null;
+  /** 当日涨跌幅（百分数点）。 */
+  change_pct: number | null;
   pe_ttm: number | null;
   pb: number | null;
   /** 股息率 TTM（百分数点）。 */
@@ -84,6 +90,18 @@ export interface ValuationDetailData {
   constituents: DetailConstituent[];
   tracker_funds: DetailTrackerFund[];
   percentiles: DetailPercentile[];
+  /** 区间收益风险（1y/3y/5y/all），后端从行情计算。 */
+  risk: Partial<Record<"1y" | "3y" | "5y" | "all", DetailRiskStats>>;
+}
+
+/** 单个区间的收益风险统计（百分数点口径）。 */
+export interface DetailRiskStats {
+  total_return_pct: number | null;
+  annualized_return_pct: number | null;
+  volatility_pct: number | null;
+  max_drawdown_pct: number | null;
+  sharpe: number | null;
+  sample_size: number;
 }
 
 /** history 接口的一个序列点。 */

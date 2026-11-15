@@ -871,7 +871,12 @@ def get_index_detail(conn: psycopg.Connection, index_code: str) -> Optional[dict
             d.dividend_yield_ttm, d.dividend_yield_lyr, d.roe_ttm, d.roa_ttm,
             d.bond10y, d.erp, d.pe_basis, d.pb_basis, d.div_basis,
             d.level_pe, d.level_pb, d.level_dividend, d.is_primary,
-            d.captured_at, d.raw
+            d.captured_at, d.raw,
+            qq.close_last AS close_price,
+            CASE
+                WHEN qq.close_last > 0 AND qq.close_prev > 0
+                THEN ((qq.close_last / qq.close_prev) - 1) * 100
+            END AS change_pct
         FROM bp_index_master m
         LEFT JOIN LATERAL (
             SELECT *
@@ -880,6 +885,18 @@ def get_index_detail(conn: psycopg.Connection, index_code: str) -> Optional[dict
             ORDER BY dd.trade_date DESC
             LIMIT 1
         ) d ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT
+                (array_agg(t.close ORDER BY t.trade_date DESC))[1] AS close_last,
+                (array_agg(t.close ORDER BY t.trade_date DESC))[2] AS close_prev
+            FROM (
+                SELECT q.close, q.trade_date
+                FROM bp_index_quote_daily q
+                WHERE q.symbol = m.index_code
+                  AND q.adjust = 'bfq'
+                  AND q.trade_date >= current_date - 400
+            ) t
+        ) qq ON TRUE
         WHERE m.index_code = %s
     """
     with conn.cursor() as cur:
@@ -901,6 +918,8 @@ def get_index_detail(conn: psycopg.Connection, index_code: str) -> Optional[dict
         "roa_ttm",
         "bond10y",
         "erp",
+        "close_price",
+        "change_pct",
     }
     for key in numeric_fields:
         detail[key] = _to_float(detail.get(key))
