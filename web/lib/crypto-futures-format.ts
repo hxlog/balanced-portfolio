@@ -61,6 +61,12 @@ export function normalizeSummary(value: unknown): CryptoFuturesSummary | null {
     total_oi_notional: asFiniteNumber(row.total_oi_notional) ?? 0,
     weighted_long_short_ratio: asFiniteNumber(row.weighted_long_short_ratio),
     median_taker_buy_sell_ratio: asFiniteNumber(row.median_taker_buy_sell_ratio),
+    contracts_with_top_data: asFiniteNumber(row.contracts_with_top_data),
+    total_oi_change_24h_pct: asFiniteNumber(row.total_oi_change_24h_pct),
+    weighted_funding_rate: asFiniteNumber(row.weighted_funding_rate),
+    smart_money_divergence: asFiniteNumber(row.smart_money_divergence),
+    weighted_long_short_basis: asText(row.weighted_long_short_basis) ?? undefined,
+    weighted_long_short_note: asText(row.weighted_long_short_note) ?? undefined,
     latest_captured_at: asText(row.latest_captured_at),
   };
 }
@@ -83,6 +89,13 @@ export function normalizeContract(value: unknown): CryptoFuturesContract | null 
     long_short_ratio: asFiniteNumber(row.long_short_ratio),
     taker_buy_sell_ratio: asFiniteNumber(row.taker_buy_sell_ratio),
     basis_pct: asFiniteNumber(row.basis_pct),
+    funding_rate: asFiniteNumber(row.funding_rate),
+    funding_time: asText(row.funding_time),
+    funding_percentile_30d: asFiniteNumber(row.funding_percentile_30d),
+    oi_change_24h_pct: asFiniteNumber(row.oi_change_24h_pct),
+    top_account_ratio: asFiniteNumber(row.top_account_ratio),
+    top_position_ratio: asFiniteNumber(row.top_position_ratio),
+    smart_money_divergence: asFiniteNumber(row.smart_money_divergence),
     percentiles: normalizePercentiles(row.percentiles),
   };
 }
@@ -100,6 +113,8 @@ export function normalizeSeriesPoint(value: unknown): CryptoFuturesSeriesPoint |
     long_short_ratio: asFiniteNumber(row.long_short_ratio),
     taker_buy_sell_ratio: asFiniteNumber(row.taker_buy_sell_ratio),
     basis_pct: asFiniteNumber(row.basis_pct),
+    top_account_ratio: asFiniteNumber(row.top_account_ratio),
+    top_position_ratio: asFiniteNumber(row.top_position_ratio),
   };
 }
 
@@ -308,4 +323,22 @@ export function shanghaiDayKey(iso: string): string {
   } catch {
     return iso.slice(0, 10);
   }
+}
+
+/** 千分位格式化（USD 金额，不带中文单位）。 */
+export function formatThousands(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return new Intl.NumberFormat("en-US").format(Math.round(value));
+}
+
+/** 资金费率（小数 → 带 4 位小数的百分比）。 */
+export function formatFundingRate(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return (value * 100).toFixed(4) + "%";
+}
+
+/** 百分数（已是百分数点）。 */
+export function formatPercent(value: number | null | undefined, digits = 2): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return value.toFixed(digits) + "%";
 }

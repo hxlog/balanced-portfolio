@@ -2,19 +2,23 @@ import { Suspense, type ReactNode } from "react";
 import {
   Activity,
   AlertTriangle,
-  ArrowLeftRight,
   Clock,
   Layers,
+  Percent,
   Scale,
+  TrendingUp,
+  Users,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import {
   formatCount,
+  formatFundingRate,
   formatNotional,
+  formatPercent,
   formatRatio,
   formatShanghaiDateTime,
-  formatTakerRatio,
+  formatThousands,
   latestContractCapturedAt,
 } from "@/lib/crypto-futures-format";
 import type {
@@ -133,31 +137,39 @@ export function CryptoFuturesHome({
         <h2 id="crypto-futures-summary-heading" className="sr-only">
           加密合约市场汇总
         </h2>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 min-[1100px]:grid-cols-4">
-          <SummaryCard
-            label="合约数"
-            value={summary ? formatCount(summary.contracts) : "—"}
-            hint="USDT 永续 · 活跃合约池"
-            icon={<Layers className="h-4 w-4" />}
-          />
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 min-[1100px]:grid-cols-5">
           <SummaryCard
             label="总 OI 名义值"
-            value={summary ? formatNotional(summary.total_oi_notional) : "—"}
-            hint="全市场未平仓名义值（USDT）"
+            value={summary ? formatThousands(summary.total_oi_notional) + " USD" : "—"}
+            hint={(summary?.contracts ? summary.contracts + " 个合约合计" : "全市场合计") + " · 未平仓名义值"}
             icon={<Activity className="h-4 w-4" />}
           />
           <SummaryCard
             label="加权多空比"
             value={summary ? formatRatio(summary.weighted_long_short_ratio, 2) : "—"}
-            hint="按 OI 加权 · >1 偏多 / <1 偏空"
+            hint={summary?.weighted_long_short_note ?? "按 OI 加权 · 全市场多空账户数比"}
             icon={<Scale className="h-4 w-4" />}
             valueClassName={longShortTone(summary?.weighted_long_short_ratio ?? null)}
           />
           <SummaryCard
-            label="主动买卖比中位数"
-            value={summary ? formatTakerRatio(summary.median_taker_buy_sell_ratio) : "—"}
-            hint=">1 主动买入占优 / <1 主动卖出占优"
-            icon={<ArrowLeftRight className="h-4 w-4" />}
+            label="加权资金费率"
+            value={summary ? formatFundingRate(summary.weighted_funding_rate) : "—"}
+            hint="当前 8h 费率 · 正=多头付费"
+            icon={<Percent className="h-4 w-4" />}
+          />
+          <SummaryCard
+            label="OI 24h 变化"
+            value={summary ? formatPercent(summary.total_oi_change_24h_pct) : "—"}
+            hint="上升=增仓，下降=减仓"
+            icon={<TrendingUp className="h-4 w-4" />}
+            valueClassName={longShortTone(summary?.total_oi_change_24h_pct ?? null)}
+          />
+          <SummaryCard
+            label="Smart Money 乖离"
+            value={summary && summary.smart_money_divergence != null ? summary.smart_money_divergence.toFixed(3) : "—"}
+            hint="大户持仓比 − 全市场账户比 · 正=大户更偏多"
+            icon={<Users className="h-4 w-4" />}
+            valueClassName={longShortTone(summary?.smart_money_divergence ?? null)}
           />
         </div>
 

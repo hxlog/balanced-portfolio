@@ -22,6 +22,17 @@ export interface CryptoFuturesSummary {
   weighted_long_short_ratio: number | null;
   /** 主动买卖比（taker buy/sell）中位数；无样本时为 null。 */
   median_taker_buy_sell_ratio: number | null;
+  /** 有大人数据的合约数。 */
+  contracts_with_top_data?: number | null;
+  /** 全市场 OI 24h 变化（%）。 */
+  total_oi_change_24h_pct?: number | null;
+  /** 按 OI 加权的资金费率（小数）。 */
+  weighted_funding_rate?: number | null;
+  /** 大户持仓比 − 全市场账户比的 OI 加权乖离。 */
+  smart_money_divergence?: number | null;
+  /** 加权多空比口径说明。 */
+  weighted_long_short_basis?: string;
+  weighted_long_short_note?: string;
   /** 最近快照时间（UTC ISO 字符串）。 */
   latest_captured_at: string | null;
 }
@@ -51,6 +62,18 @@ export interface CryptoFuturesContract {
   taker_buy_sell_ratio: number | null;
   /** (mark_price - index_price) / index_price × 100。 */
   basis_pct: number | null;
+  /** 最新 8h 资金费率（小数）。 */
+  funding_rate?: number | null;
+  funding_time?: string | null;
+  /** 资金费率近 30 日分位（0~100）。 */
+  funding_percentile_30d?: number | null;
+  /** OI 24h 变化（%）。 */
+  oi_change_24h_pct?: number | null;
+  /** 大户多空账户数比 / 持仓比。 */
+  top_account_ratio?: number | null;
+  top_position_ratio?: number | null;
+  /** 大户持仓比 − 全市场账户比。 */
+  smart_money_divergence?: number | null;
   percentiles: CryptoFuturesPercentiles;
 }
 
@@ -61,4 +84,6 @@ export interface CryptoFuturesSeriesPoint {
   long_short_ratio: number | null;
   taker_buy_sell_ratio: number | null;
   basis_pct: number | null;
+  top_account_ratio?: number | null;
+  top_position_ratio?: number | null;
 }

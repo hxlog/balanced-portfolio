@@ -6,12 +6,14 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import {
+  formatFundingRate,
   formatNotional,
+  formatPercent,
   formatPercentile,
   formatPrice,
   formatRatio,
   formatSignedPct,
-  formatTakerRatio,
+  formatThousands,
   getLongShortPercentile30,
   sortContractsByOi,
 } from "@/lib/crypto-futures-format";
@@ -83,7 +85,27 @@ export function CryptoFuturesBoard({
   const searchParams = useSearchParams();
   const symbolParam = searchParams.get("symbol");
   const requestedSymbol = symbolParam ? symbolParam.toUpperCase() : null;
-  const sortedContracts = useMemo(() => sortContractsByOi(contracts), [contracts]);
+  const [sortKey, setSortKey] = useState<"oi" | "funding" | "ls" | "smart">("oi");
+  const sortedContracts = useMemo(() => {
+    const base = sortContractsByOi(contracts);
+    if (sortKey === "oi") return base;
+    const valueOf = (contract: CryptoFuturesContract) => {
+      if (sortKey === "funding") return contract.funding_rate ?? -Infinity;
+      if (sortKey === "ls") return contract.long_short_ratio ?? -Infinity;
+      return contract.smart_money_divergence ?? -Infinity;
+    };
+    return [...base].sort((a, b) => valueOf(b) - valueOf(a));
+  }, [contracts, sortKey]);
+  const sortButton = (key: typeof sortKey, label: string) => (
+    <button
+      type="button"
+      onClick={() => setSortKey(key)}
+      className={cn("inline-flex items-center gap-1 hover:text-foreground", sortKey === key && "text-foreground")}
+      title="点击按该列降序排序"
+    >
+      {label}
+    </button>
+  );
 
   const [selectedCode, setSelectedCode] = useState<string | null>(
     () => requestedSymbol ?? sortedContracts[0]?.contract_code ?? null,
@@ -126,9 +148,9 @@ export function CryptoFuturesBoard({
       <Card className="min-w-0 overflow-hidden border-border/60 bg-card/60">
         <CardHeader className="flex flex-row items-start justify-between gap-3 border-b border-border/60 px-5 py-4">
           <div className="min-w-0">
-            <CardTitle className="text-base">合约榜</CardTitle>
+            <CardTitle className="text-base">合约监控</CardTitle>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              按 OI 名义值倒序 · 点击任意行切换 24 小时序列
+              点击表头排序 · 点击任意行切换右侧序列
             </p>
           </div>
           <Badge variant="outline" className="shrink-0 font-mono tabular-nums">
@@ -140,7 +162,7 @@ export function CryptoFuturesBoard({
           <div className="max-h-[640px] overflow-auto overscroll-contain">
             <table className="w-full min-w-[660px] border-collapse text-sm">
               <caption className="sr-only">
-                加密合约榜：排名、标记价、OI 名义值、多空比及 30 日分位、主动买卖比、基差
+                合约监控：排名、标记价、OI、资金费率及 30 日分位、多空账户比、大户持仓比、Smart Money 乖离、基差
               </caption>
               <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur">
                 <tr className="border-b border-border text-[11px] text-muted-foreground">
@@ -154,16 +176,21 @@ export function CryptoFuturesBoard({
                     标记价
                   </th>
                   <th scope="col" className="px-3 py-2.5 text-right font-medium">
-                    OI 名义值
+                    {sortButton("oi", "OI 名义值")}
                   </th>
                   <th scope="col" className="px-3 py-2.5 text-right font-medium">
-                    多空比
-                    <span className="ml-1 font-normal text-muted-foreground/80">
-                      30D 分位
-                    </span>
+                    {sortButton("funding", "资金费率")}
+                    <span className="ml-1 font-normal text-muted-foreground/80">30D 分位</span>
                   </th>
                   <th scope="col" className="px-3 py-2.5 text-right font-medium">
-                    主动买卖比
+                    {sortButton("ls", "多空账户比")}
+                    <span className="ml-1 font-normal text-muted-foreground/80">30D 分位</span>
+                  </th>
+                  <th scope="col" className="px-3 py-2.5 text-right font-medium">
+                    大户持仓比
+                  </th>
+                  <th scope="col" className="px-3 py-2.5 text-right font-medium">
+                    {sortButton("smart", "Smart 乖离")}
                   </th>
                   <th scope="col" className="px-3 py-2.5 text-right font-medium">
                     基差
@@ -220,8 +247,16 @@ export function CryptoFuturesBoard({
                       <td className="px-3 py-2.5 text-right font-mono tabular-nums">
                         {formatPrice(contract.mark_price)}
                       </td>
-                      <td className="px-3 py-2.5 text-right font-mono tabular-nums">
-                        {formatNotional(contract.oi_notional)}
+                      <td className="px-3 py-2.5 text-right font-mono tabular-nums" title={formatNotional(contract.oi_notional)}>
+                        {formatThousands(contract.oi_notional)}
+                      </td>
+                      <td className="px-3 py-2.5 text-right">
+                        <div className={cn("font-mono tabular-nums", contract.funding_rate != null && contract.funding_rate > 0 ? "text-up" : "text-muted-foreground")}>
+                          {formatFundingRate(contract.funding_rate)}
+                        </div>
+                        <div className="mt-1 whitespace-nowrap text-[10px] text-muted-foreground">
+                          {contract.funding_percentile_30d == null ? "样本积累中" : "30D 分位 " + contract.funding_percentile_30d.toFixed(0) + "%"}
+                        </div>
                       </td>
                       <td className="px-3 py-2.5 text-right">
                         <div
@@ -235,7 +270,10 @@ export function CryptoFuturesBoard({
                         <PercentileBar percentile={percentile} />
                       </td>
                       <td className="px-3 py-2.5 text-right font-mono tabular-nums">
-                        {formatTakerRatio(contract.taker_buy_sell_ratio)}
+                        {formatRatio(contract.top_position_ratio ?? null, 3)}
+                      </td>
+                      <td className={cn("px-3 py-2.5 text-right font-mono tabular-nums", (contract.smart_money_divergence ?? 0) > 0 ? "text-up" : "text-muted-foreground")}>
+                        {contract.smart_money_divergence == null ? "—" : (contract.smart_money_divergence > 0 ? "+" : "") + contract.smart_money_divergence.toFixed(3)}
                       </td>
                       <td
                         className={cn(

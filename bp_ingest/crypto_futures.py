@@ -76,6 +76,8 @@ GLOBAL_LONG_SHORT = "/futures/data/globalLongShortAccountRatio"
 TAKER_LONG_SHORT = "/futures/data/takerlongshortRatio"
 KLINE = "/fapi/v1/klines"
 FUNDING_RATE = "/fapi/v1/fundingRate"
+TOP_ACCOUNT = "/futures/data/topLongShortAccountRatio"
+TOP_POSITION = "/futures/data/topLongShortPositionRatio"
 OI_HIST = "/futures/data/openInterestHist"
 
 ALLOWED_PATHS: frozenset[str] = frozenset(
@@ -89,6 +91,8 @@ ALLOWED_PATHS: frozenset[str] = frozenset(
         OI_HIST,
         KLINE,
         FUNDING_RATE,
+    TOP_ACCOUNT,
+    TOP_POSITION,
     }
 )
 
@@ -368,6 +372,8 @@ def _parse_snapshot(
     long_short: Any,
     taker: Any,
     oi_hist: Any,
+    top_account: Any = None,
+    top_position: Any = None,
 ) -> Optional[dict[str, Any]]:
     """把 5 个端点响应归一化为一行快照；缺 markPrice 返回 None（整条跳过）。"""
     premium = premium_index if isinstance(premium_index, dict) else {}
@@ -404,14 +410,25 @@ def _parse_snapshot(
             _to_float(taker_item.get("buySellRatio")) if taker_item else None
         ),
         "basis_pct": basis_pct,
+        "top_account_ratio": (
+            _to_float(_latest_item(top_account).get("longShortRatio"))
+            if _latest_item(top_account)
+            else None
+        ),
+        "top_position_ratio": (
+            _to_float(_latest_item(top_position).get("longShortRatio"))
+            if _latest_item(top_position)
+            else None
+        ),
     }
 
 
 _UPSERT_SNAPSHOT_SQL = """
 INSERT INTO bp_crypto_futures_snapshot_5m
     (contract_code, captured_at, mark_price, index_price, oi_contracts,
-     oi_notional, long_short_ratio, taker_buy_sell_ratio, basis_pct, provider)
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+     oi_notional, long_short_ratio, taker_buy_sell_ratio, basis_pct,
+     top_account_ratio, top_position_ratio, provider)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 ON CONFLICT (contract_code, captured_at) DO UPDATE SET
     mark_price = EXCLUDED.mark_price,
     index_price = EXCLUDED.index_price,
@@ -420,6 +437,8 @@ ON CONFLICT (contract_code, captured_at) DO UPDATE SET
     long_short_ratio = EXCLUDED.long_short_ratio,
     taker_buy_sell_ratio = EXCLUDED.taker_buy_sell_ratio,
     basis_pct = EXCLUDED.basis_pct,
+    top_account_ratio = EXCLUDED.top_account_ratio,
+    top_position_ratio = EXCLUDED.top_position_ratio,
     provider = EXCLUDED.provider
 """
 
@@ -438,6 +457,8 @@ def _upsert_snapshots(conn: psycopg.Connection, rows: list[dict[str, Any]]) -> i
             r.get("long_short_ratio"),
             r.get("taker_buy_sell_ratio"),
             r.get("basis_pct"),
+            r.get("top_account_ratio"),
+            r.get("top_position_ratio"),
             r.get("provider", "binance"),
         )
         for r in rows
@@ -478,6 +499,14 @@ def _fetch_one_snapshot(
         ),
         _safe(
             OI_HIST,
+            {"symbol": contract_code, "period": SNAPSHOT_PERIOD, "limit": 1},
+        ),
+        _safe(
+            TOP_ACCOUNT,
+            {"symbol": contract_code, "period": SNAPSHOT_PERIOD, "limit": 1},
+        ),
+        _safe(
+            TOP_POSITION,
             {"symbol": contract_code, "period": SNAPSHOT_PERIOD, "limit": 1},
         ),
     )
