@@ -16,6 +16,8 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Optional
 
+import numpy as np
+import pandas as pd
 import psycopg
 from psycopg.types.json import Json
 
@@ -1171,6 +1173,171 @@ def upsert_fund_performance(conn: psycopg.Connection, rows: list[dict]) -> int:
     return len(rows)
 
 
+def compare_funds(
+    conn: psycopg.Connection,
+    fund_codes: list[str],
+    start: date | None = None,
+    end: date | None = None,
+    benchmark_code: str = "000300",
+) -> dict:
+    """基金对比：区间总收益/年化收益/波动/最大回撤 + 相对基准的跟踪误差与信息比率。"""
+    import math
+
+    if not fund_codes:
+        return {"start": None, "end": None, "benchmark_code": benchmark_code, "items": []}
+    end = end or date.today()
+    start = start or date(end.year, 1, 1)
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT fund_code, trade_date, nav FROM bp_fund_nav_daily"
+            " WHERE fund_code = ANY(%s) AND trade_date BETWEEN %s AND %s"
+            " ORDER BY fund_code, trade_date",
+            (fund_codes, start, end),
+        )
+        rows = cur.fetchall()
+        cur.execute(
+            "SELECT fund_code, name, fund_scale FROM bp_fund_master WHERE fund_code = ANY(%s)",
+            (fund_codes,),
+        )
+        meta = {row[0]: {"name": row[1], "fund_scale": row[2]} for row in cur.fetchall()}
+        cur.execute(
+            "SELECT symbol, trade_date, close FROM bp_index_quote_daily"
+            " WHERE symbol = %s AND adjust = 'bfq' AND trade_date BETWEEN %s AND %s ORDER BY trade_date",
+            (benchmark_code, start, end),
+        )
+        bench_rows = cur.fetchall()
+    bench_map: dict = {}
+    for row in bench_rows:
+        if row[2] is None:
+            continue
+        bench_map[pd.Timestamp(row[1])] = float(row[2])
+    bench = pd.Series(bench_map).sort_index()
+    frame = pd.DataFrame(rows, columns=["fund_code", "trade_date", "nav"])
+    items = []
+    for fund_code, part in frame.groupby("fund_code"):
+        series = pd.Series(
+            pd.to_numeric(part["nav"], errors="coerce").to_numpy(),
+            index=pd.to_datetime(part["trade_date"]),
+        ).dropna().sort_index()
+        if len(series) < 5:
+            continue
+        total = float(series.iloc[-1] / series.iloc[0] - 1)
+        days = max((series.index[-1] - series.index[0]).days, 1)
+        ann = (1 + total) ** (365.0 / days) - 1
+        rets = series.pct_change().dropna()
+        vol = float(rets.std() * math.sqrt(252))
+        cummax = series.cummax()
+        mdd = float((series / cummax - 1).min())
+        item = {
+            "fund_code": fund_code,
+            "name": (meta.get(fund_code) or {}).get("name"),
+            "fund_scale": float((meta.get(fund_code) or {}).get("fund_scale")) if (meta.get(fund_code) or {}).get("fund_scale") is not None else None,
+            "start": str(series.index[0].date()),
+            "end": str(series.index[-1].date()),
+            "n_obs": int(len(series)),
+            "total_return_pct": round(total * 100, 4),
+            "ann_return_pct": None if days < 30 else round(ann * 100, 4),
+            "ann_vol_pct": round(vol * 100, 4),
+            "max_dd_pct": round(mdd * 100, 4),
+        }
+        bench_aligned = bench.reindex(series.index, method="ffill")
+        bench_ret = bench_aligned.pct_change().dropna()
+        joined = pd.concat([rets.rename("fund"), bench_ret.rename("bench")], axis=1).dropna()
+        if len(joined) > 20:
+            diff = joined["fund"] - joined["bench"]
+            te = float(diff.std() * math.sqrt(252))
+            bench_total = float((1 + joined["bench"]).prod())
+            bench_ann = bench_total ** (365.0 / max(days, 1)) - 1 if days else None
+            item["tracking_error_pct"] = round(te * 100, 4)
+            item["info_ratio"] = round((ann - bench_ann) / te, 4) if te > 1e-9 and bench_ann is not None else None
+            item["excess_return_pct"] = round((total - (bench_total - 1)) * 100, 4)
+        else:
+            item["tracking_error_pct"] = None
+            item["info_ratio"] = None
+            item["excess_return_pct"] = None
+        items.append(item)
+    items.sort(key=lambda row: row["total_return_pct"], reverse=True)
+    return {
+        "start": str(start),
+        "end": str(end),
+        "benchmark_code": benchmark_code,
+        "items": items,
+    }
+
+
+def get_index_benchmark_stats(
+    conn: psycopg.Connection, index_code: str, benchmark_code: str = "000300"
+) -> dict:
+    """指数 vs 基准的日收益描述统计（直方图 + Beta + 相关系数）。"""
+    import math
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT symbol, trade_date, close FROM bp_index_quote_daily"
+            " WHERE symbol IN (%s, %s) AND adjust = 'bfq' ORDER BY symbol, trade_date",
+            (index_code, benchmark_code),
+        )
+        rows = cur.fetchall()
+        cur.execute("SELECT name FROM bp_index_master WHERE index_code = %s", (benchmark_code,))
+        name_row = cur.fetchone()
+    if not rows:
+        return {}
+    frame = pd.DataFrame(rows, columns=["symbol", "trade_date", "close"])
+    frame["trade_date"] = pd.to_datetime(frame["trade_date"])
+    frame["close"] = pd.to_numeric(frame["close"], errors="coerce")
+    frame = frame.drop_duplicates(subset=["symbol", "trade_date"], keep="last")
+    wide = frame.pivot(index="trade_date", columns="symbol", values="close").dropna()
+    if index_code not in wide or benchmark_code not in wide or len(wide) < 60:
+        return {}
+    rets = wide.pct_change().dropna()
+    target = rets[index_code]
+    bench = rets[benchmark_code]
+    tail = rets.iloc[-757:] if len(rets) > 757 else rets
+    vol = float(tail[index_code].std() * math.sqrt(252))
+    beta = None
+    if len(tail) > 5:
+        cov = float(np.cov(tail[index_code], tail[benchmark_code])[0][1])
+        var = float(np.var(tail[benchmark_code], ddof=1))
+        beta = cov / var if var > 1e-12 else None
+    pearson = float(tail[index_code].corr(tail[benchmark_code]))
+    rank_idx = tail[index_code].rank()
+    rank_bench = tail[benchmark_code].rank()
+    spearman = float(rank_idx.corr(rank_bench))
+    window = target.iloc[-252:] if len(target) > 252 else target
+    if len(window) > 10:
+        counts, bins = np.histogram(window.to_numpy() * 100, bins=30)
+        histogram = [
+            {"bin": round(float((bins[i] + bins[i + 1]) / 2), 3), "count": int(counts[i])}
+            for i in range(len(counts))
+        ]
+    else:
+        histogram = []
+    mean = float(window.mean() * 100)
+    std = float(window.std() * 100)
+    skew = None
+    kurt = None
+    if len(window) > 2 and std > 1e-12:
+        skew = float((((window - window.mean()) ** 3).mean()) / ((window.std()) ** 3))
+    if len(window) > 3 and std > 1e-12:
+        kurt = float((((window - window.mean()) ** 4).mean()) / ((window.std()) ** 4) - 3)
+    return {
+        "index_code": index_code,
+        "benchmark_code": benchmark_code,
+        "benchmark_name": name_row[0] if name_row else benchmark_code,
+        "as_of": str(wide.index[-1].date()),
+        "n_obs": int(len(window)),
+        "ann_vol": round(vol * 100, 4),
+        "beta": None if beta is None else round(beta, 4),
+        "pearson": round(pearson, 4),
+        "spearman": round(spearman, 4),
+        "mean_daily_pct": round(mean, 4),
+        "std_daily_pct": round(std, 4),
+        "skew": None if skew is None else round(skew, 3),
+        "kurtosis": None if kurt is None else round(kurt, 3),
+        "histogram": histogram,
+    }
+
+
 def upsert_market_valuation_index(conn: psycopg.Connection, rows: list[dict]) -> int:
     """写入 MVI 时间序列（按 as_of 幂等）。"""
     if not rows:
@@ -1312,7 +1479,9 @@ def get_index_tracker_funds(
                f.manager, f.fund_type, f.management_fee, f.custody_fee,
                f.established_date, f.fund_scale,
                p.ret_1m, p.ret_3m, p.ret_6m, p.ret_12m,
-               p.ret_2y, p.ret_3y, p.ret_5y, p.ytd
+               p.ret_2y, p.ret_3y, p.ret_5y, p.ytd,
+               r.ann_vol_1y, r.max_dd_1y, r.tracking_error_1y, r.info_ratio_1y,
+               r.ret_3y_ann AS risk_ret_3y_ann, r.ret_5y_ann AS risk_ret_5y_ann
         FROM bp_index_tracker_fund t
         LEFT JOIN bp_fund_master f USING (fund_code)
         LEFT JOIN LATERAL (
@@ -1321,6 +1490,7 @@ def get_index_tracker_funds(
             ORDER BY perf.as_of DESC
             LIMIT 1
         ) p ON TRUE
+        LEFT JOIN bp_fund_risk r ON r.fund_code = t.fund_code
         WHERE t.index_code = %(code)s AND t.trade_date = (SELECT d FROM latest)
         ORDER BY t.aum DESC NULLS LAST
     """
@@ -1334,6 +1504,8 @@ def get_index_tracker_funds(
         for key in (
             "aum", "management_fee", "custody_fee", "fund_scale",
             "ret_1m", "ret_3m", "ret_6m", "ret_12m", "ret_2y", "ret_3y", "ret_5y", "ytd",
+            "ann_vol_1y", "max_dd_1y", "tracking_error_1y", "info_ratio_1y",
+            "risk_ret_3y_ann", "risk_ret_5y_ann",
         ):
             item[key] = _to_float(item.get(key))
         out.append(item)

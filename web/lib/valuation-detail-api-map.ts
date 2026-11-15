@@ -94,6 +94,12 @@ function mapTrackerFund(raw: unknown): DetailTrackerFund | null {
     ret_3y: num(item.ret_3y),
     ret_5y: num(item.ret_5y),
     ytd: num(item.ytd),
+    ann_vol_1y: num(item.ann_vol_1y),
+    max_dd_1y: num(item.max_dd_1y),
+    tracking_error_1y: num(item.tracking_error_1y),
+    info_ratio_1y: num(item.info_ratio_1y),
+    risk_ret_3y_ann: num(item.risk_ret_3y_ann),
+    risk_ret_5y_ann: num(item.risk_ret_5y_ann),
   };
 }
 

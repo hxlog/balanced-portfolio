@@ -52,6 +52,12 @@ export interface DetailTrackerFund {
   ret_3y: number | null;
   ret_5y: number | null;
   ytd: number | null;
+  ann_vol_1y: number | null;
+  max_dd_1y: number | null;
+  tracking_error_1y: number | null;
+  info_ratio_1y: number | null;
+  risk_ret_3y_ann: number | null;
+  risk_ret_5y_ann: number | null;
 }
 
 /** 分位窗口统计（详情 `percentiles[]` 与 history `stats` 共用）。 */

@@ -24,6 +24,7 @@ import type {
 } from "@/lib/valuation-detail-types";
 import type { HistoryPoint, PercentileStats, PercentileWindow, ValuationMetric } from "@/lib/valuation-types";
 import { PercentileBar, percentileTone, SectionHeading } from "../_components/valuation-ui";
+import { CompareFundsDialog, DetailStats } from "./DetailStats";
 import { METRIC_LABEL, type BandMode, PeBandChart } from "../_components/revamp-charts";
 
 const METRICS: Array<{ value: ValuationMetric; label: string }> = [
@@ -353,35 +354,8 @@ export function ValuationDetailClient({
               )}
             </section>
 
-            {/* 分位关键指标 */}
-            <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {[
-                { label: "当前值", value: stats == null ? null : (historyData?.series.at(-1)?.value ?? null), suffix: unit },
-                { label: "分位", value: stats?.pct ?? null, suffix: "%" },
-                { label: "均值", value: stats?.mean ?? null, suffix: unit },
-                { label: "标准差 σ", value: stats?.sd ?? null, suffix: unit },
-                { label: "P20", value: stats?.p20 ?? null, suffix: unit },
-                { label: "P50", value: stats?.p50 ?? null, suffix: unit },
-                { label: "P80", value: stats?.p80 ?? null, suffix: unit },
-                { label: "区间最低/最高", value: null, suffix: "" },
-              ].map((item) => (
-                <div key={item.label} className="rounded-xl border border-border bg-card p-3">
-                  <div className="text-[11px] text-muted-foreground">{item.label}</div>
-                  <div
-                    className={cn(
-                      "mt-1 text-lg font-semibold tabular-nums",
-                      item.label === "分位" ? percentileTone(item.value) : "",
-                    )}
-                  >
-                    {item.label === "区间最低/最高"
-                      ? (stats ? formatNumber(stats.min, 2) + " / " + formatNumber(stats.max, 2) : "—")
-                      : item.value == null
-                        ? "—"
-                        : formatNumber(item.value, 2) + item.suffix}
-                  </div>
-                </div>
-              ))}
-            </section>
+            {/* 描述统计（v3：日收益分布 + Beta/相关系数） */}
+            <DetailStats indexCode={detail.index_code} />
 
             {/* 收益风险 */}
             <section className="rounded-xl border border-border bg-card p-4">
@@ -451,24 +425,24 @@ export function ValuationDetailClient({
                     <table className="w-full min-w-[640px] border-collapse text-sm">
                       <thead>
                         <tr className="border-b border-border text-[11px] text-muted-foreground">
+                          <th className="py-2 text-right font-medium">排名</th>
                           <th className="py-2 text-left font-medium">代码</th>
                           <th className="py-2 text-left font-medium">名称</th>
                           <th className="py-2 text-left font-medium">行业</th>
                           <th className="py-2 text-right font-medium">权重</th>
-                          <th className="py-2 text-right font-medium">排名</th>
                         </tr>
                       </thead>
                       <tbody>
                         {constituents.map((item) => (
                           <tr key={item.stock_code} className="border-b border-border/50 last:border-0">
+                            <td className="py-1.5 text-right font-mono text-xs tabular-nums text-muted-foreground">
+                              {item.rank ?? "—"}
+                            </td>
                             <td className="py-1.5 font-mono text-xs">{item.stock_code}</td>
                             <td className="py-1.5 text-xs">{item.name}</td>
                             <td className="py-1.5 text-xs text-muted-foreground">{item.industry_l1 ?? "—"}</td>
                             <td className="py-1.5 text-right font-mono text-xs tabular-nums">
                               {item.weight == null ? "—" : item.weight.toFixed(2) + "%"}
-                            </td>
-                            <td className="py-1.5 text-right font-mono text-xs tabular-nums text-muted-foreground">
-                              {item.rank ?? "—"}
                             </td>
                           </tr>
                         ))}
@@ -564,91 +538,112 @@ export function ValuationDetailClient({
               </div>
             </section>
 
-            <section className="rounded-xl border border-border bg-card p-4">
-              <SectionHeading
-                title="跟踪基金"
-                hint={funds.length > 0 ? "规模合计 " + (totalAum / 1e8).toFixed(0) + " 亿" : "暂无跟踪基金"}
-              />
-              <div className="mt-2 overflow-x-auto">
-                <table className="w-full min-w-[720px] border-collapse text-[11px]">
-                  <thead>
-                    <tr className="border-b border-border text-muted-foreground">
-                      <th className="py-1.5 text-left font-medium">基金</th>
-                      <th className="py-1.5 text-right font-medium">规模</th>
-                      <th className="py-1.5 text-right font-medium">管理费</th>
-                      <th className="py-1.5 text-right font-medium">托管费</th>
-                      <th className="py-1.5 text-right font-medium">成立日期</th>
-                      <th className="py-1.5 text-right font-medium">近1月</th>
-                      <th className="py-1.5 text-right font-medium">近3月</th>
-                      <th className="py-1.5 text-right font-medium">近6月</th>
-                      <th className="py-1.5 text-right font-medium">近1年</th>
-                      <th className="py-1.5 text-right font-medium">近3年</th>
-                      <th className="py-1.5 text-right font-medium">近5年</th>
-                      <th className="py-1.5 text-right font-medium">今年以来</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {funds.slice(0, 8).map((fund) => {
-                      const scale = fund.fund_scale ?? fund.aum;
-                      const returns: Array<{ key: string; value: number | null }> = [
-                        { key: "1m", value: fund.ret_1m },
-                        { key: "3m", value: fund.ret_3m },
-                        { key: "6m", value: fund.ret_6m },
-                        { key: "12m", value: fund.ret_12m },
-                        { key: "3y", value: fund.ret_3y },
-                        { key: "5y", value: fund.ret_5y },
-                        { key: "ytd", value: fund.ytd },
-                      ];
-                      return (
-                        <tr key={fund.fund_code} className="border-b border-border/50 last:border-0">
-                          <td className="py-1.5">
-                            <div className="truncate">
-                              <span className="font-mono text-muted-foreground">{fund.fund_code}</span>{" "}
-                              {fund.name}
-                            </div>
-                            <div className="truncate text-[10px] text-muted-foreground">
-                              {[fund.company_name, fund.manager, fund.fund_type].filter(Boolean).join(" · ") || "—"}
-                            </div>
-                          </td>
-                          <td className="py-1.5 text-right font-mono tabular-nums">
-                            {scale == null ? "—" : (scale / 1e8).toFixed(2) + " 亿"}
-                          </td>
-                          <td className="py-1.5 text-right font-mono tabular-nums">
-                            {fund.management_fee == null ? "—" : fund.management_fee.toFixed(2) + "%"}
-                          </td>
-                          <td className="py-1.5 text-right font-mono tabular-nums">
-                            {fund.custody_fee == null ? "—" : fund.custody_fee.toFixed(2) + "%"}
-                          </td>
-                          <td className="py-1.5 text-right font-mono tabular-nums text-muted-foreground">
-                            {fund.established_date ?? "—"}
-                          </td>
-                          {returns.map((item) => (
-                            <td
-                              key={item.key}
-                              className={cn(
-                                "py-1.5 text-right font-mono tabular-nums",
-                                item.value == null
-                                  ? "text-muted-foreground"
-                                  : item.value >= 0
-                                    ? "text-up"
-                                    : "text-down",
-                              )}
-                            >
-                              {item.value == null ? "—" : item.value.toFixed(2) + "%"}
-                            </td>
-                          ))}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-                {funds.length > 8 ? (
-                  <div className="mt-1 text-[11px] text-muted-foreground">另有 {funds.length - 8} 只未展示</div>
-                ) : null}
-              </div>
-            </section>
+
           </div>
         </div>
+
+        <section className="rounded-xl border border-border bg-card p-4">
+          <SectionHeading
+            title="跟踪基金"
+            hint={funds.length > 0 ? "规模合计 " + (totalAum / 1e8).toFixed(0) + " 亿" : "暂无跟踪基金"}
+          />
+          <div className="mt-2 flex justify-end">
+            <CompareFundsDialog funds={funds} benchmark={detail?.index_code ?? "000300"} />
+          </div>
+          <div className="mt-2 overflow-x-auto">
+            <table className="w-full min-w-[720px] border-collapse text-[11px]">
+              <thead>
+                <tr className="border-b border-border text-muted-foreground">
+                  <th className="py-1.5 text-left font-medium">基金</th>
+                  <th className="py-1.5 text-right font-medium">规模</th>
+                  <th className="py-1.5 text-right font-medium">管理费</th>
+                  <th className="py-1.5 text-right font-medium">托管费</th>
+                  <th className="py-1.5 text-right font-medium">成立日期</th>
+                  <th className="py-1.5 text-right font-medium">年化波动</th>
+                  <th className="py-1.5 text-right font-medium">最大回撤</th>
+                  <th className="py-1.5 text-right font-medium">跟踪误差</th>
+                  <th className="py-1.5 text-right font-medium">信息比率</th>
+                  <th className="py-1.5 text-right font-medium">近1月</th>
+                  <th className="py-1.5 text-right font-medium">近3月</th>
+                  <th className="py-1.5 text-right font-medium">近6月</th>
+                  <th className="py-1.5 text-right font-medium">近1年</th>
+                  <th className="py-1.5 text-right font-medium">近3年</th>
+                  <th className="py-1.5 text-right font-medium">近5年</th>
+                  <th className="py-1.5 text-right font-medium">今年以来</th>
+                </tr>
+              </thead>
+              <tbody>
+                {funds.slice(0, 8).map((fund) => {
+                  const scale = fund.fund_scale ?? fund.aum;
+                  const returns: Array<{ key: string; value: number | null }> = [
+                    { key: "1m", value: fund.ret_1m },
+                    { key: "3m", value: fund.ret_3m },
+                    { key: "6m", value: fund.ret_6m },
+                    { key: "12m", value: fund.ret_12m },
+                    { key: "3y", value: fund.ret_3y },
+                    { key: "5y", value: fund.ret_5y },
+                    { key: "ytd", value: fund.ytd },
+                  ];
+                  return (
+                    <tr key={fund.fund_code} className="border-b border-border/50 last:border-0">
+                      <td className="py-1.5">
+                        <div className="truncate">
+                          <span className="font-mono text-muted-foreground">{fund.fund_code}</span>{" "}
+                          {fund.name}
+                        </div>
+                        <div className="truncate text-[10px] text-muted-foreground">
+                          {[fund.company_name, fund.manager, fund.fund_type].filter(Boolean).join(" · ") || "—"}
+                        </div>
+                      </td>
+                      <td className="py-1.5 text-right font-mono tabular-nums">
+                        {scale == null ? "—" : (scale / 1e8).toFixed(2) + " 亿"}
+                      </td>
+                      <td className="py-1.5 text-right font-mono tabular-nums">
+                        {fund.management_fee == null ? "—" : fund.management_fee.toFixed(2) + "%"}
+                      </td>
+                      <td className="py-1.5 text-right font-mono tabular-nums">
+                        {fund.custody_fee == null ? "—" : fund.custody_fee.toFixed(2) + "%"}
+                      </td>
+                      <td className="py-1.5 text-right font-mono tabular-nums text-muted-foreground">
+                        {fund.established_date ?? "—"}
+                      </td>
+                      <td className="py-1.5 text-right font-mono tabular-nums">
+                        {fund.ann_vol_1y == null ? "—" : fund.ann_vol_1y.toFixed(2) + "%"}
+                      </td>
+                      <td className="py-1.5 text-right font-mono tabular-nums">
+                        {fund.max_dd_1y == null ? "—" : fund.max_dd_1y.toFixed(2) + "%"}
+                      </td>
+                      <td className="py-1.5 text-right font-mono tabular-nums">
+                        {fund.tracking_error_1y == null ? "—" : fund.tracking_error_1y.toFixed(2) + "%"}
+                      </td>
+                      <td className="py-1.5 text-right font-mono tabular-nums">
+                        {fund.info_ratio_1y == null ? "—" : fund.info_ratio_1y.toFixed(2)}
+                      </td>
+                      {returns.map((item) => (
+                        <td
+                          key={item.key}
+                          className={cn(
+                            "py-1.5 text-right font-mono tabular-nums",
+                            item.value == null
+                              ? "text-muted-foreground"
+                              : item.value >= 0
+                                ? "text-up"
+                                : "text-down",
+                          )}
+                        >
+                          {item.value == null ? "—" : item.value.toFixed(2) + "%"}
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {funds.length > 8 ? (
+              <div className="mt-1 text-[11px] text-muted-foreground">另有 {funds.length - 8} 只未展示</div>
+            ) : null}
+          </div>
+        </section>
 
         <p className="mt-6 text-[11px] leading-5 text-muted-foreground">
           数据口径：估值序列来自平安（周频，2021-11 起）；成分权重与披露日来自中证官网；行情来自东财/雪球。
