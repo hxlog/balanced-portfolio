@@ -82,33 +82,39 @@ def fetch_tx(symbol: str, start: date, end: date) -> list[QuoteRow]:
 
 
 _CS_SESSION: requests.Session | None = None
+_CS_PROXY_SESSION: requests.Session | None = None
 
 
 def _cs_session() -> requests.Session:
     global _CS_SESSION
     if _CS_SESSION is None:
         _CS_SESSION = requests.Session()
-        _CS_SESSION.proxies = {"http": CS_PROXY, "https": CS_PROXY}
         _CS_SESSION.headers.update(CS_HEADERS)
     return _CS_SESSION
 
 
-def fetch_csindex(symbol: str, start: date, end: date) -> list[QuoteRow]:
-    try:
-        response = _cs_session().get(
-            CS_API,
-            params={
-                "indexCode": symbol,
-                "startDate": start.strftime("%Y%m%d"),
-                "endDate": end.strftime("%Y%m%d"),
-            },
-            timeout=30,
-        )
-        if response.status_code != 200:
-            return []
-        payload = response.json()
-    except Exception:  # noqa: BLE001
-        return []
+def _cs_proxy_session() -> requests.Session:
+    global _CS_PROXY_SESSION
+    if _CS_PROXY_SESSION is None:
+        _CS_PROXY_SESSION = requests.Session()
+        _CS_PROXY_SESSION.proxies = {"http": CS_PROXY, "https": CS_PROXY}
+        _CS_PROXY_SESSION.headers.update(CS_HEADERS)
+    return _CS_PROXY_SESSION
+
+
+def _cs_request(session: requests.Session, symbol: str, start: date, end: date, timeout: int = 12):
+    return session.get(
+        CS_API,
+        params={
+            "indexCode": symbol,
+            "startDate": start.strftime("%Y%m%d"),
+            "endDate": end.strftime("%Y%m%d"),
+        },
+        timeout=timeout,
+    )
+
+
+def _parse_cs_payload(payload: dict, symbol: str) -> list[QuoteRow]:
     rows: list[QuoteRow] = []
     for item in payload.get("data") or []:
         raw_date = str(item.get("tradeDate") or "")
@@ -140,6 +146,26 @@ def fetch_csindex(symbol: str, start: date, end: date) -> list[QuoteRow]:
             )
         )
     return rows
+
+
+def fetch_csindex(symbol: str, start: date, end: date) -> list[QuoteRow]:
+    """中证官网 index-perf：直连优先，403/WAF 时经 SG relay 兜底（relay ~2s/只）。"""
+    attempts = ((_cs_session(), 12), (_cs_proxy_session(), 60))
+    for session, timeout in attempts:
+        try:
+            response = _cs_request(session, symbol, start, end, timeout=timeout)
+        except Exception:  # noqa: BLE001
+            continue
+        if response.status_code != 200:
+            continue
+        try:
+            payload = response.json()
+        except Exception:  # noqa: BLE001
+            continue
+        rows = _parse_cs_payload(payload, symbol)
+        if rows:
+            return rows
+    return []
 
 
 SINA_API = "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData"

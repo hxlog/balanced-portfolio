@@ -673,7 +673,7 @@ def get_index_list(
                 m.market,
                 fs.fund_count,
                 fs.aum_sum AS fund_aum,
-                h.quote_status,
+                h.status AS quote_status,
                 h.lag_trading_days,
                 m.publisher,
                 v.trade_date,
