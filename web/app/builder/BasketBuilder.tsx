@@ -436,7 +436,7 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
 
   /**
    * 把搜索到的股票接入资产池：先 probe（与 /admin/assets 同一道门禁），
-   * 通过后保存；后端按 stock_sina 自动抓 bfq/qfq/hfq 三口径，回测主口径 hfq。
+   * 通过后保存；后端按 stock_sina 自动抓取不复权/前复权/后复权三口径，回测主口径为后复权。
    */
   const ingestStock = async (item: BasketItem) => {
     if (!canManageAssets) {
@@ -490,7 +490,7 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
       void api.revalidateAssets().catch(() => {});
       toast.success(
         result.ingest_queued
-          ? "已接入，后台正在拉取 bfq/qfq/hfq 三口径历史行情"
+          ? "已接入，后台正在拉取不复权 / 前复权 / 后复权三口径历史行情"
           : "已接入资产池",
         { description: "行情就绪后点「重新优化」即可参与计算" },
       );
@@ -514,7 +514,7 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
           <ModeSwitch mode="basket" />
           <span className="hidden text-xs text-muted-foreground sm:inline">
-            单层风险平价 · 不落库 · 股票回测口径 hfq
+            单层风险平价 · 不落库 · 股票回测口径 后复权
           </span>
         </div>
       </div>

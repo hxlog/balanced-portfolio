@@ -219,3 +219,22 @@
   0% { transform: translateX(-100%); }
   100% { transform: translateX(400%); }
 }
+
+
+/* 全站轻量过渡：路由切换时内容轻微淡入（尊重减少动效偏好）。 */
+@keyframes dsh-page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  main {
+    animation: dsh-page-enter 0.28s ease-out both;
+  }
+}

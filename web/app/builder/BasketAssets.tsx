@@ -87,7 +87,7 @@ export function BasketAssets({
         <div>
           <CardTitle className="text-base">篮子成分</CardTitle>
           <CardDescription>
-            {items.length} / {BASKET_MAX_ASSETS} 项 · 点击资产行右侧的 bfq/qfq/hfq 仅切换展示口径
+            {items.length} / {BASKET_MAX_ASSETS} 项 · 点击资产行右侧的「不复权 / 前复权 / 后复权」仅切换展示口径
           </CardDescription>
         </div>
         <div className="flex w-full gap-2 sm:w-auto">
@@ -502,7 +502,7 @@ export function StockSearchDialog({
         <DialogHeader className="shrink-0">
           <DialogTitle>搜索 A 股</DialogTitle>
           <DialogDescription>
-            全 A 股主数据 · 选中即加入篮子 · 回测口径 = 后复权（hfq）
+            全 A 股主数据 · 选中即加入篮子 · 回测口径 = 后复权（保持历史价格连续）
           </DialogDescription>
         </DialogHeader>
 
@@ -599,8 +599,11 @@ export function StockSearchDialog({
                       {stock.industry_l1 && <span>{stock.industry_l1}</span>}
                     </div>
                   </div>
-                  <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
-                    hfq
+                  <span
+                    className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline"
+                    title="后复权：以上市首日为基准复权，分红再投，回测默认口径"
+                  >
+                    后复权
                   </span>
                 </button>
               );
@@ -638,7 +641,7 @@ export function StockSearchDialog({
           <span className="text-xs text-muted-foreground">
             {enabled && total > 0
               ? `共 ${total} 条${total > rows.length ? `，显示前 ${rows.length} 条` : ""}`
-              : "回测口径 = 后复权（hfq）"}
+              : "回测口径 = 后复权（历史价格连续，回测默认）"}
           </span>
           <Button variant="ghost" onClick={close}>
             完成

@@ -364,3 +364,11 @@
 
 ### 部署提示
 - 连续多次 rebuild 后，旧页面客户端 chunk 会与 Server Action 失配（日志出现 Failed to find Server Action）。用户侧**强制刷新一次**即可恢复；后续部署尽量一次性构建。
+## 25. 数据 ETL 与收尾（2026-11-16 00:05）
+- 迁移 71：`bp_stock_quote_daily`（三口径），覆盖率报告脚本；
+- 服务器增量任务已装 crontab：股票 daily 快照（工作日 23:35）、股票 weekly 三口径补齐（周日 02:30）、基金净值日增量（工作日 21:50）；
+- 本机回填优化后重跑（每线程持久连接 + synchronous_commit=off + 批量提交）：A 股 4,911 只待补、基金 25,998 只待补，后台运行中；
+- 复权口径中文化：/assets 与 builder 的 bfq/qfq/hfq 全部改为「不复权 / 前复权 / 后复权」并加 tooltip；
+- 全站页面轻量过渡动画（`main` 淡入，尊重 reduce-motion）；
+- OTC 页面标题与正文去掉 Experiment 标签；
+- 操作文档：docs/data/asset-pool-etl.md。
