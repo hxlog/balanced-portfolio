@@ -1,0 +1,43 @@
+{
+  "generated_at": "2026-11-15T19:00:23.475899+00:00",
+  "stocks": {
+    "universe": 5227,
+    "bfq": {
+      "symbols": 5396,
+      "rows": 7341601,
+      "coverage_pct": 103.23,
+      "first_date": "2020-01-02",
+      "last_date": "2026-11-13",
+      "symbols_with_7d_data": 5383
+    },
+    "qfq": {
+      "symbols": 5394,
+      "rows": 7337479,
+      "coverage_pct": 103.19,
+      "first_date": "2020-01-02",
+      "last_date": "2026-11-13",
+      "symbols_with_7d_data": 5381
+    },
+    "hfq": {
+      "symbols": 5394,
+      "rows": 7341740,
+      "coverage_pct": 103.19,
+      "first_date": "2020-01-02",
+      "last_date": "2026-11-13",
+      "symbols_with_7d_data": 5383
+    }
+  },
+  "funds": {
+    "universe": 27978,
+    "symbols": 27978,
+    "rows": 33092396,
+    "coverage_pct": 100.0,
+    "last_date": "2026-11-13",
+    "symbols_with_7d_data": 27677
+  },
+  "indices": {
+    "universe": 521,
+    "with_quotes": 455,
+    "coverage_pct": 87.33
+  }
+}

@@ -101,13 +101,17 @@ def main() -> int:
             navs = [row for row in parse_nav(response.text) if row[0] >= cutoff]
             if not navs:
                 raise RuntimeError("empty")
-            with db_conn() as conn, conn.cursor() as cur:
-                cur.executemany(
-                    "INSERT INTO bp_fund_nav_daily (fund_code, trade_date, nav, source) VALUES (%s, %s, %s, 'em_pingzhongdata')"
-                    " ON CONFLICT (fund_code, trade_date) DO UPDATE SET nav = EXCLUDED.nav",
-                    [(code, d, v) for d, v in navs],
-                )
-            conn.commit()
+            conn = db_conn()
+            try:
+                with conn.cursor() as cur:
+                    cur.executemany(
+                        "INSERT INTO bp_fund_nav_daily (fund_code, trade_date, nav, source) VALUES (%s, %s, %s, 'em_pingzhongdata')"
+                        " ON CONFLICT (fund_code, trade_date) DO UPDATE SET nav = EXCLUDED.nav",
+                        [(code, d, v) for d, v in navs],
+                    )
+                conn.commit()
+            finally:
+                conn.close()
             with LOCK:
                 PROGRESS["ok"] += 1
                 PROGRESS["rows"] += len(navs)

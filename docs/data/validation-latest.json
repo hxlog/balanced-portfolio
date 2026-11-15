@@ -1,0 +1,95 @@
+{
+  "generated_at": "2026-11-15T18:59:27.071933+00:00",
+  "stocks": {
+    "sampled": 19,
+    "mismatches": 0,
+    "checks": [
+      {
+        "symbol": "002410",
+        "date": "2026-11-13",
+        "db": 8.31,
+        "api": 8.31,
+        "api_date": "2026-11-13",
+        "ok": true
+      },
+      {
+        "symbol": "000680",
+        "date": "2026-11-13",
+        "db": 8.45,
+        "api": 8.45,
+        "api_date": "2026-11-13",
+        "ok": true
+      },
+      {
+        "symbol": "300826",
+        "date": "2026-11-13",
+        "db": 13.6,
+        "api": 13.6,
+        "api_date": "2026-11-13",
+        "ok": true
+      },
+      {
+        "symbol": "300566",
+        "date": "2026-11-13",
+        "db": 18.45,
+        "api": 18.45,
+        "api_date": "2026-11-13",
+        "ok": true
+      },
+      {
+        "symbol": "300381",
+        "date": "2026-11-13",
+        "db": 5.24,
+        "api": 5.24,
+        "api_date": "2026-11-13",
+        "ok": true
+      }
+    ],
+    "ratio_note": "qfq/bfq 与 hfq/bfq 由因子表逐日换算；同日三口径关系已抽检",
+    "ratio_ok": true
+  },
+  "funds": {
+    "sampled": 10,
+    "mismatches": 0,
+    "checks": [
+      {
+        "fund_code": "014535",
+        "date": "2026-11-13",
+        "db": 1.0531,
+        "api": 1.0531,
+        "ok": true
+      },
+      {
+        "fund_code": "007760",
+        "date": "2026-11-13",
+        "db": 1.2379,
+        "api": 1.2379,
+        "ok": true
+      },
+      {
+        "fund_code": "017345",
+        "date": "2026-11-11",
+        "db": 1.0898,
+        "api": 1.0898,
+        "ok": true
+      },
+      {
+        "fund_code": "026642",
+        "date": "2026-11-13",
+        "db": 0.9733,
+        "api": 0.9733,
+        "ok": true
+      },
+      {
+        "fund_code": "002663",
+        "date": "2026-11-13",
+        "db": 2.105,
+        "api": 2.105,
+        "ok": true
+      }
+    ]
+  },
+  "stock_symbols": 5396,
+  "stock_symbols_qfq": 5394,
+  "fund_symbols": 27978
+}

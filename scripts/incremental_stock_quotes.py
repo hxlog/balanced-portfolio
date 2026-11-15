@@ -82,9 +82,13 @@ def upsert_rows(rows):
         " open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low, close=EXCLUDED.close,"
         " volume=EXCLUDED.volume, amount=EXCLUDED.amount, pct_change=EXCLUDED.pct_change"
     )
-    with db_conn() as conn, conn.cursor() as cur:
-        cur.executemany(sql, rows)
-    conn.commit()
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.executemany(sql, rows)
+        conn.commit()
+    finally:
+        conn.close()
     return len(rows)
 
 
@@ -159,9 +163,9 @@ def fetch_kline_chunk(session, symbol: str, start: date, end: date, adjust: str)
     return out
 
 
-def run_weekly(days: int, threads: int) -> int:
+def run_weekly(days: int, threads: int, start_year: int | None = None) -> int:
     end = datetime.now(CN).date()
-    start = end - timedelta(days=days)
+    start = date(start_year, 1, 1) if start_year else end - timedelta(days=days)
     stocks = universe()
     tasks = [(code, market, adjust) for code, market in stocks for adjust in ("bfq", "qfq", "hfq")]
     sql = (
@@ -176,11 +180,22 @@ def run_weekly(days: int, threads: int) -> int:
     def worker(code, market, adjust):
         session = requests.Session()
         session.headers.update(UA)
-        rows = fetch_kline_chunk(session, tencent_symbol(code, market), start, end, adjust)
+        rows = []
+        cursor = start
+        while cursor <= end:
+            chunk_end = min(date(cursor.year + 2, 12, 31), end)
+            rows.extend(fetch_kline_chunk(session, tencent_symbol(code, market), cursor, chunk_end, adjust))
+            cursor = chunk_end + timedelta(days=1)
+        dedup = {row[1]: row for row in rows}
+        rows = [dedup[key] for key in sorted(dedup)]
         if rows:
-            with db_conn() as conn, conn.cursor() as cur:
-                cur.executemany(sql, [r[:8] for r in rows])
-            conn.commit()
+            conn = db_conn()
+            try:
+                with conn.cursor() as cur:
+                    cur.executemany(sql, [r[:8] for r in rows])
+                conn.commit()
+            finally:
+                conn.close()
             done["rows"] += len(rows)
         done["ok"] += 1
 
@@ -196,9 +211,10 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["daily", "weekly"], default="daily")
     parser.add_argument("--days", type=int, default=40)
+    parser.add_argument("--start-year", type=int, default=0)
     parser.add_argument("--threads", type=int, default=6)
     args = parser.parse_args()
-    return run_daily() if args.mode == "daily" else run_weekly(args.days, args.threads)
+    return run_daily() if args.mode == "daily" else run_weekly(args.days, args.threads, args.start_year or None)
 
 
 if __name__ == "__main__":

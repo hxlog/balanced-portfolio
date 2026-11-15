@@ -68,3 +68,19 @@ python scripts/asset_coverage_report.py --json /tmp/coverage.json
 - 已支持 `--source sina`（akshare `stock_zh_a_daily`，新浪口径，自带复权因子）：`python scripts/local_backfill_stocks.py --source sina --years 6 --threads 8`；
 - 约 17s/只（1 线程，含 3 口径），8 线程约 3 小时可回填 5,000 只；
 - 服务器增量任务走服务端 IP，不受本机 WAF 影响；若服务器也被限流，可切 `--source sina`。
+
+
+## 7. 全量回填结果（2026-11-16）
+
+| 数据 | 覆盖 | 行数 | 区间 |
+|---|---|---|---|
+| A 股 bfq（不复权） | 5,396 只（含主数据外的退市/北交所代码） | 7,341,601 | 2020-01-02 ~ 2026-11-13 |
+| A 股 qfq（前复权） | 5,394 只 | 7,337,479 | 同上 |
+| A 股 hfq（后复权） | 5,394 只 | 7,341,740 | 同上 |
+| 基金净值 | **27,978 只（100% 基金列表）** | 33,092,396 | ~2026-11-13 |
+
+- 回填方式：服务器侧新浪原始行情 + hfq/qfq 因子（3 请求/只），12 线程约 16 分钟完成 A 股；基金 8 线程约 2 小时完成；
+- **抽样校验**（scripts/validate_asset_data.py）：A 股 19/19 与新浪实时接口一致（收盘价+日期）；基金 10/10 与天天基金最新净值一致；三口径因子关系抽检通过；
+- 覆盖率报告：docs/data/coverage-latest.json；校验结果：docs/data/validation-latest.json；
+- 指数行情覆盖 455/521（87%），缺口为 MSCI/创业板细分/港股通细分等无公开行情源的自定义指数，非本次 A股/基金 ETL 范围；
+- 服务器增量任务保持：A 股日快照（工作日 23:35）、三口径周补齐（周日 02:30）、基金净值日增量（工作日 21:50），日志在 `/opt/balanced-portfolio/logs/etl-*.log`。

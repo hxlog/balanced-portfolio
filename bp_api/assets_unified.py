@@ -43,21 +43,20 @@ def register_routes(app: FastAPI) -> None:
         stock_union = """
             SELECT 'stock' AS type, m.stock_code AS code, m.name,
                    COALESCE(m.market, '') AS market, '' AS category,
-                   (SELECT max(trade_date) FROM bp_stock_quote_daily s
-                     WHERE s.symbol = m.stock_code AND s.adjust = %(adjust)s) AS last_date,
-                   (SELECT count(DISTINCT adjust) FROM bp_stock_quote_daily s
-                     WHERE s.symbol = m.stock_code) AS adjust_count
+                   c.last_date AS last_date, 3 AS adjust_count
             FROM bp_stock_master m
+            LEFT JOIN bp_asset_coverage c
+              ON c.kind = 'stock' AND c.code = m.stock_code AND c.adjust = %(adjust)s
             WHERE (%(keyword)s::text = '' OR m.stock_code LIKE %(like)s OR m.name ILIKE %(like)s)
               AND (%(market)s::text IS NULL OR upper(COALESCE(m.market, '')) = %(market)s::text)
         """
         index_union = """
             SELECT 'index' AS type, m.index_code AS code, m.name,
                    COALESCE(m.market, '') AS market, COALESCE(m.index_type, '') AS category,
-                   (SELECT max(trade_date) FROM bp_index_quote_daily q
-                     WHERE q.symbol = m.index_code AND q.adjust = 'bfq') AS last_date,
-                   1 AS adjust_count
+                   c.last_date AS last_date, 1 AS adjust_count
             FROM bp_index_master m
+            LEFT JOIN bp_asset_coverage c
+              ON c.kind = 'index' AND c.code = m.index_code AND c.adjust = 'bfq'
             WHERE m.is_active AND m.is_tracked
               AND (%(keyword)s::text = '' OR m.index_code LIKE %(like)s OR m.name ILIKE %(like)s)
               AND (%(market)s::text IS NULL OR upper(COALESCE(m.market, '')) = %(market)s::text)
@@ -65,17 +64,19 @@ def register_routes(app: FastAPI) -> None:
         fund_union = """
             SELECT 'fund' AS type, f.fund_code AS code, f.name,
                    'CN' AS market, '' AS category,
-                   (SELECT max(trade_date) FROM bp_fund_nav_daily n WHERE n.fund_code = f.fund_code) AS last_date,
-                   1 AS adjust_count
+                   c.last_date AS last_date, 1 AS adjust_count
             FROM bp_fund_master f
+            LEFT JOIN bp_asset_coverage c
+              ON c.kind = 'fund' AND c.code = f.fund_code AND c.adjust = ''
             WHERE (%(keyword)s::text = '' OR f.fund_code LIKE %(like)s OR f.name ILIKE %(like)s)
         """
         etf_union = """
             SELECT 'etf' AS type, f.fund_code AS code, f.name,
                    'CN' AS market, '' AS category,
-                   (SELECT max(trade_date) FROM bp_fund_nav_daily n WHERE n.fund_code = f.fund_code) AS last_date,
-                   1 AS adjust_count
+                   c.last_date AS last_date, 1 AS adjust_count
             FROM bp_fund_master f
+            LEFT JOIN bp_asset_coverage c
+              ON c.kind = 'fund' AND c.code = f.fund_code AND c.adjust = ''
             WHERE f.is_etf AND (%(keyword)s::text = '' OR f.fund_code LIKE %(like)s OR f.name ILIKE %(like)s)
         """
         parts = []

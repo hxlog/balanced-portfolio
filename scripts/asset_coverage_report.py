@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """数据完整性/覆盖率报告：A 股三口径、基金净值、指数行情。
 
-用法：python scripts/asset_coverage_report.py [--json out.json]
+用法（服务器）：python scripts/asset_coverage_report.py --json docs/data/coverage-latest.json
 """
 from __future__ import annotations
 
@@ -34,10 +34,13 @@ def load_env() -> dict:
 
 def db_conn():
     env = load_env()
-    conn = psycopg.connect(host=(os.getenv("BP_ETL_DB_HOST") or "127.0.0.1"),
-        port=int(env.get("PGPORT", "5432")), dbname=env.get("PGDATABASE", "postgres"),
-        user=env.get("PGUSER", "postgres"), password=env.get("PGPASSWORD", ""))
-    return conn
+    return psycopg.connect(
+        host=os.getenv("BP_ETL_DB_HOST") or "127.0.0.1",
+        port=int(env.get("PGPORT", "5432")),
+        dbname=env.get("PGDATABASE", "postgres"),
+        user=env.get("PGUSER", "postgres"),
+        password=env.get("PGPASSWORD", ""),
+    )
 
 
 def main() -> int:
@@ -45,53 +48,64 @@ def main() -> int:
     parser.add_argument("--json", default=None)
     args = parser.parse_args()
     today = date.today()
+    week_ago = today - timedelta(days=7)
     result = {"generated_at": datetime.now(timezone.utc).isoformat(), "stocks": {}, "funds": {}, "indices": {}}
     with db_conn() as conn, conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM bp_stock_master WHERE stock_code ~ '^[0-9]{6}$'")
-        total = cur.fetchone()[0]
+        universe = cur.fetchone()[0]
+        result["stocks"]["universe"] = universe
         for adjust in ("bfq", "qfq", "hfq"):
             cur.execute(
-                "SELECT count(DISTINCT symbol), count(*), max(trade_date),"
-                " min(trade_date), count(DISTINCT symbol) FILTER (WHERE trade_date >= %s)"
+                "SELECT count(DISTINCT symbol), count(*), min(trade_date), max(trade_date),"
+                " count(DISTINCT symbol) FILTER (WHERE trade_date >= %s)"
                 " FROM bp_stock_quote_daily WHERE adjust = %s",
-                (today - timedelta(days=7), adjust),
+                (week_ago, adjust),
             )
-            symbols, rows, last, first, recent = cur.fetchone()
+            symbols, rows, first, last, recent = cur.fetchone()
             result["stocks"][adjust] = {
-                "symbols": symbols, "rows": rows,
-                "coverage_pct": round(symbols / total * 100, 2) if total else 0,
+                "symbols": symbols,
+                "rows": rows,
+                "coverage_pct": round(symbols / universe * 100, 2) if universe else 0,
                 "first_date": first.isoformat() if first else None,
                 "last_date": last.isoformat() if last else None,
                 "symbols_with_7d_data": recent,
             }
-        result["stocks"]["universe"] = total
+
         cur.execute(
             "SELECT count(*) FROM ("
             " SELECT fund_code FROM bp_fund_master WHERE fund_code ~ '^[0-9]{6}$'"
-            " UNION SELECT DISTINCT fund_code FROM bp_fund_nav_daily WHERE fund_code ~ '^[0-9]{6}$'"
+            " UNION SELECT DISTINCT fund_code FROM bp_fund_nav_daily"
             ") u"
         )
         fund_total = cur.fetchone()[0]
         cur.execute("SELECT count(DISTINCT fund_code), count(*), max(trade_date) FROM bp_fund_nav_daily")
         fund_symbols, nav_rows, fund_last = cur.fetchone()
-        cur.execute("SELECT count(DISTINCT fund_code) FROM bp_fund_nav_daily WHERE trade_date >= %s", (today - timedelta(days=7),))
+        cur.execute("SELECT count(DISTINCT fund_code) FROM bp_fund_nav_daily WHERE trade_date >= %s", (week_ago,))
         fund_recent = cur.fetchone()[0]
         result["funds"] = {
-            "universe": fund_total, "symbols": fund_symbols, "rows": nav_rows,
+            "universe": fund_total,
+            "symbols": fund_symbols,
+            "rows": nav_rows,
             "coverage_pct": round(fund_symbols / fund_total * 100, 2) if fund_total else 0,
             "last_date": fund_last.isoformat() if fund_last else None,
             "symbols_with_7d_data": fund_recent,
         }
+
         cur.execute(
-            "SELECT count(*), count(*) FILTER (WHERE q.last_date IS NOT NULL) FROM bp_index_master m"
+            "SELECT count(*), count(*) FILTER (WHERE q.last_date IS NOT NULL)"
+            " FROM bp_index_master m"
             " LEFT JOIN (SELECT symbol, max(trade_date) AS last_date FROM bp_index_quote_daily GROUP BY symbol) q"
             " ON q.symbol = m.index_code WHERE m.is_active AND m.is_tracked"
         )
         idx_total, idx_with = cur.fetchone()
-        result["indices"] = {"universe": idx_total, "with_quotes": idx_with,
-                             "coverage_pct": round(idx_with / idx_total * 100, 2) if idx_total else 0}
+        result["indices"] = {
+            "universe": idx_total,
+            "with_quotes": idx_with,
+            "coverage_pct": round(idx_with / idx_total * 100, 2) if idx_total else 0,
+        }
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     if args.json:
+        os.makedirs(os.path.dirname(args.json), exist_ok=True)
         with open(args.json, "w", encoding="utf-8") as fh:
             json.dump(result, fh, ensure_ascii=False, indent=2, default=str)
     return 0
