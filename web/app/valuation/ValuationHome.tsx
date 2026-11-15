@@ -90,6 +90,8 @@ const DEFAULT_COLUMNS: ColumnKey[] = [
 ];
 
 const PAGE_SIZE = 60;
+const PROXY_ORDER = ["000016", "000300", "000510", "000905", "000852"];
+const BOARD_ORDER = ["all", "main", "chinext", "star", "bse"];
 
 export interface ValuationHomeProps {
   rows: IndexQuoteRow[];
@@ -257,7 +259,17 @@ export function ValuationHome({
   }, [rows, category, industry, search, sortKey, sortDir]);
 
   const visibleRows = filtered.slice(0, pageSize);
-  const selectedProxy = proxies.find((item) => item.index_code === proxyCode) ?? proxies[0] ?? null;
+  const sortedProxies = useMemo(() => {
+    const rank = new Map(PROXY_ORDER.map((code, index) => [code, index]));
+    return [...proxies].sort(
+      (a, b) => (rank.get(a.index_code) ?? 99) - (rank.get(b.index_code) ?? 99),
+    );
+  }, [proxies]);
+  const sortedBoards = useMemo(() => {
+    const rank = new Map(BOARD_ORDER.map((board, index) => [board, index]));
+    return [...boards].sort((a, b) => (rank.get(a.board) ?? 99) - (rank.get(b.board) ?? 99));
+  }, [boards]);
+  const selectedProxy = sortedProxies.find((item) => item.index_code === proxyCode) ?? sortedProxies[0] ?? null;
 
   const toggleSort = useCallback(
     (key: ColumnKey) => {
@@ -316,7 +328,7 @@ export function ValuationHome({
         <section className="mt-5">
           <SectionHeading title="代表性宽基估值" hint="按所选窗口计算真实历史分位" />
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-            {proxies.map((card) => (
+            {sortedProxies.map((card) => (
               <button
                 key={card.index_code}
                 type="button"
@@ -443,7 +455,7 @@ export function ValuationHome({
               东财收盘截面（分位需积累 ≥60 个交易日后启用）
             </p>
             <div className="mt-3 grid grid-cols-2 gap-2">
-              {boards.slice(0, 4).map((board) => {
+              {sortedBoards.slice(0, 4).map((board) => {
                 const ready = board.history_days >= 60;
                 return (
                   <div key={board.board} className="rounded-lg border border-border p-2.5">
@@ -463,7 +475,7 @@ export function ValuationHome({
               })}
             </div>
             <div className="mt-3 text-[11px] text-muted-foreground">
-              截面样本 {boards[0]?.sample_size ?? 0} 只 · 每日 21:20 采集
+              截面样本 {sortedBoards[0]?.sample_size ?? 0} 只 · 每日 21:20 采集
             </div>
           </Surface>
         </section>
@@ -570,7 +582,7 @@ export function ValuationHome({
           </div>
 
           <div className="mt-3 overflow-x-auto rounded-xl border border-border">
-            <table className="w-full min-w-[980px] border-collapse text-sm">
+            <table className="w-full min-w-[900px] border-collapse text-sm">
               <thead>
                 <tr className="border-b border-border bg-muted/40 text-[11px] text-muted-foreground">
                   <th className="sticky left-0 z-10 bg-muted/40 px-3 py-2 text-left font-medium">
@@ -604,7 +616,7 @@ export function ValuationHome({
                     key={row.index_code}
                     className="border-b border-border/50 last:border-0 hover:bg-muted/40"
                   >
-                    <td className="sticky left-0 z-10 bg-background px-3 py-2">
+                    <td className="sticky left-0 z-10 bg-background px-2.5 py-2">
                       <Link href={"/valuation/" + row.index_code} className="group block">
                         <span className="text-sm font-medium group-hover:text-primary">
                           {row.name}
@@ -652,13 +664,13 @@ export function ValuationHome({
                       }
                       if (column.key === "dividend") {
                         return (
-                          <td key={column.key} className="px-3 py-2 text-right font-mono text-xs tabular-nums">
+                          <td key={column.key} className="px-2 py-2 text-right font-mono text-xs tabular-nums">
                             {value == null ? "—" : value.toFixed(2) + "%"}
                           </td>
                         );
                       }
                       return (
-                        <td key={column.key} className="px-3 py-2 text-right font-mono text-xs tabular-nums">
+                        <td key={column.key} className="px-2 py-2 text-right font-mono text-xs tabular-nums">
                           {formatNumber(value, 2)}
                         </td>
                       );

@@ -264,7 +264,7 @@ export function ValuationMatrix({ rows }: { rows: IndexQuoteRow[] }) {
     }));
   const option = {
     animation: false,
-    grid: { left: 8, right: 12, top: 14, bottom: 20, containLabel: true },
+    grid: { left: 8, right: 12, top: 28, bottom: 26, containLabel: true },
     tooltip: {
       formatter: (params: { data?: { name?: string; value?: number[] } }) => {
         const value = params.data?.value ?? [];
@@ -284,6 +284,7 @@ export function ValuationMatrix({ rows }: { rows: IndexQuoteRow[] }) {
       min: 0,
       max: 100,
       name: "PE 分位",
+      nameGap: 8,
       nameTextStyle: { color: "#9ca3af", fontSize: 10 },
       splitLine: { lineStyle: { color: "#f1f2f5" } },
       axisLabel: { color: "#9ca3af", fontSize: 10 },
@@ -293,6 +294,7 @@ export function ValuationMatrix({ rows }: { rows: IndexQuoteRow[] }) {
       min: 0,
       max: 100,
       name: "PB 分位",
+      nameGap: 16,
       nameTextStyle: { color: "#9ca3af", fontSize: 10 },
       splitLine: { lineStyle: { color: "#f1f2f5" } },
       axisLabel: { color: "#9ca3af", fontSize: 10 },
