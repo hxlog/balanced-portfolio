@@ -129,6 +129,24 @@ export function PeBandChart({
     yAxis: {
       type: "value",
       scale: true,
+      min: (value: { min: number; max: number }) => {
+        const candidates = [...band, value.min, value.max].filter(
+          (item): item is number => typeof item === "number" && Number.isFinite(item),
+        );
+        const low = Math.min(...candidates);
+        const high = Math.max(...candidates);
+        const pad = (high - low) * 0.06 || 0.1;
+        return low - pad;
+      },
+      max: (value: { min: number; max: number }) => {
+        const candidates = [...band, value.min, value.max].filter(
+          (item): item is number => typeof item === "number" && Number.isFinite(item),
+        );
+        const low = Math.min(...candidates);
+        const high = Math.max(...candidates);
+        const pad = (high - low) * 0.06 || 0.1;
+        return high + pad;
+      },
       splitLine: { lineStyle: { color: "#f1f2f5" } },
       axisLabel: { color: "#9ca3af", fontSize: 10 },
     },

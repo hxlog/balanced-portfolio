@@ -495,7 +495,7 @@ def test_get_index_history_applies_window_and_source(conn):
     assert repo.get_index_history(conn, code, "pb", "5y") == []
 
     with pytest.raises(ValueError):
-        repo.get_index_history(conn, code, "pe_ttm", "3y")
+        repo.get_index_history(conn, code, "pe_ttm", "2y")
 
 
 # ---------------------------------------------------------------------

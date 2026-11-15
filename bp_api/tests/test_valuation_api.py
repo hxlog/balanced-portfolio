@@ -62,6 +62,8 @@ def _install_repo(monkeypatch, **return_values) -> MagicMock:
         repo.get_index_constituents.return_value = []
     if "get_index_tracker_funds" not in return_values:
         repo.get_index_tracker_funds.return_value = []
+    if "get_index_risk_stats" not in return_values:
+        repo.get_index_risk_stats.return_value = {}
     monkeypatch.setattr(valuation, "repositories_valuation", repo)
     return repo
 
@@ -120,6 +122,9 @@ def test_indices_returns_rows_total_and_passes_filters(client, monkeypatch):
     assert repo.get_index_list.call_args.kwargs == {
         "query": "300",
         "index_type": "宽基",
+        "industry": None,
+        "window": "5y",
+        "metric": "pe_ttm",
         "only_with_etf": True,
         "only_with_valuation": True,
         "limit": 20,
@@ -143,7 +148,7 @@ def test_detail_returns_detail_payload(client, monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     # detail 端点会追加成分股与跟踪基金（无数据时为空列表）
-    expected = {**detail, "constituents": [], "tracker_funds": []}
+    expected = {**detail, "constituents": [], "tracker_funds": [], "risk": {}}
     assert body["data"] == expected
     assert body["meta"]["rows"] == 1
     assert body["meta"]["as_of"] == "2026-11-13"

@@ -253,3 +253,40 @@ def test_level_of_none_and_custom_thresholds():
     assert level_of(None) is None
     assert level_of(50.0, low=60, high=90) == "低估"
     assert level_of(95.0, low=60, high=90) == "高估"
+
+
+# ---------------------------------------------------------------------------
+# 多窗口分位（1/3/5/10 年 + 全历史）
+# ---------------------------------------------------------------------------
+
+def test_min_sample_for_window_thresholds():
+    from bp_api.quant.valuation import min_sample_for
+
+    # 估值序列是周频（约 52 点/年），1 年窗口门槛必须低于 120 才可能有分位
+    assert min_sample_for("1y") == 40
+    assert min_sample_for("3y") == 120
+    assert min_sample_for("5y") == 120
+    assert min_sample_for("10y") == 120
+    assert min_sample_for("all") == 120
+    assert min_sample_for("unknown") == 120
+
+
+def test_window_slice_1y_and_3y_bounds():
+    as_of = date(2026, 11, 14)
+    series = [
+        (date(2022, 1, 1), 1.0),
+        (date(2024, 1, 1), 2.0),
+        (date(2026, 1, 1), 3.0),
+        (as_of, 4.0),
+    ]
+
+    assert window_slice(series, as_of, "1y") == [3.0, 4.0]
+    assert window_slice(series, as_of, "3y") == [2.0, 3.0, 4.0]
+
+
+def test_summarize_respects_custom_min_sample():
+    out = summarize([1.0, 2.0, 3.0], min_sample=3)
+    assert out["pct"] is not None
+    out2 = summarize([1.0, 2.0, 3.0], min_sample=10)
+    assert out2["pct"] is None
+    assert out2["reason"] == "insufficient_sample"

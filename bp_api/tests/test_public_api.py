@@ -571,7 +571,7 @@ def test_index_percentile_passes_defaults_and_returns_rows(client, monkeypatch):
     "params,invalid",
     [
         ({"metrics": "pe_ttm,roe_ttm"}, "roe_ttm"),
-        ({"windows": "5y,3y"}, "3y"),
+        ({"windows": "5y,2y"}, "2y"),
     ],
 )
 def test_index_percentile_rejects_invalid_metric_or_window(client, params, invalid):

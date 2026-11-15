@@ -172,7 +172,8 @@ def test_ingest_writes_master_daily_series_and_percentiles(conn):
     assert summary["indices"] == 2
     assert summary["valuation_rows"] == 2
     assert summary["series_rows"] == 32
-    assert summary["percentile_rows"] == 24
+    # 4 指标 × 5 窗口（1/3/5/10 年 + 全历史）
+    assert summary["percentile_rows"] == 40
     assert summary["errors"] == []
     assert isinstance(summary["duration_ms"], int) and summary["duration_ms"] >= 0
 
@@ -180,7 +181,7 @@ def test_ingest_writes_master_daily_series_and_percentiles(conn):
     assert _count(conn, "bp_index_master", prefix) == 2
     assert _count(conn, "bp_index_valuation_daily", prefix) == 2
     assert _count(conn, "bp_index_valuation_series", prefix) == 32
-    assert _count(conn, "bp_index_percentile", prefix) == 24
+    assert _count(conn, "bp_index_percentile", prefix) == 40
 
     with conn.cursor() as cur:
         cur.execute(

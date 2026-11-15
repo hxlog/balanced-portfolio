@@ -299,6 +299,8 @@ def test_allowed_paths_match_worker_proxy_whitelist():
         cf.GLOBAL_LONG_SHORT,
         cf.TAKER_LONG_SHORT,
         cf.OI_HIST,
+        cf.KLINE,
+        cf.FUNDING_RATE,
     }
 
 
@@ -518,22 +520,28 @@ def test_compute_percentiles_30_90_180_windows_use_midrank():
 
 def test_compute_percentiles_excludes_nulls_from_sample_size():
     end = date(2026, 11, 14)
-    # 仅 3 个有效值 + 1 个 NULL；当前值 = 30
-    today = end
-    rows = [
-        ("BTCUSDT", today - timedelta(days=3), 10.0, None, None, None, None),
-        ("BTCUSDT", today - timedelta(days=2), None, None, None, None, None),
-        ("BTCUSDT", today - timedelta(days=1), 20.0, None, None, None, None),
-        ("BTCUSDT", today, 30.0, None, None, None, None),
+    # 24 天里 3 天为 NULL、21 天为有效值 1..21（满足 30 天窗口的 20 样本门槛），当前值 = 21
+    raw = [
+        float(i + 1) for i in range(21)
     ]
+    null_slots = {5, 12, 18}
+    values: dict[int, float | None] = {}
+    valid_index = 0
+    for offset in range(24):
+        if offset in null_slots:
+            values[offset] = None
+        else:
+            values[offset] = raw[valid_index]
+            valid_index += 1
+    rows = _daily_rows("BTCUSDT", end, 24, "mark_price", values)
     conn, cur = _conn(rows)
 
     cf.compute_percentiles(conn)
 
     by_window = {p[2]: p for p in cur.executemany.call_args.args[1]}
-    # 有效样本 [10,20,30]，当前 30 → (2 + 0.5) / 3 * 100
-    assert by_window[30][4] == pytest.approx(83.3333333333)
-    assert by_window[30][5] == 3
+    # 有效样本 21 个、当前值最大 → (20 + 0.5) / 21 * 100
+    assert by_window[30][5] == 21
+    assert by_window[30][4] == pytest.approx(97.6190476190, rel=1e-6)
 
 
 def test_compute_percentiles_multiple_metrics_and_contracts():
@@ -548,7 +556,8 @@ def test_compute_percentiles_multiple_metrics_and_contracts():
     stats = cf.compute_percentiles(conn)
 
     assert stats["contracts"] == 2
-    assert stats["rows"] == 9  # 3 组 metric × 3 个窗口
+    # 40 个样本只满足 30 天窗口门槛（90d=60 / 180d=120），因此 3 组 metric × 1 窗口
+    assert stats["rows"] == 3
     payload = cur.executemany.call_args.args[1]
     assert {p[0] for p in payload} == {"BTCUSDT", "ETHUSDT"}
     assert {p[1] for p in payload} == {"mark_price", "oi_notional", "basis_pct"}
