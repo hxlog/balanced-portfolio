@@ -111,6 +111,31 @@ def fetch_all(session, symbol: str, market: str, adjusts, start_year: int, end: 
     return result
 
 
+def fetch_sina(symbol: str, market: str, adjusts, start_year: int, end: date):
+    """新浪口径（akshare stock_zh_a_daily）：返回 {adjust: [(trade_date, open, high, low, close, volume)]}。"""
+    import akshare as ak
+    code = tencent_symbol(symbol, market)  # sh600519 / sz000862 / bj...
+    result = {}
+    for adjust in adjusts:
+        try:
+            df = ak.stock_zh_a_daily(symbol=code, start_date=f"{start_year}0101",
+                                     end_date=end.strftime("%Y%m%d"), adjust="" if adjust == "bfq" else adjust)
+        except Exception:
+            result[adjust] = []
+            continue
+        rows = []
+        for record in df.itertuples(index=False):
+            try:
+                rows.append((record[0] if not isinstance(record[0], str) else date.fromisoformat(str(record[0])[:10]),
+                             float(record[1]), float(record[2]), float(record[3]),
+                             float(record[4]), int(float(record[5]))))
+            except (ValueError, TypeError, IndexError):
+                continue
+        result[adjust] = rows
+        time.sleep(0.05)
+    return result
+
+
 INSERT_SQL = (
     "INSERT INTO bp_stock_quote_daily"
     " (symbol, trade_date, source, adjust, open, high, low, close, volume, pct_change)"
@@ -127,6 +152,7 @@ def main() -> int:
     parser.add_argument("--adjusts", type=str, default="bfq,qfq,hfq")
     parser.add_argument("--threads", type=int, default=12)
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--source", choices=["tencent", "sina"], default="tencent")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
     adjusts = [item.strip() for item in args.adjusts.split(",") if item.strip()]
@@ -167,7 +193,10 @@ def main() -> int:
         session = requests.Session()
         session.headers.update(UA)
         try:
-            data = fetch_all(session, code, market, missing, start_year, end)
+            if args.source == "sina":
+                data = fetch_sina(code, market, missing, start_year, end)
+            else:
+                data = fetch_all(session, code, market, missing, start_year, end)
             rows = []
             for adjust, series in data.items():
                 previous = None

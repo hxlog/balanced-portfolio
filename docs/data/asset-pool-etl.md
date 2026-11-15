@@ -60,3 +60,11 @@ python scripts/asset_coverage_report.py --json /tmp/coverage.json
 - `/assets`：统一资产池（股票 / 指数 / 基金 / ETF 搜索，覆盖状态，三口径中文切换说明）；
 - `/builder?mode=basket`：选股/资产池弹窗，选中股票按后复权口径加入；
 - API：`GET /api/assets/unified?q=&type=&adjust=&limit=&offset=`（缓存 60s）。
+
+
+## 6. 数据源降级（重要）
+
+- 腾讯 `web.ifzq.gtimg.cn` 在**本机高频请求**后会触发 WAF（返回 HTML 501 页），此时 `local_backfill_stocks.py` 会大量报 `RuntimeError empty`；
+- 已支持 `--source sina`（akshare `stock_zh_a_daily`，新浪口径，自带复权因子）：`python scripts/local_backfill_stocks.py --source sina --years 6 --threads 8`；
+- 约 17s/只（1 线程，含 3 口径），8 线程约 3 小时可回填 5,000 只；
+- 服务器增量任务走服务端 IP，不受本机 WAF 影响；若服务器也被限流，可切 `--source sina`。
