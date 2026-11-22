@@ -336,7 +336,7 @@ def run_backfill(codes, adjusts, threads: int, force: bool, end: date, floor: da
             except Exception as exc:  # noqa: BLE001
                 with LOCK:
                     PROGRESS["failed"] += 1
-                    FAILURES.append(f"{code} {adjust} {type(exc).__name__} {str(exc)[:120]}")
+                    FAILURES.append(f"{type(exc).__name__} {str(exc)[:120]}")
                     if PROGRESS["failed"] % 20 == 1:
                         print(f"fail {type(exc).__name__} {str(exc)[:80]}", flush=True)
     if FAILURES:
