@@ -33,7 +33,9 @@ sys.stdout.reconfigure(encoding="utf-8")
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36"}
 QT = "https://qt.gtimg.cn/q="
 KLINE = "https://ifzq.gtimg.cn/appstock/app/fqkline/get"
+KLINE_ALT = "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/fqkline/get"
 HK_KLINE = "https://ifzq.gtimg.cn/appstock/app/hkfqkline/get"
+HK_KLINE_ALT = "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/hkfqkline/get"
 SOURCE_KLINE = "tencent_hk_kline"
 SOURCE_QT = "tencent_hk_qt"
 SOURCE_SINA = "sina_hk_kline"
@@ -124,23 +126,36 @@ def parse_kline_rows(rows: Iterable[Sequence]) -> list[tuple]:
     return out
 
 
+_CANDIDATES_BFQ = [
+    (KLINE, "hk{code},day,,{end},{count},"),
+    (KLINE_ALT, "hk{code},day,,{end},{count},"),
+]
+_CANDIDATES_ADJ = [
+    (HK_KLINE_ALT, "hk{code},day,,,{count},{kind}"),
+    (HK_KLINE, "hk{code},day,,{end},{count},{kind}"),
+]
+
+
 def fetch_page(
     session: requests.Session, code: str, adjust: str, end: date, count: int = PAGE_SIZE
 ) -> list[tuple]:
-    base = KLINE if adjust == "bfq" else HK_KLINE
     kind = "" if adjust == "bfq" else adjust
-    param = f"hk{code},day,,{end.isoformat()},{count},{kind}"
-    for attempt in range(3):
-        try:
-            response = _throttled_get(session, base, params={"param": param}, timeout=20)
-            response.raise_for_status()
-            payload = response.json()
-            data = (payload.get("data") or {}).get(f"hk{code}") or {}
-            key = {"bfq": "day", "qfq": "qfqday", "hfq": "hfqday"}[adjust]
-            rows = data.get(key) or data.get("day") or []
-            return parse_kline_rows(rows)
-        except Exception:  # noqa: BLE001
-            time.sleep(1.2 * (attempt + 1))
+    key = {"bfq": "day", "qfq": "qfqday", "hfq": "hfqday"}[adjust]
+    templates = _CANDIDATES_BFQ if adjust == "bfq" else _CANDIDATES_ADJ
+    for url, template in templates:
+        param = template.format(code=code, end=end.isoformat(), count=count, kind=kind)
+        for attempt in range(2):
+            try:
+                response = _throttled_get(session, url, params={"param": param}, timeout=20)
+                response.raise_for_status()
+                payload = response.json()
+                data = (payload.get("data") or {}).get(f"hk{code}") or {}
+                rows = data.get(key) or data.get("day") or []
+                if rows:
+                    return parse_kline_rows(rows)
+                break
+            except Exception:  # noqa: BLE001
+                time.sleep(1.0 * (attempt + 1))
     return []
 
 

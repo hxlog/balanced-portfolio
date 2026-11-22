@@ -37,6 +37,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36"}
 QT = "https://qt.gtimg.cn/q="
 KLINE = "https://ifzq.gtimg.cn/appstock/app/fqkline/get"
+KLINE_ALT = "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/fqkline/get"
 SOURCE_KLINE = "tencent_etf_kline"
 SOURCE_QT = "tencent_etf_qt"
 SOURCE_SINA = "sina_etf_kline"
@@ -232,17 +233,20 @@ def fetch_page(session, code: str, market: str, adjust: str, end: date, count: i
     symbol = tx_symbol(code, market)
     kind = "" if adjust == "bfq" else adjust
     param = f"{symbol},day,,{end.isoformat()},{count},{kind}"
-    for attempt in range(3):
-        try:
-            response = throttled_get(session, KLINE, params={"param": param}, timeout=20)
-            response.raise_for_status()
-            payload = response.json()
-            data = (payload.get("data") or {}).get(symbol) or {}
-            key = {"bfq": "day", "qfq": "qfqday", "hfq": "hfqday"}[adjust]
-            rows = data.get(key) or data.get("day") or []
-            return parse_kline(rows)
-        except Exception:  # noqa: BLE001
-            time.sleep(1.0 * (attempt + 1))
+    key = {"bfq": "day", "qfq": "qfqday", "hfq": "hfqday"}[adjust]
+    for url in (KLINE, KLINE_ALT):
+        for attempt in range(2):
+            try:
+                response = throttled_get(session, url, params={"param": param}, timeout=20)
+                response.raise_for_status()
+                payload = response.json()
+                data = (payload.get("data") or {}).get(symbol) or {}
+                rows = data.get(key) or data.get("day") or []
+                if rows:
+                    return parse_kline(rows)
+                break
+            except Exception:  # noqa: BLE001
+                time.sleep(1.0 * (attempt + 1))
     return []
 
 
