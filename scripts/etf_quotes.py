@@ -47,6 +47,7 @@ SINA_CATEGORIES = {"ETF基金": "etf", "LOF基金": "lof", "封闭式基金": "c
 PROGRESS = {"ok": 0, "failed": 0, "rows": 0}
 LOCK = threading.Lock()
 FAILURES: list[str] = []
+DAILY_ROWS = [0]  # 最近一次 daily 写入行数（auto 源降级判断用）
 _MIN_INTERVAL = float(os.getenv("BP_ETF_MIN_INTERVAL", "0.05"))
 _RATE_LOCK = threading.Lock()
 _LAST_REQUEST = [0.0]
@@ -419,6 +420,7 @@ def run_daily(source: str = "tencent") -> int:
             with db_conn() as conn, conn.cursor() as cur:
                 cur.executemany(INSERT_SQL, rows)
                 conn.commit()
+        DAILY_ROWS[0] = len(rows)
         print(f"daily etf sina rows={len(rows)} date={today} universe={len(universe)}")
         return 0
     session = requests.Session()
@@ -463,6 +465,7 @@ def run_daily(source: str = "tencent") -> int:
     with db_conn() as conn, conn.cursor() as cur:
         cur.executemany(INSERT_SQL, rows)
         conn.commit()
+    DAILY_ROWS[0] = len(rows)
     print(f"daily etf rows={len(rows)} date={today} universe={len(universe)}")
     return 0
 
@@ -515,8 +518,8 @@ def main() -> int:
     parser.add_argument("--force", action="store_true")
     parser.add_argument(
         "--source",
-        choices=["tencent", "sina"],
-        default="tencent",
+        choices=["tencent", "sina", "auto"],
+        default="auto",
         help="行情源：tencent（三口径，易被 WAF）/ sina（新浪，服务器可用；仅 bfq）",
     )
     args = parser.parse_args()
@@ -528,10 +531,18 @@ def main() -> int:
         print(f"etf master synced: {total}")
         return 0
     if args.mode == "daily":
-        return run_daily(args.source)
+        if args.source == "sina":
+            return run_daily("sina")
+        code = run_daily("tencent")
+        if args.source == "auto" and DAILY_ROWS[0] == 0:
+            print("tencent qt empty, fallback to sina")
+            return run_daily("sina")
+        return code
     if args.mode == "weekly":
-        return run_weekly(args.days, args.threads, args.source)
-    return run_backfill(codes, args.years, args.threads, args.force, end, args.source)
+        source = "sina" if args.source == "auto" else args.source
+        return run_weekly(args.days, args.threads, source)
+    source = "tencent" if args.source == "auto" else args.source
+    return run_backfill(codes, args.years, args.threads, args.force, end, source)
 
 
 if __name__ == "__main__":
