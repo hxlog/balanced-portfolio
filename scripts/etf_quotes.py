@@ -324,13 +324,14 @@ def build_rows(conn, code: str, adjust: str, series: list[tuple], source: str = 
     return out
 
 
-def run_backfill(codes, years: int, threads: int, force: bool, end: date, source: str = "tencent") -> int:
+def run_backfill(codes, years: int, threads: int, force: bool, end: date, source: str = "tencent", adjusts: list[str] | None = None) -> int:
     universe = universe_from_db(codes)
     if not universe:
         print("bp_etf_master 为空：先运行 --mode sync", flush=True)
         return 1
     floor = end - timedelta(days=365 * years)
-    adjusts = ["bfq", "qfq", "hfq"] if source == "tencent" else ["bfq"]
+    if adjusts is None:
+        adjusts = ["bfq", "qfq", "hfq"] if source == "tencent" else ["bfq"]
     tasks = [(code, market, adjust) for code, market in universe for adjust in adjusts]
     print(f"backfill etf={len(universe)} tasks={len(tasks)} end={end} floor={floor}", flush=True)
 
@@ -530,6 +531,7 @@ def main() -> int:
     parser.add_argument("--threads", type=int, default=8)
     parser.add_argument("--end", type=str, default="")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--adjusts", type=str, default="", help="逗号分隔，如 bfq,qfq,hfq；空=按 source 默认")
     parser.add_argument(
         "--source",
         choices=["tencent", "sina", "auto"],
@@ -556,7 +558,8 @@ def main() -> int:
         source = "sina" if args.source == "auto" else args.source
         return run_weekly(args.days, args.threads, source)
     source = "tencent" if args.source == "auto" else args.source
-    return run_backfill(codes, args.years, args.threads, args.force, end, source)
+    adjust_list = [item.strip() for item in args.adjusts.split(",") if item.strip()] or None
+    return run_backfill(codes, args.years, args.threads, args.force, end, source, adjust_list)
 
 
 if __name__ == "__main__":
