@@ -100,6 +100,10 @@ X-API-Key: bp_live_0123456789abcdef0123456789abcdef
 | GET | `/api/v1/index/percentile` | 指数估值分位（预计算） | `codes`(必填)、`metrics`、`windows`、`limit`、`format` |
 | GET | `/api/v1/index/detail` | 指数画像 + 成分 + 跟踪基金 | `code`(必填)、`format` |
 | GET | `/api/v1/market/bond-yield` | 10Y 国债收益率 | `start`、`end`、`limit`、`format` |
+| GET | `/api/v1/market/last` | 最新已确认收盘价（A股/港股/ETF/指数，DB-only） | `codes`(必填)、`adjust`、`format` |
+| GET | `/api/v1/market/history` | 跨市场历史日线（原币，可选复权） | `codes`(必填)、`start`、`end`、`adjust`、`limit`、`format` |
+| GET | `/api/v1/market/fx` | 汇率（人民币腿 + 交叉汇率） | `pairs`(必填)、`start`、`end`、`format` |
+| GET | `/api/v1/fund/nav` | 场外基金净值 | `codes`(必填)、`start`、`end`、`latest`、`limit`、`format` |
 
 通用限制：
 
@@ -220,6 +224,65 @@ curl -H "Authorization: Bearer $BP_TOKEN" \
 curl -H "Authorization: Bearer $BP_TOKEN" \
   "https://example.com/api/v1/market/bond-yield?start=2024-01-01&end=2024-12-31"
 ```
+
+### 4.6 `GET /market/last`
+
+读取 `bp_stock_quote_daily` / `bp_etf_quote_daily` / `bp_index_quote_daily` 的最新一条日线，
+**只读库内已确认收盘价，不做实时行情兜底**（与回测/清洗口径一致；Excel 现价专用）。
+
+| 参数 | 必填 | 默认 | 说明 |
+|---|---|---|---|
+| `codes` | 是 | — | 逗号分隔，最多 50 个；`601318.SH` / `02020.HK` / `159915` 皆可，指数可用 `IDX:000300` 强制 |
+| `adjust` | 否 | `bfq` | `bfq`（现价用）/ `qfq` / `hfq` |
+| `format` | 否 | `json` | `json` / `csv` |
+
+返回行字段：`code, market, currency, kind, name, date, close, prev_close, pct, adjust, source, status`。
+
+- `date`：该代码的数据日期（Excel 侧必须展示，用于判断是否为最新交易日）。
+- `status`：`ok`（库内有数据）/ `unknown`（库内无该代码）。
+- `meta.latest_trade_date`：覆盖快照中的全市场最新交易日；`meta.price_basis = "last_confirmed_close"`。
+- 无法解析的代码不报错，返回 `200` 并在 `meta.invalid` 中列出，便于 Excel 局部刷新。
+
+### 4.7 `GET /market/history`
+
+跨市场历史日线（A 股 / 港股 / ETF/LOF / 指数），**原币计价**，默认不复权。
+
+| 参数 | 必填 | 默认 | 说明 |
+|---|---|---|---|
+| `codes` | 是 | — | 逗号分隔，最多 50 个 |
+| `start` / `end` | 否 | — | ISO 日期（闭区间） |
+| `adjust` | 否 | `bfq` | `bfq` / `qfq` / `hfq` |
+| `limit` | 否 | 50000 | 1..50000 |
+| `format` | 否 | `json` | `json` / `csv` |
+
+返回行字段：`code, kind, market, currency, date, open, high, low, close, volume, amount, pct_change, source, adjust`。
+
+### 4.8 `GET /market/fx`
+
+人民币汇率与交叉汇率。人民币腿来自 `fx_sina`（`bp_index_quote_daily`，source=`fx_sina`），
+交叉汇率按「A/CNY ÷ B/CNY」由**同一交易日**的两条人民币腿计算。
+
+| 参数 | 必填 | 默认 | 说明 |
+|---|---|---|---|
+| `pairs` | 是 | — | 逗号分隔，如 `USD/CNY,HKD/CNY,USD/HKD,USD/SGD`（也接受 `USDCNY`），最多 20 个 |
+| `start` / `end` | 否 | — | 省略则返回最新快照；给定则为区间序列 |
+| `format` | 否 | `json` | `json` / `csv` |
+
+返回行字段：`pair, base, quote, date, price, source`。缺失人民币腿时在 `meta.missing_legs` 中列出。
+
+### 4.9 `GET /fund/nav`
+
+场外基金净值（`bp_fund_nav_daily`），与股票代码命名空间隔离（基金与股票代码可能重号）。
+
+| 参数 | 必填 | 默认 | 说明 |
+|---|---|---|---|
+| `codes` | 是 | — | 逗号分隔基金代码，最多 50 个 |
+| `start` / `end` | 否 | — | ISO 日期（闭区间） |
+| `latest` | 否 | `false` | `true` 时每只基金只返回最新一条 |
+| `limit` | 否 | 50000 | 1..50000 |
+| `format` | 否 | `json` | `json` / `csv` |
+
+返回行字段：`code, name, date, nav, acc_nav, source`。
 
 ---
 

@@ -84,3 +84,54 @@ python scripts/asset_coverage_report.py --json /tmp/coverage.json
 - 覆盖率报告：docs/data/coverage-latest.json；校验结果：docs/data/validation-latest.json；
 - 指数行情覆盖 455/521（87%），缺口为 MSCI/创业板细分/港股通细分等无公开行情源的自定义指数，非本次 A股/基金 ETL 范围；
 - 服务器增量任务保持：A 股日快照（工作日 23:35）、三口径周补齐（周日 02:30）、基金净值日增量（工作日 21:50），日志在 `/opt/balanced-portfolio/logs/etl-*.log`。
+
+## 8. 港股 / 场内基金 / 基金净值日更（2026-11-22 补齐）
+
+### 8.1 表结构
+
+| 表 | 内容 | 主键 |
+|---|---|---|
+| `bp_stock_quote_daily` | A 股**与港股**日线（港股 symbol 为 5 位码，如 `00700`），三口径 | `(symbol, trade_date, source, adjust)` |
+| `bp_etf_master` | 场内基金主数据（ETF/LOF/封闭式） | `etf_code` |
+| `bp_etf_quote_daily` | 场内基金日线，三口径 | `(etf_code, trade_date, source, adjust)` |
+| `bp_fund_nav_daily` | 场外基金净值（全市场） | `(fund_code, trade_date)` |
+
+迁移：`ddl/73_etf_quotes.sql`、`ddl/74_sgd_fx.sql`（补 SGDCNY 汇率对）。
+
+### 8.2 全量回填
+
+```bash
+# 港股（约 2,800 只，默认近 6 年；--full 才从 1990 起）
+python scripts/hk_stock_quotes.py --mode backfill --threads 8
+
+# 场内基金（先同步列表，再回填三口径）
+python scripts/etf_quotes.py --mode sync
+python scripts/etf_quotes.py --mode backfill --threads 8
+
+# 基金净值缺口补齐（rankhandler 批量榜 + lsjz 逐只补缺）
+python scripts/incremental_fund_nav.py --gap-limit 32000
+```
+
+限速：港股/ETF 走腾讯 `web.ifzq.gtimg.cn`，批量请求会触发 WAF；两个脚本内置
+**全局最小请求间隔**（`BP_HK_MIN_INTERVAL` / `BP_ETF_MIN_INTERVAL`，默认 60ms/50ms）
+与指数退避重试，失败清单写入 `logs/hk-failures-*.txt` / `logs/etf-failures-*.txt`。
+
+### 8.3 服务器增量（cron）
+
+| 时间 | 任务 | 说明 |
+|---|---|---|
+| 工作日 15:10 后任意 | `incremental_stock_quotes.py --mode daily` | A 股当日 bfq 快照 |
+| 工作日 23:40 | `hk_stock_quotes.py --mode daily` | 港股当日 bfq 快照（16:15 收盘确认后） |
+| 周日 02:40 | `hk_stock_quotes.py --mode weekly --days 40` | 港股近 40 天三口径补齐 |
+| 工作日 23:45 | `etf_quotes.py --mode daily` | 场内基金当日 bfq 快照 |
+| 周日 02:50 | `etf_quotes.py --mode weekly --days 40` | 场内基金近 40 天三口径补齐 |
+| 工作日 22:30 | `incremental_fund_nav.py` | 基金净值：rankhandler 全量榜 + lsjz 补缺 |
+| 工作日 23:55 | `refresh_asset_coverage.py` | 覆盖快照（stock/etf/fund/index） |
+
+### 8.4 口径提醒
+
+- 现价/展示口径一律 **不复权 bfq**；回测默认 hfq。
+- 腾讯 ETF `hfq` 是「单位累计净值」口径（每份 1.0 起步），与东财后复权绝对价不同，
+  **只可比收益率**；文档与前端 tooltip 已标注。
+- 港股/场内基金未做人民币折算（`bp_quote_clean` 仍只服务指数/资产池），
+  `/api/v1/market/*` 返回原币价格，汇率走 `/api/v1/market/fx`。

@@ -44,10 +44,21 @@ def main() -> int:
         funds = cur.rowcount
         cur.execute(
             "INSERT INTO bp_asset_coverage (kind, code, adjust, last_date)"
+            " SELECT 'etf', etf_code, adjust, max(trade_date) FROM bp_etf_quote_daily"
+            " GROUP BY etf_code, adjust")
+        etfs = cur.rowcount
+        cur.execute(
+            "INSERT INTO bp_asset_coverage (kind, code, adjust, last_date)"
             " SELECT 'index', symbol, 'bfq', max(trade_date) FROM bp_index_quote_daily GROUP BY symbol")
         indices = cur.rowcount
+        cur.execute(
+            "SELECT count(*) FROM bp_stock_quote_daily WHERE length(symbol) = 5")
+        hk_rows = cur.fetchone()[0]
         conn.commit()
-    print("coverage refreshed stocks=%d funds=%d indices=%d" % (stocks, funds, indices))
+    print(
+        "coverage refreshed stocks=%d (hk rows=%d) funds=%d etfs=%d indices=%d"
+        % (stocks, hk_rows, funds, etfs, indices)
+    )
     return 0
 
 
