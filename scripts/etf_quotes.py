@@ -43,6 +43,7 @@ NEWFQ_ALT = "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get"
 SOURCE_KLINE = "tencent_etf_kline"
 SOURCE_QT = "tencent_etf_qt"
 SOURCE_SINA = "sina_etf_kline"
+SOURCE_EM = "em_etf_kline"
 SOURCE_SINA_DAILY = "sina_etf_spot"
 CN = timezone(timedelta(hours=8))
 PAGE_SIZE = 800
@@ -146,6 +147,52 @@ def universe_from_db(codes: Sequence[str] | None = None) -> list[tuple[str, str]
         else:
             cur.execute("SELECT etf_code, market FROM bp_etf_master ORDER BY etf_code")
         return [(row[0], row[1] or "") for row in cur.fetchall()]
+
+
+_EM_ADJUST = {"bfq": "", "qfq": "qfq", "hfq": "hfq"}
+
+
+def em_series(code: str, adjust: str, start: date, end: date) -> list[tuple]:
+    """东财 ETF 日线（一次请求返回全量，本地机器可用；腾讯 WAF 期间的修复源）。
+
+    注意：东财成交量单位为「手」，统一换算为「股」；东财 hfq 是标准后复权价，
+    与腾讯 hfq（单位累计净值口径）绝对值不同，source 列可区分。
+    """
+    import akshare as ak
+
+    try:
+        df = ak.fund_etf_hist_em(
+            symbol=code,
+            period="daily",
+            start_date=start.strftime("%Y%m%d"),
+            end_date=end.strftime("%Y%m%d"),
+            adjust=_EM_ADJUST.get(adjust, ""),
+        )
+    except Exception:  # noqa: BLE001
+        return []
+    if df is None or len(df) == 0:
+        return []
+    out: list[tuple] = []
+    for _, row in df.iterrows():
+        try:
+            trade_date = row["日期"]
+            if hasattr(trade_date, "date"):
+                trade_date = trade_date.date()
+            if trade_date < start or trade_date > end:
+                continue
+            out.append(
+                (
+                    trade_date,
+                    float(row["开盘"]),
+                    float(row["最高"]),
+                    float(row["最低"]),
+                    float(row["收盘"]),
+                    int(float(row["成交量"]) * 100),
+                )
+            )
+        except (TypeError, ValueError, KeyError, AttributeError):
+            continue
+    return out
 
 
 def sina_kline(code: str, market: str, start: date, end: date) -> list[tuple]:
@@ -355,6 +402,9 @@ def run_backfill(codes, years: int, threads: int, force: bool, end: date, source
         if source == "sina":
             series = sina_kline(code, market, floor, end)
             rows = build_rows(conn, code, adjust, series, source=SOURCE_SINA)
+        elif source == "em":
+            series = em_series(code, adjust, floor, end)
+            rows = build_rows(conn, code, adjust, series, source=SOURCE_EM)
         else:
             if force or count == 0:
                 series.extend(fetch_range(session, code, market, adjust, end, floor))
@@ -536,7 +586,7 @@ def main() -> int:
     parser.add_argument("--adjusts", type=str, default="", help="逗号分隔，如 bfq,qfq,hfq；空=按 source 默认")
     parser.add_argument(
         "--source",
-        choices=["tencent", "sina", "auto"],
+        choices=["tencent", "sina", "em", "auto"],
         default="auto",
         help="行情源：tencent（三口径，易被 WAF）/ sina（新浪，服务器可用；仅 bfq）",
     )
