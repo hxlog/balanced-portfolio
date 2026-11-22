@@ -257,6 +257,9 @@ curl -H "Authorization: Bearer $BP_TOKEN" \
 
 返回行字段：`code, kind, market, currency, date, open, high, low, close, volume, amount, pct_change, source, adjust`。
 
+> 同一 `(code, date, adjust)` 若在库内有多个来源，按优先级去重（腾讯/中证/东财 > 其他 > 新浪），
+> 保证每行唯一；`volume` 统一为「股」，`amount` 单位「元」（K 线源可能为空）。
+
 ### 4.8 `GET /market/fx`
 
 人民币汇率与交叉汇率。人民币腿来自 `fx_sina`（`bp_index_quote_daily`，source=`fx_sina`），

@@ -56,16 +56,16 @@
 代码：`bp_api/quote_store.py`（统一代码解析与跨市场读取）、`bp_api/market_last.py`、`bp_api/market_extra.py`；
 测试：`bp_api/tests/test_market_api.py`（35 用例）；全量后端 551 passed / 3 skipped。
 
-## 5. ETL 状态（2026-11-22 17:20，后台仍在收尾）
+## 5. ETL 最终状态（2026-11-22 18:45）
 
 | 数据 | 状态 |
 |---|---|
 | A 股 5,227 只 × bfq/qfq/hfq | ✅ 日更 cron 23:35 正常，最新 2026-11-20 |
-| ETF/LOF/封闭式 1,392 只 | ✅ 列表+bfq 全量完成（新浪源，1392/1392）；qfq/hfq 历史回填进行中（腾讯 proxy 源，约 40 分钟） |
-| 港股 2,811 只 | 🔄 bfq/qfq/hfq 回填进行中（腾讯 proxy 源，实测 ~3.7 任务/秒，约 40 分钟）；持仓 5 只已齐全 |
-| 场外基金 28,072 只 | ✅ 11-20 净值 24,665 只；历史空洞补洞任务运行中 |
-| 汇率 | ✅ 10+1 对（新增 SGDCNY），最新 2026-11-20 |
-| 覆盖快照 | 回填完成后自动刷新 |
+| 港股主数据 2,811 只 | ✅ 列表完整；bfq **2,803** / qfq **2,808** / hfq **2,808**（缺口为长期停牌/退市无行情代码） |
+| ETF/LOF/封闭式 1,392 只 | ✅ 列表完整；bfq/qfq/hfq **各 1,392 = 100%**（bfq 新浪源；qfq/hfq 腾讯 K 线，成交量已统一为「股」） |
+| 场外基金 28,072 只 | ✅ 11-16~11-20 每日约 2.47~2.58 万只有净值（其余为封闭/清盘/未到披露日）；覆盖率 28,065 |
+| 汇率 | ✅ 11 对（含新增 SGDCNY），最新 2026-11-20 |
+| 覆盖快照 | ✅ stocks=28,088 / funds=28,065 / etfs=4,176 / indices=692 |
 
 cron 已安装：港股日更 23:40、ETF 23:45、港股周更周日 02:40、ETF 周更 02:50、基金净值 22:30、覆盖 23:55。
 每日行情由腾讯快照（`--source auto` 优先）写入，腾讯 K 线被 WAF 时切 `proxy.finance.qq.com` 或新浪。
@@ -78,3 +78,37 @@ cron 已安装：港股日更 23:40、ETF 23:45、港股周更周日 02:40、ETF
 3. 本机直连生产库（`BP_ETL_DB_HOST=81.71.158.239`）可跑回填；但并发受 WAN 往返限制，服务器执行更快。
 4. `bp_index_config.config_id` 是 identity 列，迁移里禁止显式赋值（74 号已修）。
 5. 家庭/个人版 Excel 的 Python in Excel 是 preview 且无网络，**不要**把它设计进取数链路。
+
+## 7. 收尾修复记录（18:00-18:45）
+
+1. **腾讯 WAF 应对**：`web.ifzq` / `ifzq` 的 `fqkline` 路径会被限流返回 HTML 501；脚本改为
+   host/端点回退（`proxy.finance.qq.com`、`newfqkline`），并给所有请求加**总耗时上限**
+   （`bp_ingest/http_deadline.py`，防 WAF 慢速滴流把线程挂死）。
+2. **ETF 成交量口径**：腾讯/东财 K 线成交量单位为「手」，统一 ×100 换算为「股」；
+   清理了 611,143 行旧口径腾讯 bfq 行（bfq 以新浪源为准，qfq/hfq 用腾讯源）。
+3. **/market/history 去重**：同一 (code, date, adjust) 多源重复按优先级保留一条
+   （腾讯/中证/东财 > 其他 > 新浪），并在 `test_market_api.py` 增加回归用例。
+4. **港股回填进程崩溃修复**：失败清单引用了未定义变量 `code`，已修复（此前会中断整批任务）。
+5. **基金净值空洞**：新增 `--fill-days` 覆盖率补洞模式，11-16~11-19 从 1.0~1.1 万只补到 2.47~2.58 万只。
+6. **supervisor 脚本**：`/tmp/etl_supervisor.sh`（服务器）按「港股 bfq → ETF qfq/hfq → 港股 qfq/hfq」
+   顺序重试，失败自动续跑（脚本本身支持断点续传）。
+
+## 8. 最终复核命令与结果
+
+```bash
+# 后端全量测试
+python -m pytest bp_api/tests -q          # 552 passed, 3 skipped
+python -m bp_ingest --help                # 冒烟通过
+
+# 生产接口
+GET /api/v1/market/last?codes=…           # 10/10 close/date/status=ok，price_basis=last_confirmed_close
+GET /api/v1/market/history?codes=159915,02020.HK&start=…   # 4 行无重复（tencent/sina 去重生效）
+GET /api/v1/market/fx?pairs=USD/CNY,HKD/CNY,USD/HKD,USD/SGD # 4 对 2026-11-20
+GET /api/v1/fund/nav?codes=000001,510300&latest=true        # 2026-11-20 nav
+```
+
+工作簿复核（Excel COM，真实文件）：
+- `持仓` 12 行现价 + 行情日期=2026-11-20，与上表 10/10 一致；
+- `Accounts!Forex` 4 对价格+日期正确；
+- `BP_行情` 10Y 国债 1.5755%（2026-11-19）+ 4 个宽基指数 PE/PB/5 年分位；
+- 4 个查询、3 张隐藏表、`RefreshOnFileOpen=True`、`FastCombine=True` 均已持久化。
