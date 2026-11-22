@@ -25,7 +25,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 sys.stdout.reconfigure(encoding="utf-8")
 
-TENCENT = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+TENCENT = "https://ifzq.gtimg.cn/appstock/app/fqkline/get"
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36"}
 LOCK = threading.Lock()
 PROGRESS = {"ok": 0, "failed": 0, "rows": 0}

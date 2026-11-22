@@ -7,7 +7,7 @@
 | 源 | 适配器 | 不复权 | 前复权 qfq | 后复权 hfq | 绝对价口径 | 历史深度 |
 |---|---|---|---|---|---|---|
 | 东财 `fund_etf_hist_em` | `etf_em` | ✅ | ✅ `adjust=qfq` | ✅ `adjust=hfq` | **价格**（如 511580≈109） | 全量 |
-| 腾讯 `web.ifzq.gtimg.cn/appstock/app/fqkline/get` | `etf_tx` | ✅ | ✅ `qfqday` | ✅ `hfqday` | **单位累计净值**（每份 1.0 起步，如 511580 hfq=1.097） | 约 3200+ 日（800/页分页） |
+| 腾讯 `ifzq.gtimg.cn/appstock/app/fqkline/get`（原 `web.ifzq` 已 WAF，2026-11-22 切换） | `etf_tx` | ✅ | ✅ `qfqday` | ✅ `hfqday` | **单位累计净值**（每份 1.0 起步，如 511580 hfq=1.097） | 约 3200+ 日（800/页分页） |
 | 新浪 `fund_etf_hist_sina` | `etf_sina` | ✅ | ❌（需 `qfq.js` 因子合成，未实现） | ❌（需 `hfq.js` 因子合成，未实现） | 价格（不复权） | 全量 |
 
 ## 指数（不复权，代码通用性）

@@ -507,7 +507,7 @@ def _fetch_tx_kline(
 ) -> pd.DataFrame:
     """直连腾讯 fqkline 拉取日 K(ETF/指数通用), 按 800/页向前分页拼全历史。
 
-    端点 https://web.ifzq.gtimg.cn/appstock/app/fqkline/get
+    端点 https://ifzq.gtimg.cn/appstock/app/fqkline/get
     param 格式: {code},day,{start},{end},{count},{fq}  (fq: qfq / hfq / 空=不复权)
     日线行: [date, open, close, high, low, volume] (无 amount/换手率)。
 
@@ -519,7 +519,7 @@ def _fetch_tx_kline(
 
     fq = {"bfq": "", "qfq": "qfq", "hfq": "hfq", "": ""}.get(adjust, adjust)
     code = _tx_market_prefix(symbol)
-    url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+    url = "https://ifzq.gtimg.cn/appstock/app/fqkline/get"
 
     frames: list[pd.DataFrame] = []
     page_end = end

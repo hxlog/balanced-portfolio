@@ -112,7 +112,7 @@ python scripts/etf_quotes.py --mode backfill --threads 8
 python scripts/incremental_fund_nav.py --gap-limit 32000
 ```
 
-限速：港股/ETF 走腾讯 `web.ifzq.gtimg.cn`，批量请求会触发 WAF；两个脚本内置
+限速：港股/ETF 走腾讯 `ifzq.gtimg.cn`（2026-11-22 起；旧 `web.ifzq` 主机会返回 HTML 501 WAF 页），批量请求仍可能触发限流；两个脚本内置
 **全局最小请求间隔**（`BP_HK_MIN_INTERVAL` / `BP_ETF_MIN_INTERVAL`，默认 60ms/50ms）
 与指数退避重试，失败清单写入 `logs/hk-failures-*.txt` / `logs/etf-failures-*.txt`。
 

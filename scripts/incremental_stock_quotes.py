@@ -26,7 +26,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36"}
 QT = "https://qt.gtimg.cn/q="
-KLINE = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+KLINE = "https://ifzq.gtimg.cn/appstock/app/fqkline/get"
 CN = timezone(timedelta(hours=8))
 
 
