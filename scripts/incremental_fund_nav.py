@@ -242,12 +242,30 @@ def fetch_lsjz(session: requests.Session, code: str, page_size: int = 30) -> lis
     return out
 
 
-def run_gap_fill(conn: psycopg.Connection, target: date, limit: int, threads: int, days: int) -> int:
-    funds = stale_funds(conn, target, limit)
-    print(f"gap fill funds={len(funds)} target={target} lookback={days}d", flush=True)
+def funds_missing_recent_days(conn: psycopg.Connection, days: int, limit: int) -> list[str]:
+    """最近 N 个交易日里任意一天缺净值的基金（覆盖率口径，含 rankhandler 未覆盖的基金）。"""
+    with conn.cursor() as cur:
+        cur.execute(
+            "WITH tdays AS ("
+            "  SELECT cal_date FROM bp_trading_calendar WHERE market = 'CN' AND is_trading"
+            "  AND cal_date <= current_date ORDER BY cal_date DESC LIMIT %s"
+            "), first_day AS (SELECT min(cal_date) AS d FROM tdays)"
+            " SELECT f.fund_code FROM bp_fund_master f"
+            " LEFT JOIN bp_fund_nav_daily n ON n.fund_code = f.fund_code"
+            "   AND n.trade_date >= (SELECT d FROM first_day)"
+            " GROUP BY f.fund_code"
+            " HAVING count(n.trade_date) < (SELECT count(*) FROM tdays)"
+            " ORDER BY f.fund_code LIMIT %s",
+            (days, limit),
+        )
+        return [row[0] for row in cur.fetchall()]
+
+
+def fill_funds(conn: psycopg.Connection, funds: list[str], target: date, threads: int, days: int) -> int:
     if not funds:
         return 0
-    cutoff = target - timedelta(days=days)
+    cutoff = target - timedelta(days=max(days, 3) * 2)
+    print(f"gap fill funds={len(funds)} target={target} lookback={days}d", flush=True)
     local = threading.local()
 
     def thread_conn() -> psycopg.Connection:
@@ -295,11 +313,22 @@ def run_gap_fill(conn: psycopg.Connection, target: date, limit: int, threads: in
     return PROGRESS["rows"]
 
 
+def run_gap_fill(conn: psycopg.Connection, target: date, limit: int, threads: int, days: int) -> int:
+    funds = stale_funds(conn, target, limit)
+    return fill_funds(conn, funds, target, threads, days)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--gap-only", action="store_true", help="只补缺，不拉 rankhandler 批量榜")
     parser.add_argument("--gap-limit", type=int, default=32000, help="单次补缺基金上限")
     parser.add_argument("--days", type=int, default=40, help="补缺回看天数")
+    parser.add_argument(
+        "--fill-days",
+        type=int,
+        default=0,
+        help="按最近 N 个交易日覆盖率补缺口（对所有基金逐只补，单次修复历史空洞用）",
+    )
     parser.add_argument("--threads", type=int, default=8)
     args = parser.parse_args()
     started = time.time()
@@ -307,7 +336,12 @@ def main() -> int:
     try:
         target = latest_trading_date(conn)
         rank_rows = 0 if args.gap_only else run_rankhandler(conn, target)
-        gap_rows = run_gap_fill(conn, target, args.gap_limit, args.threads, args.days)
+        if args.fill_days > 0:
+            funds = funds_missing_recent_days(conn, args.fill_days, args.gap_limit)
+            print(f"coverage fill days={args.fill_days} funds={len(funds)}", flush=True)
+            gap_rows = fill_funds(conn, funds, target, args.threads, args.fill_days)
+        else:
+            gap_rows = run_gap_fill(conn, target, args.gap_limit, args.threads, args.days)
     finally:
         conn.close()
     print(
