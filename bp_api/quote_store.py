@@ -310,6 +310,23 @@ def history_rows(
                     "adjust": adj,
                 }
             )
+    # 同一 (code, date, adjust) 多源重复时按来源优先级保留一条：
+    # 腾讯/中证/东财等主源优先，新浪（降级源）最后。避免 /market/history 返回重复行。
+    def _source_rank(source: Any) -> int:
+        text = str(source or "").lower()
+        if text.startswith(("tencent", "csindex", "em_", "em")):
+            return 0
+        if text.startswith("sina"):
+            return 2
+        return 1
+
+    deduped: dict[tuple[str, date, str], dict[str, Any]] = {}
+    for row in rows:
+        key = (row["code"], row["date"], str(row.get("adjust") or ""))
+        current = deduped.get(key)
+        if current is None or _source_rank(row.get("source")) < _source_rank(current.get("source")):
+            deduped[key] = row
+    rows = list(deduped.values())
     rows.sort(key=lambda row: (row["date"], row["code"]))
     return rows, truncated
 

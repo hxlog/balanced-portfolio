@@ -378,6 +378,33 @@ def test_fetch_fund_nav_latest():
 # ---------------------------------------------------------------------
 # 历史日线
 # ---------------------------------------------------------------------
+def test_history_rows_dedupes_sources_by_priority():
+    """同一 (code,date,adjust) 的腾讯/新浪重复行只保留主源一条。"""
+    from datetime import date as _date
+
+    d = _date(2026, 11, 20)
+    conn = FakeConn(
+        [
+            ("02020", d, 80.0, 82.0, 79.0, 81.05, 100, None, -1.99, "sina_hk_kline", "bfq"),
+            ("02020", d, 80.0, 82.0, 79.0, 81.05, 100, None, -1.99, "tencent_hk_kline", "bfq"),
+        ]
+    )
+    resolved = {
+        "02020": {
+            "code": "02020",
+            "kind": "stock",
+            "market": "HK",
+            "currency": "HKD",
+            "name": "安踏体育",
+            "canonical": "02020.HK",
+        }
+    }
+    rows, truncated = quote_store.history_rows(conn, resolved, adjust="bfq")
+    assert truncated is False
+    assert len(rows) == 1
+    assert rows[0]["source"] == "tencent_hk_kline"
+
+
 def test_history_endpoint(monkeypatch):
     client = _make_client(monkeypatch, market_extra)
     monkeypatch.setattr(market_extra.db, "get_conn", lambda: _fake_conn())

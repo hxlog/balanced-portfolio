@@ -223,7 +223,8 @@ def parse_kline(rows: Iterable[Sequence]) -> list[tuple]:
                     float(row[3]),   # high
                     float(row[4]),   # low
                     float(row[2]),   # close
-                    int(float(row[5])),
+                    # 腾讯 ETF kline 的 volume 单位是「手」（100 份），统一换算为「股」
+                    int(float(row[5]) * 100),
                 )
             )
         except (TypeError, ValueError, IndexError):
