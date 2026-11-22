@@ -58,7 +58,9 @@ def _throttled_get(session: requests.Session, url: str, **kwargs):
         if wait > 0:
             time.sleep(wait)
         _LAST_REQUEST[0] = time.time()
-    return session.get(url, **kwargs)
+    from bp_ingest.http_deadline import get_with_deadline
+
+    return get_with_deadline(session, url, **kwargs)
 
 
 def load_env() -> dict:
