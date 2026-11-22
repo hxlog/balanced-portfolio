@@ -127,8 +127,8 @@ def parse_kline_rows(rows: Iterable[Sequence]) -> list[tuple]:
 
 
 _CANDIDATES_BFQ = [
-    (KLINE, "hk{code},day,,{end},{count},"),
     (KLINE_ALT, "hk{code},day,,{end},{count},"),
+    (KLINE, "hk{code},day,,{end},{count},"),
 ]
 _CANDIDATES_ADJ = [
     (HK_KLINE_ALT, "hk{code},day,,,{count},{kind}"),

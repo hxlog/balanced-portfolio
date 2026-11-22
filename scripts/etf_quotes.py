@@ -234,7 +234,7 @@ def fetch_page(session, code: str, market: str, adjust: str, end: date, count: i
     kind = "" if adjust == "bfq" else adjust
     param = f"{symbol},day,,{end.isoformat()},{count},{kind}"
     key = {"bfq": "day", "qfq": "qfqday", "hfq": "hfqday"}[adjust]
-    for url in (KLINE, KLINE_ALT):
+    for url in (KLINE_ALT, KLINE):
         for attempt in range(2):
             try:
                 response = throttled_get(session, url, params={"param": param}, timeout=20)
