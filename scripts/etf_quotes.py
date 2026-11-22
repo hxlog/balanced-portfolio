@@ -38,6 +38,8 @@ UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.3
 QT = "https://qt.gtimg.cn/q="
 KLINE = "https://ifzq.gtimg.cn/appstock/app/fqkline/get"
 KLINE_ALT = "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/fqkline/get"
+NEWFQ = "https://ifzq.gtimg.cn/appstock/app/newfqkline/get"
+NEWFQ_ALT = "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get"
 SOURCE_KLINE = "tencent_etf_kline"
 SOURCE_QT = "tencent_etf_qt"
 SOURCE_SINA = "sina_etf_kline"
@@ -232,9 +234,16 @@ def parse_kline(rows: Iterable[Sequence]) -> list[tuple]:
 def fetch_page(session, code: str, market: str, adjust: str, end: date, count: int = PAGE_SIZE) -> list[tuple]:
     symbol = tx_symbol(code, market)
     kind = "" if adjust == "bfq" else adjust
+    start = end - timedelta(days=365 * 10)
     param = f"{symbol},day,,{end.isoformat()},{count},{kind}"
+    param_range = f"{symbol},day,{start.isoformat()},{end.isoformat()},{count},{kind}"
     key = {"bfq": "day", "qfq": "qfqday", "hfq": "hfqday"}[adjust]
-    for url in (KLINE_ALT, KLINE):
+    for url, param in (
+        (KLINE_ALT, param),
+        (NEWFQ_ALT, param_range),
+        (NEWFQ, param_range),
+        (KLINE, param),
+    ):
         for attempt in range(2):
             try:
                 response = throttled_get(session, url, params={"param": param}, timeout=20)
