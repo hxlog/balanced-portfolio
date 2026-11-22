@@ -39,6 +39,8 @@ QT = "https://qt.gtimg.cn/q="
 KLINE = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
 SOURCE_KLINE = "tencent_etf_kline"
 SOURCE_QT = "tencent_etf_qt"
+SOURCE_SINA = "sina_etf_kline"
+SOURCE_SINA_DAILY = "sina_etf_spot"
 CN = timezone(timedelta(hours=8))
 PAGE_SIZE = 800
 SINA_CATEGORIES = {"ETF基金": "etf", "LOF基金": "lof", "封闭式基金": "closed"}
@@ -140,6 +142,70 @@ def universe_from_db(codes: Sequence[str] | None = None) -> list[tuple[str, str]
         return [(row[0], row[1] or "") for row in cur.fetchall()]
 
 
+def sina_kline(code: str, market: str, start: date, end: date) -> list[tuple]:
+    """新浪场内基金日线（不复权，全量返回后按区间过滤）。"""
+    import akshare as ak
+
+    symbol = (market or "SH").lower() + code
+    try:
+        df = ak.fund_etf_hist_sina(symbol=symbol)
+    except Exception:  # noqa: BLE001
+        return []
+    if df is None or len(df) == 0:
+        return []
+    out: list[tuple] = []
+    for _, row in df.iterrows():
+        try:
+            trade_date = row["date"]
+            if hasattr(trade_date, "date"):
+                trade_date = trade_date.date()
+            if trade_date < start or trade_date > end:
+                continue
+            out.append(
+                (
+                    trade_date,
+                    float(row["open"]),
+                    float(row["high"]),
+                    float(row["low"]),
+                    float(row["close"]),
+                    int(float(row["volume"])) if row.get("volume") == row.get("volume") else 0,
+                )
+            )
+        except (TypeError, ValueError, KeyError, AttributeError):
+            continue
+    return out
+
+
+def sina_spot_map() -> dict[str, dict]:
+    """新浪基金行情分类快照：code -> {close, prev_close, open, high, low, volume, amount}。"""
+    import akshare as ak
+
+    out: dict[str, dict] = {}
+    for category_name in SINA_CATEGORIES:
+        try:
+            df = ak.fund_etf_category_sina(symbol=category_name)
+        except Exception:  # noqa: BLE001
+            continue
+        for _, row in df.iterrows():
+            raw = str(row.get("代码") or "").strip().lower()
+            if len(raw) < 8 or raw[:2] not in ("sh", "sz"):
+                continue
+            code = raw[2:]
+            try:
+                out[code] = {
+                    "close": float(row["最新价"]),
+                    "prev_close": float(row["昨收"]) if row.get("昨收") == row.get("昨收") else None,
+                    "open": float(row["今开"]) if row.get("今开") == row.get("今开") else 0.0,
+                    "high": float(row["最高"]) if row.get("最高") == row.get("最高") else 0.0,
+                    "low": float(row["最低"]) if row.get("最低") == row.get("最低") else 0.0,
+                    "volume": int(float(row["成交量"])) if row.get("成交量") == row.get("成交量") else 0,
+                    "amount": float(row["成交额"]) if row.get("成交额") == row.get("成交额") else None,
+                }
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
 def parse_kline(rows: Iterable[Sequence]) -> list[tuple]:
     out = []
     for row in rows:
@@ -229,7 +295,7 @@ def existing_range(conn, code: str, adjust: str) -> tuple[date | None, date | No
     return (row[0], row[1], int(row[2] or 0)) if row else (None, None, 0)
 
 
-def build_rows(conn, code: str, adjust: str, series: list[tuple]) -> list[tuple]:
+def build_rows(conn, code: str, adjust: str, series: list[tuple], source: str = SOURCE_KLINE) -> list[tuple]:
     if not series:
         return []
     dedup = {row[0]: row for row in series}
@@ -239,17 +305,17 @@ def build_rows(conn, code: str, adjust: str, series: list[tuple]) -> list[tuple]
     for trade_date, open_, high, low, close_, volume in ordered:
         pct = (close_ / prev - 1.0) * 100.0 if prev else None
         prev = close_
-        out.append((code, trade_date, SOURCE_KLINE, adjust, open_, high, low, close_, volume, pct))
+        out.append((code, trade_date, source, adjust, open_, high, low, close_, volume, pct))
     return out
 
 
-def run_backfill(codes, years: int, threads: int, force: bool, end: date) -> int:
+def run_backfill(codes, years: int, threads: int, force: bool, end: date, source: str = "tencent") -> int:
     universe = universe_from_db(codes)
     if not universe:
         print("bp_etf_master 为空：先运行 --mode sync", flush=True)
         return 1
     floor = end - timedelta(days=365 * years)
-    adjusts = ["bfq", "qfq", "hfq"]
+    adjusts = ["bfq", "qfq", "hfq"] if source == "tencent" else ["bfq"]
     tasks = [(code, market, adjust) for code, market in universe for adjust in adjusts]
     print(f"backfill etf={len(universe)} tasks={len(tasks)} end={end} floor={floor}", flush=True)
 
@@ -268,15 +334,19 @@ def run_backfill(codes, years: int, threads: int, force: bool, end: date) -> int
         session.headers.update(UA)
         min_d, max_d, count = existing_range(conn, code, adjust)
         series: list[tuple] = []
-        if force or count == 0:
-            series.extend(fetch_range(session, code, market, adjust, end, floor))
+        if source == "sina":
+            series = sina_kline(code, market, floor, end)
+            rows = build_rows(conn, code, adjust, series, source=SOURCE_SINA)
         else:
-            series.extend(fetch_range(session, code, market, adjust, end, floor, stop_at=max_d))
-            if min_d is not None and min_d > floor:
-                series.extend(
-                    fetch_range(session, code, market, adjust, min_d - timedelta(days=1), floor)
-                )
-        rows = build_rows(conn, code, adjust, series)
+            if force or count == 0:
+                series.extend(fetch_range(session, code, market, adjust, end, floor))
+            else:
+                series.extend(fetch_range(session, code, market, adjust, end, floor, stop_at=max_d))
+                if min_d is not None and min_d > floor:
+                    series.extend(
+                        fetch_range(session, code, market, adjust, min_d - timedelta(days=1), floor)
+                    )
+            rows = build_rows(conn, code, adjust, series)
         if not rows:
             raise RuntimeError("empty")
         with conn.cursor() as cur:
@@ -314,13 +384,43 @@ def run_backfill(codes, years: int, threads: int, force: bool, end: date) -> int
     return 0 if PROGRESS["failed"] == 0 else 1
 
 
-def run_daily() -> int:
+def run_daily(source: str = "tencent") -> int:
     now = datetime.now(CN)
     if now.hour < 15 or (now.hour == 15 and now.minute < 10):
         print("skip: 收盘确认前（15:10 后运行）")
         return 0
     today = now.date()
     universe = universe_from_db()
+    if source == "sina":
+        spot = sina_spot_map()
+        rows = []
+        for code, _market in universe:
+            item = spot.get(code)
+            if not item or item["close"] is None or item["close"] <= 0:
+                continue
+            prev = item.get("prev_close")
+            pct = ((item["close"] / prev - 1.0) * 100.0) if prev else None
+            rows.append(
+                (
+                    code,
+                    today,
+                    SOURCE_SINA_DAILY,
+                    "bfq",
+                    item["open"],
+                    item["high"],
+                    item["low"],
+                    item["close"],
+                    item["volume"],
+                    item["amount"],
+                    pct,
+                )
+            )
+        if rows:
+            with db_conn() as conn, conn.cursor() as cur:
+                cur.executemany(INSERT_SQL, rows)
+                conn.commit()
+        print(f"daily etf sina rows={len(rows)} date={today} universe={len(universe)}")
+        return 0
     session = requests.Session()
     session.headers.update(UA)
     rows: list[tuple] = []
@@ -367,20 +467,25 @@ def run_daily() -> int:
     return 0
 
 
-def run_weekly(days: int, threads: int) -> int:
+def run_weekly(days: int, threads: int, source: str = "tencent") -> int:
     end = datetime.now(CN).date()
     start = end - timedelta(days=days)
     universe = universe_from_db()
-    tasks = [(code, market, adjust) for code, market in universe for adjust in ("bfq", "qfq", "hfq")]
+    adjusts = ("bfq", "qfq", "hfq") if source == "tencent" else ("bfq",)
+    tasks = [(code, market, adjust) for code, market in universe for adjust in adjusts]
     print(f"weekly etf tasks={len(tasks)} window={start}..{end}", flush=True)
 
     def worker(code: str, market: str, adjust: str):
         conn = db_conn()
         try:
-            session = requests.Session()
-            session.headers.update(UA)
-            series = fetch_range(session, code, market, adjust, end, start, stop_at=start)
-            rows = build_rows(conn, code, adjust, series)
+            if source == "sina":
+                series = sina_kline(code, market, start, end)
+                rows = build_rows(conn, code, adjust, series, source=SOURCE_SINA)
+            else:
+                session = requests.Session()
+                session.headers.update(UA)
+                series = fetch_range(session, code, market, adjust, end, start, stop_at=start)
+                rows = build_rows(conn, code, adjust, series)
             if rows:
                 with conn.cursor() as cur:
                     cur.executemany(INSERT_SQL, rows)
@@ -408,6 +513,12 @@ def main() -> int:
     parser.add_argument("--threads", type=int, default=8)
     parser.add_argument("--end", type=str, default="")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--source",
+        choices=["tencent", "sina"],
+        default="tencent",
+        help="行情源：tencent（三口径，易被 WAF）/ sina（新浪，服务器可用；仅 bfq）",
+    )
     args = parser.parse_args()
     codes = [item.strip() for item in args.codes.split(",") if item.strip()]
     end = date.fromisoformat(args.end) if args.end else datetime.now(CN).date()
@@ -417,10 +528,10 @@ def main() -> int:
         print(f"etf master synced: {total}")
         return 0
     if args.mode == "daily":
-        return run_daily()
+        return run_daily(args.source)
     if args.mode == "weekly":
-        return run_weekly(args.days, args.threads)
-    return run_backfill(codes, args.years, args.threads, args.force, end)
+        return run_weekly(args.days, args.threads, args.source)
+    return run_backfill(codes, args.years, args.threads, args.force, end, args.source)
 
 
 if __name__ == "__main__":

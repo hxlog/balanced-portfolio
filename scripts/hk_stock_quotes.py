@@ -36,6 +36,7 @@ KLINE = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
 HK_KLINE = "https://web.ifzq.gtimg.cn/appstock/app/hkfqkline/get"
 SOURCE_KLINE = "tencent_hk_kline"
 SOURCE_QT = "tencent_hk_qt"
+SOURCE_SINA = "sina_hk_kline"
 CN = timezone(timedelta(hours=8))
 PAGE_SIZE = 1000
 LOCK = threading.Lock()
@@ -170,6 +171,39 @@ def fetch_range(
     return [rows[key] for key in sorted(rows)]
 
 
+def sina_series(code: str, adjust: str, start: date, end: date) -> list[tuple]:
+    """新浪港股日线（akshare 本地计算 qfq/hfq），返回 (date, open, high, low, close, volume)。"""
+    import akshare as ak
+
+    try:
+        df = ak.stock_hk_daily(symbol=code, adjust=("" if adjust == "bfq" else adjust))
+    except Exception:  # noqa: BLE001
+        return []
+    if df is None or len(df) == 0:
+        return []
+    out: list[tuple] = []
+    for _, row in df.iterrows():
+        try:
+            trade_date = row["date"]
+            if hasattr(trade_date, "date"):
+                trade_date = trade_date.date()
+            if trade_date < start or trade_date > end:
+                continue
+            out.append(
+                (
+                    trade_date,
+                    float(row["open"]),
+                    float(row["high"]),
+                    float(row["low"]),
+                    float(row["close"]),
+                    int(float(row["volume"])) if row.get("volume") == row.get("volume") else 0,
+                )
+            )
+        except (TypeError, ValueError, KeyError, AttributeError):
+            continue
+    return out
+
+
 def existing_range(conn: psycopg.Connection, code: str, adjust: str) -> tuple[date | None, date | None, int]:
     with conn.cursor() as cur:
         cur.execute(
@@ -207,6 +241,7 @@ def build_rows(
     code: str,
     adjust: str,
     series: list[tuple],
+    source: str = SOURCE_KLINE,
 ) -> list[tuple]:
     if not series:
         return []
@@ -218,11 +253,11 @@ def build_rows(
         if prev is not None and prev > 0:
             pct = (close_ / prev - 1.0) * 100.0
         prev = close_
-        out.append((code, trade_date, SOURCE_KLINE, adjust, open_, high, low, close_, volume, pct))
+        out.append((code, trade_date, source, adjust, open_, high, low, close_, volume, pct))
     return out
 
 
-def run_backfill(codes, adjusts, threads: int, force: bool, end: date, floor: date) -> int:
+def run_backfill(codes, adjusts, threads: int, force: bool, end: date, floor: date, source: str = "tencent") -> int:
     universe = hk_universe(codes)
     tasks = [(code, adjust) for code in universe for adjust in adjusts]
     print(f"backfill universe={len(universe)} tasks={len(tasks)} adjusts={adjusts} end={end} floor={floor}", flush=True)
@@ -242,18 +277,22 @@ def run_backfill(codes, adjusts, threads: int, force: bool, end: date, floor: da
         session.headers.update(UA)
         min_d, max_d, count = existing_range(conn, code, adjust)
         series: list[tuple] = []
-        if force or count == 0:
-            series.extend(fetch_range(session, code, adjust, end, floor=floor))
+        if source == "sina":
+            series = sina_series(code, adjust, floor, end)
+            rows = build_rows(conn, code, adjust, series, source=SOURCE_SINA)
         else:
-            # 先补最近端（复权因子/最新收盘）
-            series.extend(fetch_range(session, code, adjust, end, stop_at=max_d, floor=floor))
-            # 再补更早的历史（只回溯到 floor，避免为 1986 年起的老股翻几十页触发 WAF）
-            if min_d is not None and min_d > floor:
-                older = fetch_range(
-                    session, code, adjust, min_d - timedelta(days=1), floor=floor
-                )
-                series.extend(older)
-        rows = build_rows(conn, code, adjust, series)
+            if force or count == 0:
+                series.extend(fetch_range(session, code, adjust, end, floor=floor))
+            else:
+                # 先补最近端（复权因子/最新收盘）
+                series.extend(fetch_range(session, code, adjust, end, stop_at=max_d, floor=floor))
+                # 再补更早的历史（只回溯到 floor，避免为 1986 年起的老股翻几十页触发 WAF）
+                if min_d is not None and min_d > floor:
+                    older = fetch_range(
+                        session, code, adjust, min_d - timedelta(days=1), floor=floor
+                    )
+                    series.extend(older)
+            rows = build_rows(conn, code, adjust, series)
         if not rows:
             raise RuntimeError("empty")
         with conn.cursor() as cur:
@@ -363,7 +402,39 @@ def run_daily(threads: int = 4) -> int:
     return 0
 
 
-def run_weekly(days: int, threads: int) -> int:
+def run_daily_sina(threads: int = 6) -> int:
+    """新浪口径港股日更：逐只抓全量日线后只写近 7 天 bfq（服务器可绕过腾讯 WAF）。"""
+    today = datetime.now(CN).date()
+    stocks = hk_universe()
+    start = today - timedelta(days=10)
+    written = {"n": 0}
+
+    def worker(code: str) -> None:
+        try:
+            conn = db_conn()
+            try:
+                series = sina_series(code, "bfq", start, today)
+                rows = [row for row in build_rows(conn, code, "bfq", series, source=SOURCE_SINA) if row[1] >= start]
+                if rows:
+                    with conn.cursor() as cur:
+                        cur.executemany(INSERT_SQL, rows)
+                    conn.commit()
+                    with LOCK:
+                        written["n"] += len(rows)
+            finally:
+                conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    with ThreadPoolExecutor(max_workers=threads) as pool:
+        futures = [pool.submit(worker, code) for code in stocks]
+        for future in as_completed(futures):
+            future.result()
+    print(f"daily hk sina rows={written['n']} universe={len(stocks)} date={today}")
+    return 0
+
+
+def run_weekly(days: int, threads: int, source: str = "tencent") -> int:
     end = datetime.now(CN).date()
     start = end - timedelta(days=days)
     stocks = hk_universe()
@@ -384,16 +455,20 @@ def run_weekly(days: int, threads: int) -> int:
         session = requests.Session()
         session.headers.update(UA)
         try:
-            series = fetch_range(
-                session,
-                code,
-                adjust,
-                end,
-                stop_at=start,
-                count=max(80, days * 2),
-                floor=start,
-            )
-            rows = build_rows(conn, code, adjust, series)
+            if source == "sina":
+                series = sina_series(code, adjust, start, end)
+                rows = build_rows(conn, code, adjust, series, source=SOURCE_SINA)
+            else:
+                series = fetch_range(
+                    session,
+                    code,
+                    adjust,
+                    end,
+                    stop_at=start,
+                    count=max(80, days * 2),
+                    floor=start,
+                )
+                rows = build_rows(conn, code, adjust, series)
             if rows:
                 with conn.cursor() as cur:
                     cur.executemany(INSERT_SQL, rows)
@@ -423,16 +498,22 @@ def main() -> int:
     parser.add_argument("--years", type=int, default=6, help="回填历史年数（默认 6 年，对齐 A 股口径）")
     parser.add_argument("--full", action="store_true", help="从 1990 年起全量回填（慢，易触发 WAF）")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--source",
+        choices=["tencent", "sina"],
+        default="tencent",
+        help="行情源：tencent（三口径 kline，易被 WAF）/ sina（新浪，服务器可用）",
+    )
     args = parser.parse_args()
     codes = [item.strip().zfill(5) for item in args.codes.split(",") if item.strip()]
     adjusts = [item.strip() for item in args.adjusts.split(",") if item.strip()]
     end = date.fromisoformat(args.end) if args.end else datetime.now(CN).date()
     floor = date(1990, 1, 1) if args.full else end - timedelta(days=365 * args.years)
     if args.mode == "daily":
-        return run_daily(args.threads)
+        return run_daily_sina(args.threads) if args.source == "sina" else run_daily(args.threads)
     if args.mode == "weekly":
-        return run_weekly(args.days, args.threads)
-    return run_backfill(codes, adjusts, args.threads, args.force, end, floor)
+        return run_weekly(args.days, args.threads, args.source)
+    return run_backfill(codes, adjusts, args.threads, args.force, end, floor, args.source)
 
 
 if __name__ == "__main__":
