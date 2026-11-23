@@ -23,7 +23,9 @@ def load_env() -> dict:
     for line in (ROOT / ".env").read_text(encoding="utf-8").splitlines():
         m = re.match(r"^([A-Z0-9_]+)=(.*)$", line.strip())
         if m:
-            env[m.group(1)] = m.group(2).strip().strip('"')
+            # 行尾注释（"值   # 说明"）必须剥离，否则密码/用户名会带上注释
+            value = re.split(r"\s+#", m.group(2), maxsplit=1)[0].strip()
+            env[m.group(1)] = value.strip('"').strip("'")
     return env
 
 
@@ -55,6 +57,8 @@ def apply_sql(cur, path: pathlib.Path, label: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--keep", action="store_true")
+    parser.add_argument("--from", dest="from_num", type=int, default=51,
+                        help="从该编号迁移起验证（默认 51；只验证新迁移可传 75）")
     args = parser.parse_args()
     env = load_env()
 
@@ -65,9 +69,12 @@ def main() -> int:
         print("== 基线 ==")
         apply_sql(cur, ROOT / "ddl" / "schema.sql", "schema.sql")
 
-        migrations = sorted((ROOT / "ddl").glob("5[0-9]_*.sql"))
+        migrations = sorted(
+            p for p in (ROOT / "ddl").glob("[5-9][0-9]_*.sql")
+            if int(p.name.split("_", 1)[0]) >= args.from_num
+        )
         if not migrations:
-            print("  (无 5x 迁移)")
+            print("  (无可验证迁移)")
         for mig in migrations:
             print(f"== {mig.name} (x3 幂等) ==")
             for i in (1, 2, 3):

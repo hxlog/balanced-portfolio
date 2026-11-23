@@ -23,7 +23,8 @@ def load_env() -> dict:
     for line in (ROOT / ".env").read_text(encoding="utf-8").splitlines():
         m = re.match(r"^([A-Z0-9_]+)=(.*)$", line)
         if m:
-            env[m.group(1)] = m.group(2).strip().strip('"')
+            value = re.split(r"\s+#", m.group(2), maxsplit=1)[0].strip()
+            env[m.group(1)] = value.strip('"').strip("'")
     return env
 
 
