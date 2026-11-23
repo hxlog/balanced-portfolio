@@ -201,7 +201,8 @@ REGISTRY: dict[str, DatasetSpec] = {
         universe="hk_stock_master", coverage_kind="stock", close_confirm="HK",
         schedule_start={"bfq": time(16, 15), "hfq": time(16, 15)},
         target_time={"bfq": time(16, 30), "hfq": time(17, 30)},
-        escalate_after=timedelta(hours=2), coverage_min=0.99, max_workers=6,
+        # 港股可交易子集约占主数据 97%（长期停牌/退市代码无行情）；无限追赶继续补缺
+        escalate_after=timedelta(hours=2), coverage_min=0.97, max_workers=6,
     ),
     "etf": DatasetSpec(
         name="etf", table="bp_etf_quote_daily", key_column="etf_code",
@@ -211,7 +212,8 @@ REGISTRY: dict[str, DatasetSpec] = {
         universe="etf_master", coverage_kind="etf", close_confirm="A",
         schedule_start={"bfq": time(15, 15), "hfq": time(15, 20)},
         target_time={"bfq": time(15, 30), "hfq": time(16, 30)},
-        escalate_after=timedelta(hours=2), coverage_min=0.995, max_workers=6,
+        # ETF 主数据含长期停牌/清盘代码（实测可交易 ~96.7%）；阈值按可交易子集
+        escalate_after=timedelta(hours=2), coverage_min=0.96, max_workers=6,
     ),
     "legacy_index": DatasetSpec(
         name="legacy_index", table="bp_index_quote_daily", key_column="symbol",
@@ -231,7 +233,8 @@ REGISTRY: dict[str, DatasetSpec] = {
         universe="fund_master", coverage_kind="fund", close_confirm="FUND",
         schedule_start={"nav": time(20, 0)},
         target_time={"nav": _MID},
-        escalate_after=timedelta(hours=1), coverage_min=0.99, max_workers=6,
+        # 场外基金可发布子集约占主数据 90%（货币/封闭/晚披露）；覆盖率分母由 runner 校准
+        escalate_after=timedelta(hours=1), coverage_min=0.90, max_workers=6,
     ),
 }
 
