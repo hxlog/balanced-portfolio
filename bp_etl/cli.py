@@ -96,10 +96,14 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_service(_args: argparse.Namespace) -> int:
+    import time
+
     config = load_etl_config()
     if config.mode == "off":
-        print("BP_ETL_MODE=off：不启动（设置 on/shadow 后再启动）")
-        return 0
+        # 常驻空转：避免 PM2 autorestart 因 exit 0 反复拉起；改 env 后 pm2 restart 即生效
+        print("BP_ETL_MODE=off：ETL 未启用（常驻等待；修改 .env 后 pm2 restart bp-etl --update-env）", flush=True)
+        while True:
+            time.sleep(3600)
     Orchestrator(config, runners=get_runners()).service()
     return 0
 

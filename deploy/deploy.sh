@@ -32,7 +32,7 @@ if [[ "${BP_SKIP_PM2_STOP:-0}" == "1" ]]; then
   echo "==> 跳过 PM2 stop (BP_SKIP_PM2_STOP=1)"
 else
   echo "==> PM2 stop 所有进程 (释放资源供构建)"
-  pm2 stop bp-api bp-web bp-ingest bp-worker bp-beat 2>/dev/null || true
+  pm2 stop bp-api bp-web bp-ingest bp-worker bp-beat bp-etl 2>/dev/null || true
 fi
 
 echo "==> Python 依赖"
