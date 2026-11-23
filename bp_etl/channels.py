@@ -168,6 +168,11 @@ class Channel:
         self.metrics.record(ok=False, latency_s=latency_s)
 
     # -- request ------------------------------------------------------
+    def throttle(self) -> float:
+        """仅按源全局限速获取令牌（供 akshare 等自建 HTTP 的适配器复用限速）。"""
+        self._check_ban()
+        return self._bucket.acquire()
+
     def get(self, url: str, *, timeout: float | None = None, **kw: Any) -> Any:
         self._check_ban()
         self._bucket.acquire()
