@@ -9,6 +9,9 @@ import bp_etl.adapters.eastmoney as em
 import bp_etl.adapters.sina as sina
 import bp_etl.adapters.tencent as tencent
 from bp_etl.adapters.base import Bar, NavRow
+import bp_etl.datasets.a_stock as a_stock_mod
+import bp_etl.datasets.etf as etf_mod
+import bp_etl.datasets.hk_stock as hk_mod
 from bp_etl.datasets import get_runners
 from bp_etl.datasets.a_stock import AStockRunner
 from bp_etl.datasets.etf import ETFRunner
@@ -74,6 +77,13 @@ class FakeManager:
     def spawn(self, source: str) -> FakeChannel:
         self.spawned.append(source)
         return FakeChannel(self.kind)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_existing_symbols(monkeypatch: pytest.MonkeyPatch) -> None:
+    """runner 的「跳过已落库标的」会查真实库；测试统一打桩为空集。"""
+    for module in (a_stock_mod, hk_mod, etf_mod):
+        monkeypatch.setattr(module, "existing_symbols", lambda *a, **kw: set())
 
 
 def _bar(symbol: str, d: date = D2, close: float = 10.0, adjust: str = "bfq") -> Bar:

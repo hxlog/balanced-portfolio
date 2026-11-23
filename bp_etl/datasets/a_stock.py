@@ -7,6 +7,7 @@ from typing import Any, Sequence
 from bp_etl import adapters
 from bp_etl.adapters.base import Bar
 from bp_etl.channels import ChannelManager
+from bp_etl.datasets._common import existing_symbols
 from bp_etl.registry import REGISTRY
 
 UNIVERSE_SQL = (
@@ -42,8 +43,13 @@ class AStockRunner:
             return []
         sina_channel = channels.get("sina_kline")
         out: list[Bar] = []
+        done = existing_symbols(
+            "bp_stock_quote_daily", "symbol", "sina_kline", "hfq", trade_date
+        )
         by_symbol = {bar.symbol: bar for bar in today_bfq}
         for code in codes:
+            if code in done:
+                continue
             bar = by_symbol.get(code)
             if bar is None:
                 continue

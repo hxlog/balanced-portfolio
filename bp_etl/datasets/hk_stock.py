@@ -8,7 +8,7 @@ from typing import Any, Sequence
 from bp_etl import adapters
 from bp_etl.adapters.base import Bar
 from bp_etl.channels import ChannelManager
-from bp_etl.datasets._common import fetch_parallel, missing_symbols
+from bp_etl.datasets._common import existing_symbols, fetch_parallel, missing_symbols
 from bp_etl.registry import REGISTRY
 
 logger = logging.getLogger(__name__)
@@ -35,14 +35,22 @@ class HKStockRunner:
         channels: ChannelManager,
     ) -> list[Bar]:
         if adjust == "bfq":
+            done = existing_symbols(
+                "bp_stock_quote_daily", "symbol", "sina_hk_kline", "bfq", trade_date
+            )
+            pending = [code for code in codes if code not in done]
             return fetch_parallel(
-                codes, channels, "sina_hk_kline",
+                pending, channels, "sina_hk_kline",
                 lambda ch, code: adapters.sina.fetch_hk_bfq(ch, code, trade_date, trade_date),
             )
         if adjust != "hfq":
             raise ValueError(f"不支持的 adjust: {adjust}")
+        done = existing_symbols(
+            "bp_stock_quote_daily", "symbol", "tencent_hk_kline", "hfq", trade_date
+        )
+        pending = [code for code in codes if code not in done]
         rows = fetch_parallel(
-            codes, channels, "tencent_hk_kline",
+            pending, channels, "tencent_hk_kline",
             lambda ch, code: adapters.tencent.fetch_kline(
                 ch, code, "hfq", trade_date, trade_date, market="HK", count=30,
             ),
