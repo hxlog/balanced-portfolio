@@ -427,3 +427,19 @@ cd /opt/balanced-portfolio && set -a && . ./.env && set +a
 - **管理页**：`/admin/market-data`（仅超级管理员）：数据集就绪/覆盖率/backlog/源健康/质量问题；
 - **重建**：夜窗 `.venv/bin/python -m bp_etl rebuild --dataset all`（A 股 hfq 单锚重建 + 港股/ETF 补缺）。
 
+
+## 资源守护与事故复盘（2026-11-24）
+
+**事故**：在 2 vCPU / 3.7GB 生产机上并行跑 A 股 hfq 重建 + ETF 全量 + 临时 L3 抽样（import akshare），
+内存耗尽导致 PostgreSQL 异常终止、API 不可用、SSH 握手失败；需控制台强制重启恢复。
+
+**硬约束**（已代码化 / 必须遵守）：
+
+- 任意时刻**最多 1 个重 ETL 进程**：`bp_etl.guard.heavy_lock` 全局 fcntl 锁，`run/rebuild` 自动获取；
+- 重活前检查 `MemAvailable ≥ BP_ETL_MIN_MEM_MB`（默认 700MB）：`require_memory()`，不足直接拒绝；
+- `bp-etl` 常驻进程每轮检查内存，< `BP_ETL_MIN_MEM_MB`（service 默认 500MB）时暂停本轮；
+- **禁止**在服务器上临时 `import akshare` 做验证/抽样（V8+pandas 内存峰值高），L3 清洗已改为 DB 日历 + 按需；
+- 事故后恢复：`bash scripts/recover_after_reboot.sh`（清遗留 → 起 PG/PM2 → 串行补数 → 起 bp-etl → e2e）。
+
+**诊断命令**：`free -m; uptime; systemctl status postgresql; pm2 status; dmesg | grep -i oom | tail`。
+

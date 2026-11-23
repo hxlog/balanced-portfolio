@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
+import time
 
 from bp_etl.config import load_etl_config
 from bp_etl.datasets import get_runners
@@ -70,7 +72,10 @@ def _wave_dict(result: object) -> dict:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    from bp_etl.guard import heavy_lock, require_memory
+
     config = load_etl_config()
+    require_memory()
     orchestrator = Orchestrator(config, runners=get_runners(config))
     runner = orchestrator.runners[args.dataset]
     keys = ("nav",) if runner.spec.value_kind == "nav" else runner.spec.adjust_modes
@@ -81,14 +86,15 @@ def cmd_run(args: argparse.Namespace) -> int:
 
         trade_date = date.fromisoformat(args.date)
     results = []
-    for adjust in adjusts:
-        for wave in range(1, args.waves + 1):
-            outcome = orchestrator.run_wave(
-                args.dataset, adjust, trade_date=trade_date, wave=wave, force=args.force
-            )
-            results.append(_wave_dict(outcome))
-            if outcome.ok or outcome.skipped:
-                break
+    with heavy_lock():
+        for adjust in adjusts:
+            for wave in range(1, args.waves + 1):
+                outcome = orchestrator.run_wave(
+                    args.dataset, adjust, trade_date=trade_date, wave=wave, force=args.force
+                )
+                results.append(_wave_dict(outcome))
+                if outcome.ok or outcome.skipped:
+                    break
     if args.json:
         print(json.dumps(results, ensure_ascii=False, indent=1))
     else:
@@ -98,7 +104,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_service(_args: argparse.Namespace) -> int:
-    import time
+    from bp_etl.guard import mem_available_mb
 
     config = load_etl_config()
     if config.mode == "off":
@@ -106,8 +112,22 @@ def cmd_service(_args: argparse.Namespace) -> int:
         print("BP_ETL_MODE=off：ETL 未启用（常驻等待；修改 .env 后 pm2 restart bp-etl --update-env）", flush=True)
         while True:
             time.sleep(3600)
-    Orchestrator(config, runners=get_runners(config)).service()
-    return 0
+    orch = Orchestrator(config, runners=get_runners(config))
+    memory_min = int(os.getenv("BP_ETL_MIN_MEM_MB", "500") or "500")
+    while True:
+        available = mem_available_mb()
+        if available is not None and available < memory_min:
+            logging.getLogger(__name__).warning(
+                "可用内存 %sMB < %sMB，ETL 暂停本轮（等待重活结束）", available, memory_min
+            )
+            time.sleep(120)
+            continue
+        try:
+            orch.run_due()
+            orch.run_backlog()
+        except Exception:  # noqa: BLE001 - 单轮失败不终止常驻
+            logging.getLogger(__name__).exception("ETL 轮次异常（继续下一轮）")
+        time.sleep(60)
 
 
 def cmd_health(args: argparse.Namespace) -> int:
@@ -147,17 +167,20 @@ def cmd_health(args: argparse.Namespace) -> int:
 def cmd_rebuild(args: argparse.Namespace) -> int:
     from datetime import date
 
+    from bp_etl.guard import heavy_lock, require_memory
     from bp_etl.rebuild import rebuild
 
     config = load_etl_config()
-    reports = rebuild(
+    require_memory()
+    with heavy_lock():
+        reports = rebuild(
         config,
         args.dataset,
         since=date.fromisoformat(args.since),
-        limit=args.limit or None,
-        force=args.force,
-        mode=args.mode,
-    )
+            limit=args.limit or None,
+            force=args.force,
+            mode=args.mode,
+        )
     if args.json:
         print(json.dumps(reports, ensure_ascii=False, indent=1))
     else:
