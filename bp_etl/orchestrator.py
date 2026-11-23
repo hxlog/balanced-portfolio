@@ -103,7 +103,11 @@ class Orchestrator:
         write_enabled: bool | None = None,
     ) -> None:
         self.config = config
-        self.runners: dict[str, DatasetRunner] = dict(runners or {})
+        if runners is None:
+            from bp_etl.datasets import get_runners  # noqa: PLC0415
+
+            runners = get_runners(config)
+        self.runners: dict[str, DatasetRunner] = dict(runners)
         self.channels = channel_manager or ChannelManager(config)
         self._conn_factory = conn_factory or default_conn_factory(config)
         self._now_fn = now_fn or _now_cn

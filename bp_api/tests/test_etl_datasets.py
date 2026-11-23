@@ -83,7 +83,7 @@ def _bar(symbol: str, d: date = D2, close: float = 10.0, adjust: str = "bfq") ->
 
 def test_get_runners_registers_four_datasets() -> None:
     runners = get_runners()
-    assert set(runners) == {"a_stock", "hk_stock", "etf", "fund_nav"}
+    assert set(runners) == {"a_stock", "hk_stock", "etf", "fund_nav", "legacy_index"}
     for runner in runners.values():
         assert runner.spec.name in runners
 

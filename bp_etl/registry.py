@@ -166,6 +166,13 @@ SOURCES: dict[str, SourceSpec] = {
         adjust_support=("nav",), rate_per_sec=2.0, concurrency=2,
         dataset_kinds=("fund_nav",),
     ),
+    "legacy_multi": SourceSpec(
+        # 旧行情链（指数/商品/债券/汇率/旧 ETF/个股配置）：由 bp_ingest 适配器多源+降级链负责，
+        # 本 source 仅作为 registry 锚定占位；实际行 source 由 OLD 配置源的名称写入。
+        name="legacy_multi", adapter="legacy.multi", channel="direct",
+        adjust_support=("bfq", "hfq"), rate_per_sec=8.0, concurrency=4,
+        dataset_kinds=("legacy_index",),
+    ),
     "em_lsjz": SourceSpec(
         name="em_lsjz", adapter="eastmoney.fund_lsjz", channel="direct",
         adjust_support=("nav",), rate_per_sec=12.0, concurrency=6,
@@ -205,6 +212,16 @@ REGISTRY: dict[str, DatasetSpec] = {
         schedule_start={"bfq": time(15, 15), "hfq": time(15, 20)},
         target_time={"bfq": time(15, 30), "hfq": time(16, 30)},
         escalate_after=timedelta(hours=2), coverage_min=0.995, max_workers=6,
+    ),
+    "legacy_index": DatasetSpec(
+        name="legacy_index", table="bp_index_quote_daily", key_column="symbol",
+        value_kind="bar", adjust_modes=("bfq", "hfq"),
+        anchor={"bfq": "legacy_multi", "hfq": "legacy_multi"},
+        fallback={"bfq": (), "hfq": ()},
+        universe="legacy_config", coverage_kind="index", close_confirm="A",
+        schedule_start={"bfq": time(16, 10), "hfq": time(16, 10)},
+        target_time={"bfq": time(16, 40), "hfq": time(16, 40)},
+        escalate_after=timedelta(hours=2), coverage_min=0.90, max_workers=4,
     ),
     "fund_nav": DatasetSpec(
         name="fund_nav", table="bp_fund_nav_daily", key_column="fund_code",

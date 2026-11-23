@@ -71,7 +71,7 @@ def _wave_dict(result: object) -> dict:
 
 def cmd_run(args: argparse.Namespace) -> int:
     config = load_etl_config()
-    orchestrator = Orchestrator(config, runners=get_runners())
+    orchestrator = Orchestrator(config, runners=get_runners(config))
     runner = orchestrator.runners[args.dataset]
     keys = ("nav",) if runner.spec.value_kind == "nav" else runner.spec.adjust_modes
     adjusts = [args.adjust] if args.adjust else list(keys)
@@ -106,7 +106,7 @@ def cmd_service(_args: argparse.Namespace) -> int:
         print("BP_ETL_MODE=off：ETL 未启用（常驻等待；修改 .env 后 pm2 restart bp-etl --update-env）", flush=True)
         while True:
             time.sleep(3600)
-    Orchestrator(config, runners=get_runners()).service()
+    Orchestrator(config, runners=get_runners(config)).service()
     return 0
 
 

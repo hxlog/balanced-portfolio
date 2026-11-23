@@ -25,6 +25,15 @@ _BAR_UPSERT: dict[str, str] = {
         " open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low, close=EXCLUDED.close,"
         " volume=EXCLUDED.volume, amount=EXCLUDED.amount, pct_change=EXCLUDED.pct_change"
     ),
+    "bp_index_quote_daily": (
+        "INSERT INTO bp_index_quote_daily"
+        " (symbol, trade_date, source, adjust, open, high, low, close, volume, amount, pct_change)"
+        " VALUES (%(key)s, %(trade_date)s, %(source)s, %(adjust)s, %(open)s, %(high)s,"
+        " %(low)s, %(close)s, %(volume)s, %(amount)s, %(pct_change)s)"
+        " ON CONFLICT (symbol, source, adjust, trade_date) DO UPDATE SET"
+        " open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low, close=EXCLUDED.close,"
+        " volume=EXCLUDED.volume, amount=EXCLUDED.amount, pct_change=EXCLUDED.pct_change"
+    ),
     "bp_etf_quote_daily": (
         "INSERT INTO bp_etf_quote_daily"
         " (etf_code, trade_date, source, adjust, open, high, low, close, volume, amount, pct_change)"

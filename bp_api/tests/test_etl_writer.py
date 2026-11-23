@@ -140,3 +140,20 @@ def test_refresh_coverage_nav() -> None:
     assert n == 1
     _, payload = conn.executed[0]
     assert payload[0] == ("fund", "110011", "", D2)
+
+def test_write_bars_index_table() -> None:
+    from bp_etl.adapters.base import Bar
+    from bp_etl.registry import REGISTRY
+    from bp_etl.writer import write_bars as write_bars_fn
+
+    conn = FakeConn(prev_close=None)
+    spec = REGISTRY["legacy_index"]
+    bar = Bar(symbol="000300", trade_date=D2, open=4000.0, high=4010.0, low=3990.0,
+              close=4005.0, volume=100, amount=1000.0, pct_change=0.1,
+              source="cn_index_em", adjust="bfq")
+    n = write_bars_fn(conn, spec, [bar])
+    assert n == 1
+    sql, payload = conn.executed[0]
+    assert "INSERT INTO bp_index_quote_daily" in sql
+    assert "ON CONFLICT (symbol, source, adjust, trade_date)" in sql
+    assert payload[0]["source"] == "cn_index_em" and payload[0]["key"] == "000300"

@@ -133,7 +133,7 @@ def _run_replay(dataset: str, trade_date: Optional[str], adjust: Optional[str]) 
         from bp_etl.orchestrator import Orchestrator
 
         config = load_etl_config()
-        orchestrator = Orchestrator(config, runners=get_runners())
+        orchestrator = Orchestrator(config, runners=get_runners(config))
         runner = orchestrator.runners[dataset]
         keys = ("nav",) if runner.spec.value_kind == "nav" else runner.spec.adjust_modes
         targets = [adjust] if adjust else list(keys)
