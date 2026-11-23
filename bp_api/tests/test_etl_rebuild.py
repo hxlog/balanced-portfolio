@@ -110,6 +110,7 @@ def test_rebuild_a_stock_hfq(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(rebuild_mod, "read_bfq_history", fake_read)
     monkeypatch.setattr(rebuild_mod, "_max_date", lambda *a, **kw: None)
+    monkeypatch.setattr(rebuild_mod, "_existing_hfq_dates", lambda *a, **kw: set())
     monkeypatch.setattr(adapters.sina, "fetch_hfq_factor", lambda ch, sym: [(date(2020, 1, 1), 2.0)])
     monkeypatch.setattr(adapters.sina, "build_hfq_from_bfq", lambda bars, factors: [
         Bar(symbol=b.symbol, trade_date=b.trade_date, open=b.open, high=b.high,
