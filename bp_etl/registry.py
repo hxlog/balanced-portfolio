@@ -168,7 +168,7 @@ SOURCES: dict[str, SourceSpec] = {
     ),
     "em_lsjz": SourceSpec(
         name="em_lsjz", adapter="eastmoney.fund_lsjz", channel="direct",
-        adjust_support=("nav",), rate_per_sec=5.0, concurrency=5,
+        adjust_support=("nav",), rate_per_sec=12.0, concurrency=6,
         dataset_kinds=("fund_nav",),
     ),
 }

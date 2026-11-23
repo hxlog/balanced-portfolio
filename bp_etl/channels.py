@@ -103,6 +103,7 @@ class Channel:
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         transport: Any | None = None,
+        bucket: TokenBucket | None = None,
     ) -> None:
         self.source = source
         self.channel_kind = channel_kind
@@ -116,7 +117,7 @@ class Channel:
         self._lock = threading.Lock()
         self._failures = 0
         self._banned_until = 0.0
-        self._bucket = TokenBucket(rate_per_sec, clock=clock, sleep=sleep)
+        self._bucket = bucket or TokenBucket(rate_per_sec, clock=clock, sleep=sleep)
         self._transport = transport if transport is not None else self._build_transport(proxy)
 
     # -- transport -----------------------------------------------------
@@ -212,6 +213,7 @@ class ChannelManager:
         self._config = config
         self._sources = dict(sources or SOURCES)
         self._channels: dict[str, Channel] = {}
+        self._buckets: dict[str, TokenBucket] = {}
         self._proxy_for = {
             "direct": None,
             "relay_sg": config.relay_sg,
@@ -233,14 +235,32 @@ class ChannelManager:
         if spec is None:
             raise KeyError(f"未注册源: {source}")
         proxy, kind = self._proxy(spec.channel)
+        bucket = self._buckets.setdefault(spec.name, TokenBucket(spec.rate_per_sec))
         channel = Channel(
             spec.name,
             channel_kind=kind,
             proxy=proxy,
             rate_per_sec=spec.rate_per_sec,
+            bucket=bucket,
         )
         self._channels[source] = channel
         return channel
+
+    def spawn(self, source: str) -> Channel:
+        """为多线程抓取创建独立会话（共享同源全局限速桶，防限流）。"""
+        spec = self._sources.get(source)
+        if spec is None:
+            raise KeyError(f"未注册源: {source}")
+        proxy, kind = self._proxy(spec.channel)
+        bucket = self._buckets.setdefault(spec.name, TokenBucket(spec.rate_per_sec))
+        return Channel(
+            spec.name,
+            channel_kind=kind,
+            proxy=proxy,
+            rate_per_sec=spec.rate_per_sec,
+            bucket=bucket,
+            transport=None,
+        )
 
     def snapshot(self) -> dict[str, dict[str, Any]]:
         return {
