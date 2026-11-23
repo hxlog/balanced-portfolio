@@ -237,8 +237,8 @@ class Orchestrator:
         else:
             good, issues = sanitize_bars(spec.name, rows, today=now.date())
             written = write_bars(conn, spec, good) if self._write_enabled else 0
-            touched = sorted({bar.symbol for bar in good})
-            refresh_coverage(conn, spec, touched)
+            if self._write_enabled:
+                refresh_coverage(conn, spec, sorted({bar.symbol for bar in good}))
             report = evaluate(
                 spec.name, trade_date, result.adjust, good, expected,
                 coverage_min=spec.coverage_min,
@@ -267,19 +267,21 @@ class Orchestrator:
         self._record_source_health(conn, spec, trade_date, report.coverage)
 
         if report.ok:
-            upsert_dataset_state(conn, spec.name, result.adjust, trade_date, run_id)
-            clear_backlog(conn, spec.name, trade_date, result.adjust)
+            if self._write_enabled:
+                upsert_dataset_state(conn, spec.name, result.adjust, trade_date, run_id)
+                clear_backlog(conn, spec.name, trade_date, result.adjust)
         else:
             result.next_retry_in = retry_interval(result.wave)
-            upsert_backlog(
-                conn,
-                dataset=spec.name,
-                trade_date=trade_date,
-                adjust=result.adjust,
-                symbols=missing,
-                reason=f"coverage={report.coverage:.4f}<{spec.coverage_min}",
-                next_retry_at=now + result.next_retry_in,
-            )
+            if self._write_enabled:
+                upsert_backlog(
+                    conn,
+                    dataset=spec.name,
+                    trade_date=trade_date,
+                    adjust=result.adjust,
+                    symbols=missing,
+                    reason=f"coverage={report.coverage:.4f}<{spec.coverage_min}",
+                    next_retry_at=now + result.next_retry_in,
+                )
         conn.commit()
         return result
 

@@ -162,3 +162,30 @@ def test_timing_report_summary() -> None:
     assert summary["a_stock/hfq"]["samples"] == 2
     assert summary["a_stock/hfq"]["p50_delay_min"] in (10.0, -10.0)
     assert summary["a_stock/hfq"]["target"] == "16:30"
+
+def test_shadow_mode_does_not_write_or_advance_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    """shadow：拉取/校验/记录 run，但不写行情表、不刷 coverage、不推进 state、不写 backlog。"""
+    effects: dict[str, int] = {"write": 0, "coverage": 0, "state": 0, "backlog": 0, "clear": 0, "run": 0}
+    monkeypatch.setattr(orch_mod, "start_run", lambda *a, **kw: effects.__setitem__("run", effects["run"] + 1) or 1)
+    monkeypatch.setattr(orch_mod, "finish_run", lambda *a, **kw: None)
+    monkeypatch.setattr(orch_mod, "record_issues", lambda *a, **kw: 0)
+    monkeypatch.setattr(orch_mod, "record_source_health", lambda *a, **kw: None)
+    monkeypatch.setattr(orch_mod, "upsert_dataset_state", lambda *a, **kw: effects.__setitem__("state", effects["state"] + 1))
+    monkeypatch.setattr(orch_mod, "upsert_backlog", lambda *a, **kw: effects.__setitem__("backlog", effects["backlog"] + 1))
+    monkeypatch.setattr(orch_mod, "clear_backlog", lambda *a, **kw: effects.__setitem__("clear", effects["clear"] + 1))
+    monkeypatch.setattr(orch_mod, "write_bars", lambda *a, **kw: effects.__setitem__("write", effects["write"] + 1) or 0)
+    monkeypatch.setattr(orch_mod, "refresh_coverage", lambda *a, **kw: effects.__setitem__("coverage", effects["coverage"] + 1))
+    runner = FlakyRunner([f"{600000 + i}" for i in range(100)], fail_times=0)
+    conn = FakeConn()
+    now = datetime(2026, 11, 23, 16, 0, tzinfo=CN)
+    orch = Orchestrator(_config(), runners={"a_stock": runner}, conn_factory=lambda: conn,
+                        channel_manager=ChannelManager(_config()), now_fn=lambda: now,
+                        sleep_fn=lambda s: None, write_enabled=False)
+    monkeypatch.setattr(orch, "_try_lock", lambda c, d: True)
+    monkeypatch.setattr(orch, "_unlock", lambda c, d: None)
+    monkeypatch.setattr(orch, "dataset_last_success", lambda c, d, a: None)
+    result = orch.run_wave("a_stock", "hfq", trade_date=D2, now=now)
+    assert result.ok
+    assert effects["run"] == 1
+    assert effects["write"] == effects["coverage"] == effects["state"] == 0
+    assert effects["backlog"] == effects["clear"] == 0
