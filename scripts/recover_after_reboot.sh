@@ -47,5 +47,7 @@ sleep 3
 pm2 status bp-etl | head -8
 
 log "== 6) 验收 =="
-python scripts/etl_e2e_acceptance.py --date "$(date +%F)" --json /tmp/etl-e2e.json | tail -6 || true
+ACCEPT_DATE="${BP_ACCEPT_DATE:-$(date +%F)}"
+log "验收交易日: $ACCEPT_DATE"
+python scripts/etl_e2e_acceptance.py --date "$ACCEPT_DATE" --json /tmp/etl-e2e.json | tail -8 || true
 log "恢复脚本完成（e2e 若未全绿，bp-etl 会继续无限追赶）"
