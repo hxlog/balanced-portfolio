@@ -174,3 +174,33 @@ bash scripts/etl_legacy_cron_toggle.sh dry-run                         # 旧 cro
 3. 切 `BP_ETL_MODE=on`，确认连续 2 个交易日达标后，用 `etl_legacy_cron_toggle.sh disable` 停旧 cron；
 4. 回滚：`BP_ETL_MODE=off` + `etl_legacy_cron_toggle.sh restore`（脚本自动备份 crontab 与 cron.d 文件）。
 
+
+## 10. L3：v3 资产接入清洗/回测（桥接，2026-11 起）
+
+v3 行情在 `bp_stock_quote_daily` / `bp_etf_quote_daily`；回测面板只读 `bp_quote_clean`
+（key = `symbol@source`）。桥接做法（迁移 77 + 脚本）：
+
+1. `ddl/77_etl_asset_bridge.sql`：`bp_index_config.managed_by` 列 + 注册
+   `etl_a_stock`/`etl_hk_stock`/`etl_etf` 三个数据源；
+2. `python scripts/seed_etl_assets.py --dry-run` 预演 → `--apply` 写入配置
+   （A股 5,227 / 港股 2,811 / ETF 1,392，`adjust='hfq'`，`adjust_modes={bfq,hfq}`，
+   `currency` 分别为 CNY/HKD/CNY，`managed_by='bp_etl'`）；
+3. `bp_api/quant/cleaning.py` 对 `etl_*` 源从 v3 表读原始价，仍按既有口径
+   （A股日历对齐/内部插值/港股 CNY 折算/尾部护栏）写 `bp_quote_clean`；
+   `refresh_asset_status` 的 raw 侧 MAX/COUNT 自动路由到 v3 表；
+4. 回测/构建器无感复用（资产 key `600036@etl_a_stock` 等）。
+
+运维顺序（首次）：
+
+```bash
+python scripts/seed_etl_assets.py --dry-run          # 确认规模
+python scripts/seed_etl_assets.py --apply            # 写入配置（幂等）
+python -m bp_etl rebuild --dataset all               # 先保证 v3 原始数据齐
+# 触发清洗（ETL 收尾自动按符号增量；首次全量可手动）
+.venv/bin/python -c "from bp_api.quant.cleaning import rebuild_clean; from bp_ingest.db import connect; from bp_ingest.config import load_config; \
+  c=connect(load_config().db); print(rebuild_clean(c)); c.commit()"
+```
+
+验收：`python -m bp_etl verify --out /tmp/etl-verify.json`；
+回测样例（含 `etl_*` 资产）跑通且 `test_backtest.py` 无未来函数约束通过。
+
