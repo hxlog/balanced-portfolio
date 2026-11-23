@@ -31,6 +31,17 @@ def build_parser() -> argparse.ArgumentParser:
     health_p = sub.add_parser("health", help="打印 dataset 状态/最近运行/backlog")
     health_p.add_argument("--dataset", default=None)
     health_p.add_argument("--limit", type=int, default=10)
+
+    rebuild_p = sub.add_parser("rebuild", help="历史单锚重建（A股 hfq 全量 / 港股ETF 源收敛+补缺）")
+    rebuild_p.add_argument("--dataset", default="all", choices=["all", "a_stock", "hk_stock", "etf"])
+    rebuild_p.add_argument("--since", default="2020-01-01")
+    rebuild_p.add_argument("--limit", type=int, default=0, help="仅处理前 N 只（冒烟）")
+    rebuild_p.add_argument("--force", action="store_true")
+    rebuild_p.add_argument("--json", action="store_true")
+
+    verify_p = sub.add_parser("verify", help="重建/日常校验（覆盖、比率漂移）")
+    verify_p.add_argument("--sample", type=int, default=100)
+    verify_p.add_argument("--out", default=None, help="输出 JSON 路径")
     return parser
 
 
@@ -127,6 +138,41 @@ def cmd_health(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_rebuild(args: argparse.Namespace) -> int:
+    from datetime import date
+
+    from bp_etl.rebuild import rebuild
+
+    config = load_etl_config()
+    reports = rebuild(
+        config,
+        args.dataset,
+        since=date.fromisoformat(args.since),
+        limit=args.limit or None,
+        force=args.force,
+    )
+    if args.json:
+        print(json.dumps(reports, ensure_ascii=False, indent=1))
+    else:
+        for report in reports:
+            print(report)
+    return 0
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    from bp_etl.verify import verify_rebuild
+
+    config = load_etl_config()
+    payload = verify_rebuild(config, sample=args.sample)
+    text = json.dumps(payload, ensure_ascii=False, indent=1, default=str)
+    if args.out:
+        import pathlib
+
+        pathlib.Path(args.out).write_text(text, encoding="utf-8")
+    print(text)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -137,6 +183,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_service(args)
     if args.command == "health":
         return cmd_health(args)
+    if args.command == "rebuild":
+        return cmd_rebuild(args)
+    if args.command == "verify":
+        return cmd_verify(args)
     parser.print_help()
     return 2
 
