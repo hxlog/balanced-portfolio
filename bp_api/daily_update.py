@@ -19,7 +19,10 @@ def refresh_all_asset_status(conn: psycopg.Connection, *, with_count: bool = Fal
     显式传 with_count=True(全表 COUNT 扫描, 低频手动操作可接受)。
     """
     with conn.cursor() as cur:
-        cur.execute("SELECT symbol, source FROM bp_index_config WHERE is_deleted = 0")
+        cur.execute(
+            "SELECT symbol, source FROM bp_index_config"
+            " WHERE is_deleted = 0 AND (managed_by IS NULL)"
+        )
         pairs = cur.fetchall()
     for symbol, source in pairs:
         repo.refresh_asset_status(conn, symbol, source, with_count=with_count)
@@ -91,4 +94,3 @@ def enqueue_ready_portfolios(conn: psycopg.Connection) -> list[dict]:
         len(enqueued), len(skipped), skipped,
     )
     return enqueued
-

@@ -58,7 +58,8 @@ def test_load_raw_keeps_legacy_table_for_old_sources() -> None:
     assert params == ("000300", "cn_index_em", "bfq")
 
 
-def test_list_targets_union_includes_managed_assets() -> None:
+def test_list_targets_union_includes_managed_assets(monkeypatch) -> None:
+    monkeypatch.setenv("BP_ETL_L3", "on")
     conn = FakeConn([
         [("600036", "etl_a_stock", "hfq")],
         [("000300", "cn_index_em", "bfq")],

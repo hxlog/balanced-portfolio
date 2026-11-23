@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import date as _date
 from typing import Optional
 
@@ -93,6 +94,11 @@ FX_SOURCE = "fx_sina"
 
 # 统一 ETL 资产：原始行情在 v3 表（source=etl_*），清洗结果仍写 bp_quote_clean，
 # 从而回测/构建器通过既有 symbol@source 体系无感复用（见 ddl/77 + scripts/seed_etl_assets.py）。
+def _l3_enabled() -> bool:
+    """L3（v3 资产接入清洗/回测）总开关；默认 off，避免旧 ingest 全量清洗时误扫 9,430 只。"""
+    return (os.getenv("BP_ETL_L3") or "off").strip().lower() in ("1", "true", "on", "yes")
+
+
 _ETL_RAW_TABLE: dict[str, tuple[str, str]] = {
     "etl_a_stock": ("bp_stock_quote_daily", "symbol"),
     "etl_hk_stock": ("bp_stock_quote_daily", "symbol"),
@@ -234,6 +240,7 @@ def _list_targets(
     # 统一 ETL 资产（managed_by='bp_etl'）走 v3 原始表，但清洗目标同一套。
     targets: list[tuple[str, str, str]] = []
     params: list = []
+    l3_enabled = _l3_enabled()
     etl_sql = (
         "SELECT DISTINCT c.symbol, c.source, COALESCE(c.adjust, 'hfq') AS adjust"
         " FROM bp_index_config c"
@@ -254,8 +261,9 @@ def _list_targets(
         legacy_sql += " AND q.symbol = ANY(%s)"
         legacy_params.append(symbols)
     with conn.cursor() as cur:
-        cur.execute(etl_sql, params)
-        targets.extend((r[0], r[1], r[2]) for r in cur.fetchall())
+        if l3_enabled:
+            cur.execute(etl_sql, params)
+            targets.extend((r[0], r[1], r[2]) for r in cur.fetchall())
         cur.execute(legacy_sql, legacy_params)
         targets.extend((r[0], r[1], r[2]) for r in cur.fetchall())
     return targets

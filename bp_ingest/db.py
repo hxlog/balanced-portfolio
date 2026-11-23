@@ -83,6 +83,7 @@ def fetch_active_configs(
                adjust, adjust_modes
         FROM bp_index_config
         WHERE is_deleted = 0
+          AND (managed_by IS NULL)
     """
     params: list = []
     if symbols:
@@ -94,7 +95,12 @@ def fetch_active_configs(
 
     rows: list[ConfigRow] = []
     with conn.cursor() as cur:
-        cur.execute(sql, params)
+        try:
+            cur.execute(sql, params)
+        except psycopg.errors.UndefinedColumn:
+            # 未应用 77 号迁移的开发库/临时库：退回原查询（此时不存在 managed_by 资产）
+            conn.rollback()
+            cur.execute(sql.replace(" AND (managed_by IS NULL)", ""), params)
         for r in cur.fetchall():
             rows.append(
                 ConfigRow(
