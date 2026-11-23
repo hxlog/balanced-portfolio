@@ -157,6 +157,7 @@ from . import public_api as _public_api
 from . import stocks as _stocks
 from . import valuation
 from . import assets_unified
+from . import data_health
 from . import market_extra
 from . import market_last
 
@@ -169,6 +170,7 @@ assets_unified.register_routes(app)
 _public_api.register_routes(app)
 market_last.register_routes(app)
 market_extra.register_routes(app)
+data_health.register_routes(app)
 _stocks.register_routes(app)
 basket.register_routes(app)
 baskets.register_routes(app)

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { Activity, AlertTriangle, ArrowUpDown, CheckCircle2, Download, Loader2, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -481,11 +482,19 @@ export default function AdminAssetsPage() {
 
   return (
     <div className="flex-1 p-6 max-w-[1600px] mx-auto w-full space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">资产管理</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          管理可选投资品、测试数据源读取，并查看最近行情与清洗状态。
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">资产管理</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            管理可选投资品、测试数据源读取，并查看最近行情与清洗状态。
+          </p>
+        </div>
+        <Button asChild variant="outline" size="sm">
+          <Link href="/admin/market-data">
+            <Activity className="mr-1.5 size-4" />
+            数据健康
+          </Link>
+        </Button>
       </div>
 
       <Card>
