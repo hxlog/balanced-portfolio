@@ -104,8 +104,12 @@ def fetch_qt_batch(
             if isinstance(content, (bytes, bytearray))
             else str(getattr(response, "text", "") or "")
         )
-        if is_waf_html(response) or "<html" in text.lower():
+        # 腾讯 qt 正常响应 content-type=text/html 但 body 是 v_sh... 变量串；只按 body 判 WAF
+        head = text.lstrip()[:400].lower()
+        if head.startswith("<") or "<html" in head:
             raise SourceParseError(source, f"WAF/HTML 响应（chunk {start}）")
+        if '="' not in text:
+            raise SourceParseError(source, f"qt 响应缺少行情字段（chunk {start}）")
         bars.extend(parse_qt_text(text, source=source))
     return bars
 

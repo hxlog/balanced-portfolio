@@ -64,14 +64,13 @@ def ensure_adjust(adjust: str) -> str:
 
 
 def is_waf_html(response: Any) -> bool:
-    """腾讯/东财 WAF 页特征：非 JSON 的 HTML 响应。"""
-    content_type = str(getattr(response, "headers", {}).get("content-type", "") or "").lower()
+    """WAF/HTML 响应判定：以**响应体**为准（腾讯 qt/kline 正常响应 content-type=text/html，
+    但 body 是 JS/JSON，不能仅凭 content-type 判 WAF）。"""
     text = str(getattr(response, "text", "") or "").lstrip()
-    if "json" in content_type:
+    lowered = text[:400].lower()
+    if not text:
         return False
-    if "html" in content_type:
-        return True
-    return text.startswith("<")
+    return text.startswith("<") or "<html" in lowered or "<!doctype" in lowered
 
 
 def json_body(response: Any, *, source: str) -> dict:
