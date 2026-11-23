@@ -37,7 +37,7 @@ def _payload(**overrides: object) -> dict:
                 "state_ok_hfq": True,
                 "total": 1392,
             },
-            "fund_nav": {"covered": 25000, "total": 28101, "state_ok_nav": True},
+            "fund_nav": {"covered": 23931, "total": 25416, "state_ok_nav": True},
         }
     }
     if overrides:

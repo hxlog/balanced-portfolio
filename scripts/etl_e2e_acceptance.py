@@ -109,8 +109,17 @@ def collect(conn, trade_date: date) -> dict:
         hk_total = int(cur.fetchone()[0])
         cur.execute("SELECT count(*) FROM bp_etf_master")
         etf_total = int(cur.fetchone()[0])
-        cur.execute("SELECT count(*) FROM bp_fund_master")
+        # 基金分母 = 上一交易日已发布净值数（可发布子集），而非主数据全量；
+        # 货币/封闭/晚披露基金天然不参与每日净值。
+        cur.execute(
+            "SELECT count(DISTINCT fund_code) FROM bp_fund_nav_daily"
+            " WHERE trade_date = (SELECT max(trade_date) FROM bp_fund_nav_daily WHERE trade_date < %s)",
+            (trade_date,),
+        )
         fund_total = int(cur.fetchone()[0])
+        if fund_total == 0:
+            cur.execute("SELECT count(*) FROM bp_fund_master")
+            fund_total = int(cur.fetchone()[0])
         cur.execute("SELECT count(*) FROM bp_etl_backlog")
         backlog = int(cur.fetchone()[0])
         cur.execute(
