@@ -174,3 +174,27 @@ def test_rebuild_delta_mode_writes_only_missing_dates(monkeypatch: pytest.Monkey
     report = rebuild_a_stock_hfq(conn, FakeManager(), since=date(2020, 1, 1), mode="delta")
     assert report.written == 1
     assert len(written[0]) == 1 and written[0][0].trade_date == D2
+
+def test_rebuild_dispatch_uses_context_manager(monkeypatch: pytest.MonkeyPatch) -> None:
+    """rebuild() 必须 with conn_factory() 使用连接（connect 是 contextmanager）。"""
+    from contextlib import contextmanager
+
+    from bp_etl.config import EtlConfig
+    from bp_etl.rebuild import rebuild
+
+    used: list[str] = []
+    conn = FakeConn()
+
+    @contextmanager
+    def fake_conn():
+        used.append("enter")
+        yield conn
+
+    monkeypatch.setattr(rebuild_mod, "default_conn_factory", lambda cfg: fake_conn)
+    monkeypatch.setattr(rebuild_mod, "ChannelManager", lambda cfg: object())
+    monkeypatch.setattr(rebuild_mod, "rebuild_a_stock_hfq", lambda conn_, ch, **kw: rebuild_mod.RebuildReport(dataset="a_stock", adjust="hfq", symbols=1))
+    cfg = EtlConfig(db=object(), mode="on", workers=1, relay_sg=None, relay_prologue=None,
+                    log_level="INFO", rebuild_window=(__import__("datetime").time(1), __import__("datetime").time(5)))
+    reports = rebuild(cfg, "a_stock")
+    assert used == ["enter"]
+    assert reports[0]["symbols"] == 1

@@ -244,30 +244,24 @@ def rebuild(
     force: bool = False,
     mode: str = "delta",
 ) -> list[dict[str, Any]]:
-    """执行重建（CLI 调用）。"""
-    conn = default_conn_factory(config)()
+    """执行重建（CLI 调用）；每类数据集独立连接，异常不影响其它数据集。"""
     channels = ChannelManager(config)
+    conn_factory = default_conn_factory(config)
     reports: list[RebuildReport] = []
-    try:
-        if dataset in ("a_stock", "all"):
+    if dataset in ("a_stock", "all"):
+        with conn_factory() as conn:
             reports.append(
-                rebuild_a_stock_hfq(
-                    next_conn(conn), channels, since=since, limit=limit, force=force, mode=mode
-                )
+                rebuild_a_stock_hfq(conn, channels, since=since, limit=limit, force=force, mode=mode)
             )
-        if dataset in ("hk_stock", "all"):
-            reports.append(consolidate_sources(next_conn(conn), HK_STOCK, "hfq", "tencent_hk_kline"))
-            reports.append(consolidate_sources(next_conn(conn), HK_STOCK, "bfq", "sina_hk_kline"))
-            reports.append(
-                fill_recent_gaps(next_conn(conn), channels, HK_STOCK, "hfq", target=_today(), days=30)
-            )
-        if dataset in ("etf", "all"):
-            reports.append(consolidate_sources(next_conn(conn), ETF, "hfq", "tencent_etf_kline"))
-            reports.append(
-                fill_recent_gaps(next_conn(conn), channels, ETF, "hfq", target=_today(), days=30)
-            )
-    finally:
-        conn.close()
+    if dataset in ("hk_stock", "all"):
+        with conn_factory() as conn:
+            reports.append(consolidate_sources(conn, HK_STOCK, "hfq", "tencent_hk_kline"))
+            reports.append(consolidate_sources(conn, HK_STOCK, "bfq", "sina_hk_kline"))
+            reports.append(fill_recent_gaps(conn, channels, HK_STOCK, "hfq", target=_today(), days=30))
+    if dataset in ("etf", "all"):
+        with conn_factory() as conn:
+            reports.append(consolidate_sources(conn, ETF, "hfq", "tencent_etf_kline"))
+            reports.append(fill_recent_gaps(conn, channels, ETF, "hfq", target=_today(), days=30))
     return [report.to_dict() for report in reports]
 
 
