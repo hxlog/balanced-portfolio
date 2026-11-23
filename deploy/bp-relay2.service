@@ -1,0 +1,20 @@
+[Unit]
+Description=Balanced Portfolio second outbound market relay (VLESS Reality XHTTP -> EM/others when direct IP blocked)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/bp-relay run -c /etc/bp-relay2/config.json
+Restart=always
+RestartSec=5
+LimitNOFILE=65535
+# 仅监听 127.0.0.1 的本地 HTTP 代理端口（配置内定义，默认 10810），不对外暴露
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/etc/bp-relay2
+
+[Install]
+WantedBy=multi-user.target
