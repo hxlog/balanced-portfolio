@@ -55,18 +55,21 @@ CREATE TABLE IF NOT EXISTS bp_etl_quality_issue (
 CREATE INDEX IF NOT EXISTS idx_etl_issue_open ON bp_etl_quality_issue (dataset, created_at DESC) WHERE resolved_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_etl_issue_symbol ON bp_etl_quality_issue (dataset, symbol, trade_date);
 
--- 数据集状态：last_success_date 仅当覆盖率达到目标时推进（"追平"的持久事实）
+-- 数据集状态（按 adjust 维度）：last_success_date 仅当覆盖率达到目标时推进（"追平"的持久事实）
 CREATE TABLE IF NOT EXISTS bp_etl_dataset_state (
-    dataset text PRIMARY KEY,
+    dataset text NOT NULL,
+    adjust text NOT NULL DEFAULT '',
     last_success_date date,
     last_run_id bigint REFERENCES bp_etl_run(run_id) ON DELETE SET NULL,
-    updated_at timestamptz NOT NULL DEFAULT now()
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (dataset, adjust)
 );
 
 -- 未追赶条目持久队列：无硬停追赶的载体，跨交易日优先重试
 CREATE TABLE IF NOT EXISTS bp_etl_backlog (
     dataset text NOT NULL,
     trade_date date NOT NULL,
+    adjust text NOT NULL DEFAULT '',
     scope text NOT NULL DEFAULT 'dataset',
     symbol text NOT NULL DEFAULT '',
     reason text,
@@ -75,14 +78,14 @@ CREATE TABLE IF NOT EXISTS bp_etl_backlog (
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT ck_etl_backlog_scope CHECK (scope IN ('dataset','symbol')),
-    PRIMARY KEY (dataset, trade_date, scope, symbol)
+    PRIMARY KEY (dataset, trade_date, adjust, scope, symbol)
 );
 CREATE INDEX IF NOT EXISTS idx_etl_backlog_retry ON bp_etl_backlog (next_retry_at);
 
 COMMENT ON TABLE bp_etl_run IS '行情 ETL 波次运行记录（无限追赶：catching_up 表示继续重试，非终止）';
 COMMENT ON TABLE bp_etl_source_health IS '行情 ETL 源×通道每日健康度（管理页/熔断依据）';
 COMMENT ON TABLE bp_etl_quality_issue IS '行情 ETL 质量问题（OHLC/交叉校验/比率漂移/覆盖率不足）';
-COMMENT ON TABLE bp_etl_dataset_state IS '行情 ETL 数据集状态：last_success_date 仅在追平后推进';
+COMMENT ON TABLE bp_etl_dataset_state IS '行情 ETL 数据集状态（按 adjust）：last_success_date 仅在追平后推进';
 COMMENT ON TABLE bp_etl_backlog IS '行情 ETL 未追赶条目队列（跨交易日无限重试）';
 
 COMMIT;

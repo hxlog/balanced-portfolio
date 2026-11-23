@@ -117,7 +117,7 @@ def register_routes(app: FastAPI) -> None:
     def market_last(
         request: Request,
         codes: Optional[str] = Query(None, description="逗号分隔代码，最多 50 个；支持 601318.SH / 02020.HK"),
-        adjust: str = Query("bfq", description="复权口径 bfq/qfq/hfq（现价用 bfq）"),
+        adjust: str = Query("bfq", description="复权口径 bfq/hfq（现价用 bfq；qfq 已停用）"),
         output_format: Optional[str] = Query(None, alias="format", description="json 或 csv"),
         _token: Any = Depends(quotes_dep),
     ):

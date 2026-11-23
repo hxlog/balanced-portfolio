@@ -87,7 +87,7 @@ export function BasketAssets({
         <div>
           <CardTitle className="text-base">篮子成分</CardTitle>
           <CardDescription>
-            {items.length} / {BASKET_MAX_ASSETS} 项 · 点击资产行右侧的「不复权 / 前复权 / 后复权」仅切换展示口径
+            {items.length} / {BASKET_MAX_ASSETS} 项 · 点击资产行右侧的「不复权 / 后复权」仅切换展示口径
           </CardDescription>
         </div>
         <div className="flex w-full gap-2 sm:w-auto">

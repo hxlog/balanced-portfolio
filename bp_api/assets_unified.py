@@ -6,7 +6,7 @@ from fastapi import Depends, FastAPI, Query
 from . import auth, cache, db
 
 CACHE_TTL_SECONDS = 60
-ADJUST_LABELS = {"bfq": "不复权", "qfq": "前复权", "hfq": "后复权"}
+ADJUST_LABELS = {"bfq": "不复权", "hfq": "后复权"}  # qfq 已停用
 
 def _envelope(data, **meta):
     return {"data": data, "meta": meta, "error": None}
@@ -17,7 +17,7 @@ def register_routes(app: FastAPI) -> None:
         q: str | None = Query(None, max_length=50, description="代码/名称/拼音搜索"),
         type: str | None = Query(None, alias="type", max_length=10, description="stock/index/fund/etf"),
         market: str | None = Query(None, max_length=10, description="SH/SZ/BJ/CSI/HK/US"),
-        adjust: str = Query("bfq", description="行情口径 bfq/qfq/hfq"),
+        adjust: str = Query("bfq", description="行情口径 bfq/hfq（qfq 已停用）"),
         limit: int = Query(50, ge=1, le=200),
         offset: int = Query(0, ge=0),
         _user: auth.UserContext = Depends(auth.require_asset_editor),
@@ -114,7 +114,6 @@ def register_routes(app: FastAPI) -> None:
                 "adjust_available": row["type"] != "stock" or (row["adjust_count"] or 0) >= 1,
                 "adjustments": [
                     {"value": "bfq", "label": "不复权"},
-                    {"value": "qfq", "label": "前复权"},
                     {"value": "hfq", "label": "后复权"},
                 ] if row["type"] == "stock" else [{"value": "bfq", "label": "不复权"}],
                 "type_label": {"stock": "股票", "index": "指数", "fund": "基金", "etf": "ETF"}.get(row["type"], row["type"]),

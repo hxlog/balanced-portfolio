@@ -73,6 +73,20 @@ module.exports = {
       },
     },
     {
+      // 统一行情 ETL：收盘后波次抓取 + 无限追赶（BP_ETL_MODE=off/shadow/on 控制）
+      name: "bp-etl",
+      cwd: ROOT,
+      script: VENV_PY,
+      args: "-m bp_etl service",
+      interpreter: "none",
+      autorestart: true,
+      max_restarts: 10,
+      min_uptime: "30s",
+      env: {
+        NODE_ENV: "production",
+      },
+    },
+    {
       // Celery beat: 每 20 分钟巡检排队就绪组合的 T-1 自动更新。
       // 无 Redis 时可停用(bp-ingest 内已有 20 分钟兜底巡检)。
       name: "bp-beat",

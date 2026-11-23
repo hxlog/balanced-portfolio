@@ -126,7 +126,7 @@ X-API-Key: bp_live_0123456789abcdef0123456789abcdef
 | `codes` | 是 | — | 逗号分隔代码，最多 50 个，如 `000300,600036` |
 | `start` | 否 | — | 起始日期（ISO） |
 | `end` | 否 | — | 结束日期（ISO） |
-| `adjust` | 否 | `bfq` | `bfq`（不复权）/ `qfq`（前复权）/ `hfq`（后复权） |
+| `adjust` | 否 | `bfq` | `bfq`（不复权）/ `hfq`（后复权）；`qfq` 已停用 |
 | `limit` | 否 | `50000` | 最大返回行数，`1..50000` |
 | `format` | 否 | `json` | `json` 或 `csv` |
 
@@ -233,7 +233,7 @@ curl -H "Authorization: Bearer $BP_TOKEN" \
 | 参数 | 必填 | 默认 | 说明 |
 |---|---|---|---|
 | `codes` | 是 | — | 逗号分隔，最多 50 个；`601318.SH` / `02020.HK` / `159915` 皆可，指数可用 `IDX:000300` 强制 |
-| `adjust` | 否 | `bfq` | `bfq`（现价用）/ `qfq` / `hfq` |
+| `adjust` | 否 | `bfq` | `bfq`（现价用）/ `hfq`；`qfq` 已停用 |
 | `format` | 否 | `json` | `json` / `csv` |
 
 返回行字段：`code, market, currency, kind, name, date, close, prev_close, pct, adjust, source, status`。
@@ -251,7 +251,7 @@ curl -H "Authorization: Bearer $BP_TOKEN" \
 |---|---|---|---|
 | `codes` | 是 | — | 逗号分隔，最多 50 个 |
 | `start` / `end` | 否 | — | ISO 日期（闭区间） |
-| `adjust` | 否 | `bfq` | `bfq` / `qfq` / `hfq` |
+| `adjust` | 否 | `bfq` | `bfq` / `hfq`（`qfq` 已停用） |
 | `limit` | 否 | 50000 | 1..50000 |
 | `format` | 否 | `json` | `json` / `csv` |
 

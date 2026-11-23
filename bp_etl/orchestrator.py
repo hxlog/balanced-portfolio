@@ -142,10 +142,12 @@ class Orchestrator:
         return candidate
 
     # -- state / lock -------------------------------------------------
-    def dataset_last_success(self, conn: Any, dataset: str) -> date | None:
+    def dataset_last_success(self, conn: Any, dataset: str, adjust: str) -> date | None:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT last_success_date FROM bp_etl_dataset_state WHERE dataset=%s", (dataset,)
+                "SELECT last_success_date FROM bp_etl_dataset_state"
+                " WHERE dataset=%s AND adjust=%s",
+                (dataset, adjust),
             )
             row = cur.fetchone()
         return row[0] if row else None
@@ -193,7 +195,7 @@ class Orchestrator:
                     result.skip_reason = "no_trade_date"
                     return result
                 result.trade_date = trade_date
-                last_success = self.dataset_last_success(conn, dataset)
+                last_success = self.dataset_last_success(conn, dataset, adjust)
                 if last_success is not None and last_success >= trade_date and not force:
                     result.skipped = True
                     result.skip_reason = "already_done"
@@ -265,14 +267,15 @@ class Orchestrator:
         self._record_source_health(conn, spec, trade_date, report.coverage)
 
         if report.ok:
-            upsert_dataset_state(conn, spec.name, trade_date, run_id)
-            clear_backlog(conn, spec.name, trade_date)
+            upsert_dataset_state(conn, spec.name, result.adjust, trade_date, run_id)
+            clear_backlog(conn, spec.name, trade_date, result.adjust)
         else:
             result.next_retry_in = retry_interval(result.wave)
             upsert_backlog(
                 conn,
                 dataset=spec.name,
                 trade_date=trade_date,
+                adjust=result.adjust,
                 symbols=missing,
                 reason=f"coverage={report.coverage:.4f}<{spec.coverage_min}",
                 next_retry_at=now + result.next_retry_in,
@@ -311,7 +314,7 @@ class Orchestrator:
                     continue
                 keys = ("nav",) if runner.spec.value_kind == "nav" else runner.spec.adjust_modes
                 for adjust in keys:
-                    last = self.dataset_last_success(conn, name)
+                    last = self.dataset_last_success(conn, name, adjust)
                     if last is not None and last >= trade_date and not force:
                         continue
                     key = (name, adjust)
@@ -336,11 +339,11 @@ class Orchestrator:
                 trade_date = self.confirmed_trade_date(conn, kind, now)
                 if trade_date is None:
                     continue
-                pending = due_backlog(conn, name, now, limit=5000)
-                if not pending:
-                    continue
                 keys = ("nav",) if runner.spec.value_kind == "nav" else runner.spec.adjust_modes
                 for adjust in keys:
+                    pending = due_backlog(conn, name, adjust, now, limit=5000)
+                    if not pending:
+                        continue
                     outcomes.append(
                         self.run_wave(name, adjust, trade_date=trade_date, wave=2, now=now, force=True)
                     )

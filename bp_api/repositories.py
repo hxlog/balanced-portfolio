@@ -1757,10 +1757,10 @@ def upsert_asset_config(conn: psycopg.Connection, data) -> None:
     # 显式定型, 规避多态推断。
     import json as _json
     extra_patch = _json.dumps({"adjust": data.adjust}) if data.adjust else "{}"
-    # 股票资产默认抓全三口径，回测主口径用后复权(hfq)；其余资产沿用单口径。
+    # 股票资产抓 bfq+hfq 两口径（qfq 已停用），回测主口径用后复权(hfq)；其余资产沿用单口径。
     if data.source in STOCK_SOURCES:
         primary_adjust = data.adjust or "hfq"
-        adjust_modes = ["bfq", "qfq", "hfq"]
+        adjust_modes = ["bfq", "hfq"]
     else:
         primary_adjust = data.adjust or "bfq"
         adjust_modes = [primary_adjust]

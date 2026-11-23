@@ -501,7 +501,7 @@ export default function AdminAssetsPage() {
         <CardHeader>
           <CardTitle className="text-base">统一资产池（全市场搜索）</CardTitle>
           <CardDescription>
-            A 股 / 指数 / 基金 / ETF 全市场检索与行情覆盖状态；复权口径：不复权 / 前复权 / 后复权（回测默认后复权）。
+            A 股 / 指数 / 基金 / ETF 全市场检索与行情覆盖状态；复权口径：不复权 / 后复权（回测默认后复权；qfq 已停用）。
           </CardDescription>
         </CardHeader>
         <CardContent className="pt-0 sm:pt-0">

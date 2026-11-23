@@ -173,22 +173,22 @@ def test_record_source_health_and_issues() -> None:
 
 def test_dataset_state_upsert() -> None:
     conn = FakeConn()
-    upsert_dataset_state(conn, "a_stock", D2, 3)
+    upsert_dataset_state(conn, "a_stock", "hfq", D2, 3)
     sql, params = conn.queries[0]
     assert "INSERT INTO bp_etl_dataset_state" in sql
-    assert params == ("a_stock", D2, 3)
+    assert params == ("a_stock", "hfq", D2, 3)
 
 
 def test_backlog_upsert_due_clear() -> None:
     conn = FakeConn(backlog_rows=[("600036",), ("600037",)])
     n = upsert_backlog(
-        conn, dataset="a_stock", trade_date=D2, symbols=["600036"],
+        conn, dataset="a_stock", trade_date=D2, adjust="hfq", symbols=["600036"],
         reason="coverage", next_retry_at=datetime(2026, 11, 23, 23, 30),
     )
     assert n == 1
-    assert "ON CONFLICT (dataset, trade_date, scope, symbol)" in conn.executed[0][0]
-    due = due_backlog(conn, "a_stock", datetime(2026, 11, 24, 0, 0))
+    assert "ON CONFLICT (dataset, trade_date, adjust, scope, symbol)" in conn.executed[0][0]
+    due = due_backlog(conn, "a_stock", "hfq", datetime(2026, 11, 24, 0, 0))
     assert due == ["600036", "600037"]
-    cleared = clear_backlog(conn, "a_stock", D2, ["600036"])
+    cleared = clear_backlog(conn, "a_stock", D2, "hfq", ["600036"])
     assert cleared == 0  # FakeCursor.rowcount 默认 0；SQL 形状已由 queries 断言
     assert all(param is not None for _, param in conn.queries if "DELETE FROM bp_etl_backlog" in _)

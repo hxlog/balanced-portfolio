@@ -154,6 +154,18 @@ def test_market_last_requires_token(monkeypatch):
     assert resp.json()["error"]["code"] == "unauthorized"
 
 
+def test_market_last_qfq_retired(last_client):
+    resp = last_client.get(
+        "/api/v1/market/last",
+        params={"codes": "601318", "adjust": "qfq"},
+        headers={"Authorization": "Bearer x"},
+    )
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body["error"]["code"] == "invalid_parameter"
+    assert "qfq" in body["error"]["message"]
+
+
 def test_market_last_missing_codes(last_client):
     resp = last_client.get(
         "/api/v1/market/last", headers={"Authorization": "Bearer x"}

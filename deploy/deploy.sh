@@ -80,6 +80,7 @@ if command -v redis-cli &>/dev/null; then
   redis-cli ping >/dev/null 2>&1 && echo "Redis OK" || echo "警告: Redis 检查失败"
 fi
 pm2 describe bp-worker &>/dev/null && echo "Worker OK" || echo "警告: bp-worker 未运行"
+pm2 describe bp-etl &>/dev/null && echo "ETL OK (BP_ETL_MODE=$(grep -E '^BP_ETL_MODE=' .env | cut -d= -f2 | tr -d ' '))" || echo "警告: bp-etl 未运行 (行情 ETL 未启用)"
 
 if command -v nginx &>/dev/null; then
   if sudo nginx -t 2>/dev/null; then

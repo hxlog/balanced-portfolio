@@ -15,7 +15,7 @@ import {
 describe("buildExtraParams", () => {
   it("ETF 携带所选复权, 与落库 extra_params.adjust 同口径", () => {
     expect(buildExtraParams("etf_em", "etf", "hfq")).toEqual({ adjust: "hfq" });
-    expect(buildExtraParams("etf_em", "etf", "qfq")).toEqual({ adjust: "qfq" });
+    expect(buildExtraParams("etf_em", "etf", "hfq")).toEqual({ adjust: "hfq" });
   });
 
   it("非 ETF 类目不带 adjust —— 复权只对 ETF 有意义", () => {

@@ -8,7 +8,7 @@
 import type { Asset } from "./api";
 
 export const BASKET_MAX_ASSETS = 64;
-/** 个股主数据源；后端 upsert_asset_config 会自动抓 bfq/qfq/hfq 三口径。 */
+/** 个股主数据源；后端 upsert_asset_config 自动抓 bfq/hfq 两口径（qfq 已停用）。 */
 export const STOCK_SOURCE = "stock_sina";
 /** 股票回测主口径（后端固定使用 hfq）。 */
 export const STOCK_BACKTEST_ADJUST = "hfq" as const;
@@ -64,9 +64,8 @@ export function basketMethodLabel(method: string): string {
 
 export const BASKET_ADJUST_OPTIONS = [
   { value: "bfq", label: "不复权" },
-  { value: "qfq", label: "前复权" },
   { value: "hfq", label: "后复权" },
-] as const;
+] as const;  // qfq（前复权）已停用
 
 export type BasketAdjust = (typeof BASKET_ADJUST_OPTIONS)[number]["value"];
 
@@ -254,7 +253,7 @@ export function defaultAdjustForAsset(
   asset: Pick<Asset, "source" | "adjust">,
 ): BasketAdjust {
   const raw = asset.adjust;
-  if (raw === "bfq" || raw === "qfq" || raw === "hfq") return raw;
+  if (raw === "bfq" || raw === "hfq") return raw;  // qfq 已停用，旧配置回退默认口径
   return asset.source.startsWith("stock_") ? STOCK_BACKTEST_ADJUST : "bfq";
 }
 

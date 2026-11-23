@@ -135,3 +135,42 @@ python scripts/incremental_fund_nav.py --gap-limit 32000
   **只可比收益率**；文档与前端 tooltip 已标注。
 - 港股/场内基金未做人民币折算（`bp_quote_clean` 仍只服务指数/资产池），
   `/api/v1/market/*` 返回原币价格，汇率走 `/api/v1/market/fx`。
+
+## 9. 统一 ETL（bp_etl，2026-11 起，替代第 3/8.3 节的 ad-hoc cron）
+
+> 设计：`docs/superpowers/specs/2026-11-23-unified-market-etl-design.md`
+> 计划：`docs/superpowers/plans/2026-11-23-market-etl-p1-framework.md` / `…-p2-legacy-cleaning.md`
+
+### 9.1 数据集与锚定源（只保留 bfq/hfq；qfq 已停用）
+
+| dataset | 表 | bfq 锚定 | hfq 锚定 | 目标就绪 | 说明 |
+|---|---|---|---|---|---|
+| a_stock | bp_stock_quote_daily | tencent_qt（当日批量） | sina_kline（库内 bfq × 新浪因子） | bfq 15:30 / hfq 16:30 | 5,227 只 |
+| hk_stock | bp_stock_quote_daily | sina_hk_kline | tencent_hk_kline | bfq 16:30 / hfq 17:30 | 2,811 只；EM relay 兜底 |
+| etf | bp_etf_quote_daily | tencent_qt | tencent_etf_kline | bfq 15:30 / hfq 16:30 | 1,392 只；EM relay 兜底 |
+| fund_nav | bp_fund_nav_daily | em_rankhandler（批量榜） | — | 23:00 | 28,101 只，lsjz 补缺 |
+
+**无限追赶**：任何数据集未追平最新交易日时，按 10→30 分钟退避持续波次，未达标条目落
+`bp_etl_backlog` 跨交易日续跑，直到 `bp_etl_dataset_state.last_success_date` 追平；
+目标时点只触发升级告警，不停止。运行/源健康/质量问题分别落
+`bp_etl_run` / `bp_etl_source_health` / `bp_etl_quality_issue`，管理端 `/admin/market-data` 只读展示。
+
+### 9.2 运维命令
+
+```bash
+pm2 status bp-etl                       # 常驻进程（BP_ETL_MODE=off 时不执行）
+pm2 logs bp-etl --lines 100 --nostream
+python -m bp_etl health                 # dataset 状态/最近运行/backlog
+python -m bp_etl run --dataset a_stock --adjust hfq --waves 1 --json   # 手动波次
+python -m bp_etl rebuild --dataset all --json                          # 夜窗单锚重建
+python -m bp_etl verify --out /tmp/etl-verify.json                     # 覆盖/比率漂移校验
+bash scripts/etl_legacy_cron_toggle.sh dry-run                         # 旧 cron 下线预演
+```
+
+### 9.3 灰度与回滚
+
+1. 代码发布后 `BP_ETL_MODE=shadow` 启动 `bp-etl`：只拉取/校验/写 run 与 issue，不写行情表；
+2. 手工 `python -m bp_etl run --dataset …` 核对行数与覆盖；
+3. 切 `BP_ETL_MODE=on`，确认连续 2 个交易日达标后，用 `etl_legacy_cron_toggle.sh disable` 停旧 cron；
+4. 回滚：`BP_ETL_MODE=off` + `etl_legacy_cron_toggle.sh restore`（脚本自动备份 crontab 与 cron.d 文件）。
+

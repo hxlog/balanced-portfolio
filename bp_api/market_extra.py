@@ -237,7 +237,7 @@ def register_routes(app: FastAPI) -> None:
         codes: Optional[str] = Query(None, description="逗号分隔代码，最多 50 个"),
         start: Optional[str] = Query(None, description="ISO 日期 YYYY-MM-DD"),
         end: Optional[str] = Query(None, description="ISO 日期 YYYY-MM-DD"),
-        adjust: str = Query("bfq", description="复权口径 bfq/qfq/hfq"),
+        adjust: str = Query("bfq", description="复权口径 bfq/hfq（qfq 已停用）"),
         limit: int = Query(MAX_ROWS, description="最大返回行数，上限 50000"),
         output_format: Optional[str] = Query(None, alias="format", description="json 或 csv"),
         _token: Any = Depends(quotes_dep),

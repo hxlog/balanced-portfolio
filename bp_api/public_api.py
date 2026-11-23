@@ -43,7 +43,7 @@ from .repositories import _json_safe
 # ---------------------------------------------------------------------------
 MAX_CODES = 50
 MAX_ROWS = 50_000
-ADJUST_MODES = frozenset({"bfq", "qfq", "hfq"})
+ADJUST_MODES = frozenset({"bfq", "hfq"})  # qfq 已于 2026-11 停用（76 号迁移）
 DEFAULT_VALUATION_FIELDS = ("pe_ttm", "pb", "dividend_yield_ttm", "erp")
 VALUATION_FIELDS = frozenset(DEFAULT_VALUATION_FIELDS)
 # bp_index_valuation_series.ck_series_metric / bp_index_percentile.metric
@@ -419,11 +419,20 @@ def _parse_list_param(
 
 def _parse_adjust(value: str) -> str:
     adjust = (value or "").strip().lower()
+    if adjust == "qfq":
+        raise ApiError(
+            400,
+            "invalid_parameter",
+            "qfq（前复权）已停用；仅支持 bfq / hfq",
+            field="adjust",
+            allowed=sorted(ADJUST_MODES),
+            retired=["qfq"],
+        )
     if adjust not in ADJUST_MODES:
         raise ApiError(
             400,
             "invalid_parameter",
-            "adjust 仅支持 bfq / qfq / hfq",
+            "adjust 仅支持 bfq / hfq（qfq 已停用）",
             field="adjust",
             allowed=sorted(ADJUST_MODES),
         )
@@ -736,7 +745,7 @@ def register_routes(app: FastAPI) -> None:
         codes: Optional[str] = Query(None, description="逗号分隔代码，最多 50 个"),
         start: Optional[str] = Query(None, description="ISO 日期 YYYY-MM-DD"),
         end: Optional[str] = Query(None, description="ISO 日期 YYYY-MM-DD"),
-        adjust: str = Query("bfq", description="复权口径 bfq/qfq/hfq"),
+        adjust: str = Query("bfq", description="复权口径 bfq/hfq（qfq 已停用）"),
         limit: int = Query(MAX_ROWS, description="最大返回行数，上限 50000"),
         output_format: Optional[str] = Query(
             None, alias="format", description="json 或 csv"

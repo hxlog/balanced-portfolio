@@ -28,7 +28,6 @@ const TYPE_FILTERS = [
 
 const ADJUST_OPTIONS = [
   { value: "bfq", label: "不复权" },
-  { value: "qfq", label: "前复权" },
   { value: "hfq", label: "后复权" },
 ];
 

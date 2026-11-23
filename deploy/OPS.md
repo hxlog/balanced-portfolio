@@ -407,3 +407,23 @@ rm -f /tmp/bp_tmp_test_schema.sql
 
 - 未设置 `BP_TEST_DSN` 时这些测试一律 skip，`pytest -q` 与 CI 均不受影响
   （skip 数随带 `_real_db` 标记的用例增减, 勿写死数字）。
+
+## 行情 ETL（bp-etl，2026-11 起）
+
+统一行情 ETL 由 PM2 进程 `bp-etl` 常驻执行（`python -m bp_etl service`），开关 `BP_ETL_MODE`：
+
+```bash
+pm2 status bp-etl
+pm2 logs bp-etl --lines 100 --nostream
+cd /opt/balanced-portfolio && set -a && . ./.env && set +a
+.venv/bin/python -m bp_etl health
+.venv/bin/python -m bp_etl run --dataset a_stock --adjust hfq --json
+.venv/bin/python -m bp_etl verify --out /tmp/etl-verify.json
+```
+
+- **灰度**：`BP_ETL_MODE=shadow` → 手工 run 核对 → `on`；
+- **旧 cron 下线/回滚**：`bash scripts/etl_legacy_cron_toggle.sh dry-run|disable|restore`
+  （自动备份 root crontab 与 `/etc/cron.d` 行情文件到 `/opt/backup`）；
+- **管理页**：`/admin/market-data`（仅超级管理员）：数据集就绪/覆盖率/backlog/源健康/质量问题；
+- **重建**：夜窗 `.venv/bin/python -m bp_etl rebuild --dataset all`（A 股 hfq 单锚重建 + 港股/ETF 补缺）。
+

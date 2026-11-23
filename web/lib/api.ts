@@ -270,9 +270,8 @@ export const ASSET_CATEGORY_LABELS: Record<string, string> = Object.fromEntries(
 /** 复权类型(与后端 bp_index_config.extra_params.adjust 一致; 仅 ETF 有) */
 export const ASSET_ADJUST_OPTIONS = [
   { value: "bfq", label: "不复权" },
-  { value: "qfq", label: "前复权" },
   { value: "hfq", label: "后复权" },
-] as const;
+] as const;  // qfq（前复权）已停用
 
 export const ADJUST_LABEL: Record<string, string> = Object.fromEntries(
   ASSET_ADJUST_OPTIONS.map((o) => [o.value, o.label]),
@@ -285,7 +284,7 @@ export interface Asset {
   name?: string;
   asset_class?: string;
   vendor?: string;   // 数据供应商中文短名(东财/新浪/腾讯/中金所/中债)
-  adjust?: string;   // 复权: bfq/qfq/hfq(仅 ETF; 缺省视为不复权)
+  adjust?: string;   // 复权: bfq/hfq(仅 ETF; 缺省视为不复权; qfq 已停用)
   logical_source?: string;  // 逻辑源分组(etf/cn_index/hk_index/global_index/...), 用于隐藏物理 vendor
   last_clean_date?: string | null;  // 该资产最新清洗日
   /** 该资产**最早**清洗日(DDL 50); 仅 with_count 校正路径与回填迁移写入, 老库可能为 null */

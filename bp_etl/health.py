@@ -122,12 +122,12 @@ def record_issues(conn, issues: Sequence[QualityIssue]) -> int:
 
 
 def upsert_dataset_state(
-    conn, dataset: str, last_success_date: date | None, run_id: int | None
+    conn, dataset: str, adjust: str, last_success_date: date | None, run_id: int | None
 ) -> None:
     sql = (
-        "INSERT INTO bp_etl_dataset_state (dataset, last_success_date, last_run_id)"
-        " VALUES (%s, %s, %s)"
-        " ON CONFLICT (dataset) DO UPDATE SET"
+        "INSERT INTO bp_etl_dataset_state (dataset, adjust, last_success_date, last_run_id)"
+        " VALUES (%s, %s, %s, %s)"
+        " ON CONFLICT (dataset, adjust) DO UPDATE SET"
         " last_success_date=GREATEST("
         "   COALESCE(bp_etl_dataset_state.last_success_date, EXCLUDED.last_success_date),"
         "   COALESCE(EXCLUDED.last_success_date, bp_etl_dataset_state.last_success_date)),"
@@ -135,7 +135,7 @@ def upsert_dataset_state(
         " updated_at=now()"
     )
     with conn.cursor() as cur:
-        cur.execute(sql, (dataset, last_success_date, run_id))
+        cur.execute(sql, (dataset, adjust, last_success_date, run_id))
 
 
 def upsert_backlog(
@@ -143,6 +143,7 @@ def upsert_backlog(
     *,
     dataset: str,
     trade_date: date,
+    adjust: str,
     symbols: Sequence[str],
     reason: str,
     next_retry_at: datetime,
@@ -150,42 +151,49 @@ def upsert_backlog(
     if not symbols:
         return 0
     sql = (
-        "INSERT INTO bp_etl_backlog (dataset, trade_date, scope, symbol, reason, attempts, next_retry_at)"
-        " VALUES (%s, %s, 'symbol', %s, %s, 0, %s)"
-        " ON CONFLICT (dataset, trade_date, scope, symbol) DO UPDATE SET"
+        "INSERT INTO bp_etl_backlog (dataset, trade_date, adjust, scope, symbol, reason, attempts, next_retry_at)"
+        " VALUES (%s, %s, %s, 'symbol', %s, %s, 0, %s)"
+        " ON CONFLICT (dataset, trade_date, adjust, scope, symbol) DO UPDATE SET"
         " reason=EXCLUDED.reason, attempts=bp_etl_backlog.attempts + 1,"
         " next_retry_at=EXCLUDED.next_retry_at, updated_at=now()"
     )
-    payload = [(dataset, trade_date, symbol, reason, next_retry_at) for symbol in symbols]
+    payload = [(dataset, trade_date, adjust, symbol, reason, next_retry_at) for symbol in symbols]
     with conn.cursor() as cur:
         cur.executemany(sql, payload)
     return len(payload)
 
 
-def due_backlog(conn, dataset: str, now: datetime, *, limit: int = 5000) -> list[str]:
+def due_backlog(
+    conn, dataset: str, adjust: str, now: datetime, *, limit: int = 5000
+) -> list[str]:
     sql = (
         "SELECT symbol FROM bp_etl_backlog"
-        " WHERE dataset=%s AND next_retry_at <= %s ORDER BY next_retry_at LIMIT %s"
+        " WHERE dataset=%s AND adjust=%s AND next_retry_at <= %s"
+        " ORDER BY next_retry_at LIMIT %s"
     )
     with conn.cursor() as cur:
-        cur.execute(sql, (dataset, now, limit))
+        cur.execute(sql, (dataset, adjust, now, limit))
         return [row[0] for row in cur.fetchall()]
 
 
 def clear_backlog(
-    conn, dataset: str, trade_date: date, symbols: Sequence[str] | None = None
+    conn,
+    dataset: str,
+    trade_date: date,
+    adjust: str,
+    symbols: Sequence[str] | None = None,
 ) -> int:
     if symbols is None:
-        sql = "DELETE FROM bp_etl_backlog WHERE dataset=%s AND trade_date=%s"
-        params: tuple = (dataset, trade_date)
+        sql = "DELETE FROM bp_etl_backlog WHERE dataset=%s AND trade_date=%s AND adjust=%s"
+        params: tuple = (dataset, trade_date, adjust)
     else:
         if not symbols:
             return 0
         sql = (
-            "DELETE FROM bp_etl_backlog WHERE dataset=%s AND trade_date=%s"
+            "DELETE FROM bp_etl_backlog WHERE dataset=%s AND trade_date=%s AND adjust=%s"
             " AND scope='symbol' AND symbol = ANY(%s)"
         )
-        params = (dataset, trade_date, list(symbols))
+        params = (dataset, trade_date, adjust, list(symbols))
     with conn.cursor() as cur:
         cur.execute(sql, params)
         return int(cur.rowcount or 0)
