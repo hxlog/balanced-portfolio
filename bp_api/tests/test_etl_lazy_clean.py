@@ -45,7 +45,7 @@ class FakeConn:
 
 def test_ensure_etl_clean_runs_when_clean_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple] = []
-    monkeypatch.setattr(repositories, "_etl_calendar", lambda: object())
+    monkeypatch.setattr(repositories, "_etl_calendar", lambda conn: object())
     from bp_api.quant import cleaning
 
     monkeypatch.setattr(cleaning, "clean_one", lambda conn, symbol, source, cal, adjust: calls.append((symbol, source, adjust)) or 5)

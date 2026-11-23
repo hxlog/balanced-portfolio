@@ -378,14 +378,39 @@ _ETL_CLEAN_SOURCES = frozenset({"etl_a_stock", "etl_hk_stock", "etl_etf"})
 _ETL_CALENDAR_CACHE: object | None = None
 
 
-def _etl_calendar() -> object:
+class _DbTradingCalendar:
+    """DB 版 A 股交易日历（避免回测热路径走 akshare 新浪接口；后者在限流时会挂起）。"""
+
+    def __init__(self, conn: psycopg.Connection) -> None:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT cal_date FROM bp_trading_calendar"
+                " WHERE market='CN' AND is_trading ORDER BY cal_date"
+            )
+            self._dates = [row[0] for row in cur.fetchall()]
+        self._set = set(self._dates)
+
+    @property
+    def dates(self) -> list:
+        return self._dates
+
+    def is_trading_day(self, d) -> bool:
+        return d in self._set
+
+    def trading_days_between(self, start, end) -> list:
+        return [d for d in self._dates if start <= d <= end]
+
+    def latest_trading_day_on_or_before(self, d):
+        for candidate in reversed(self._dates):
+            if candidate <= d:
+                return candidate
+        return None
+
+
+def _etl_calendar(conn: psycopg.Connection) -> object:
     global _ETL_CALENDAR_CACHE
     if _ETL_CALENDAR_CACHE is None:
-        from bp_ingest.calendar import TradingCalendar
-
-        cal = TradingCalendar()
-        cal.load()
-        _ETL_CALENDAR_CACHE = cal
+        _ETL_CALENDAR_CACHE = _DbTradingCalendar(conn)
     return _ETL_CALENDAR_CACHE
 
 
@@ -417,7 +442,7 @@ def _ensure_etl_clean(conn: psycopg.Connection, symbol: str, source: str) -> Non
         return
     from bp_api.quant import cleaning
 
-    cleaning.clean_one(conn, symbol, source, _etl_calendar(), adjust)  # type: ignore[arg-type]
+    cleaning.clean_one(conn, symbol, source, _etl_calendar(conn), adjust)  # type: ignore[arg-type]
     conn.commit()
 
 
