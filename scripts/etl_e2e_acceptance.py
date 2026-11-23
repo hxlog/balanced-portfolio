@@ -18,11 +18,12 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 sys.stdout.reconfigure(encoding="utf-8")
 
+# 覆盖阈值与 bp_etl.registry 的 coverage_min 对齐（可交易/可发布子集）
 EXPECTED = {
-    "a_stock": {"bfq_min": 0.985, "hfq_min": 0.985},
-    "hk_stock": {"bfq_min": 0.97, "hfq_min": 0.97},
-    "etf": {"bfq_min": 0.99, "hfq_min": 0.99},
-    "fund_nav": {"min": 0.90},
+    "a_stock": {"bfq": 0.985, "hfq": 0.985},
+    "hk_stock": {"bfq": 0.97, "hfq": 0.97},
+    "etf": {"bfq": 0.96, "hfq": 0.96},
+    "fund_nav": {"nav": 0.90},
 }
 ETL_SOURCES = ("etl_a_stock", "etl_hk_stock", "etl_etf")
 
@@ -50,14 +51,17 @@ def evaluate(payload: dict) -> tuple[bool, list[str]]:
     failures: list[str] = []
     for name, rules in EXPECTED.items():
         item = payload["datasets"].get(name, {})
-        for adjust, minimum in rules.items():
-            covered = item.get(adjust, {}).get("covered", 0) if adjust != "min" else item.get("covered", 0)
-            total = item.get(adjust, {}).get("total", 0) if adjust != "min" else item.get("total", 0)
+        for key, minimum in rules.items():
+            if key == "nav":
+                covered, total = item.get("covered", 0), item.get("total", 0)
+            else:
+                covered = item.get(key, {}).get("covered", 0)
+                total = item.get(key, {}).get("total", 0)
             ratio = _ratio(covered, total)
             if ratio < minimum:
-                failures.append(f"{name}:{adjust} 覆盖 {covered}/{total}={ratio:.4f} < {minimum}")
-            if not item.get("state_ok_" + (adjust if adjust != "min" else "nav"), False):
-                failures.append(f"{name}:{adjust} last_success 未追平")
+                failures.append(f"{name}:{key} 覆盖 {covered}/{total}={ratio:.4f} < {minimum}")
+            if not item.get(f"state_ok_{key}", False):
+                failures.append(f"{name}:{key} last_success 未追平")
     return (not failures, failures)
 
 
