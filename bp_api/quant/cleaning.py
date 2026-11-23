@@ -91,6 +91,14 @@ _NEVER_CONVERT_SOURCES = frozenset({"crypto_yfinance", "dxy_em", "gold_comex_em"
 
 FX_SOURCE = "fx_sina"
 
+# 统一 ETL 资产：原始行情在 v3 表（source=etl_*），清洗结果仍写 bp_quote_clean，
+# 从而回测/构建器通过既有 symbol@source 体系无感复用（见 ddl/77 + scripts/seed_etl_assets.py）。
+_ETL_RAW_TABLE: dict[str, tuple[str, str]] = {
+    "etl_a_stock": ("bp_stock_quote_daily", "symbol"),
+    "etl_hk_stock": ("bp_stock_quote_daily", "symbol"),
+    "etl_etf": ("bp_etf_quote_daily", "etf_code"),
+}
+
 
 def _load_currency(conn: psycopg.Connection, symbol: str, source: str) -> str:
     """读取资产计价币种; 缺配置行(如测试夹具)视为 CNY。"""
@@ -186,16 +194,25 @@ def _fx_column_value(value, convert: bool, currency: str) -> Optional[float]:
 def _load_raw(
     conn: psycopg.Connection, symbol: str, source: str, adjust: str = "bfq"
 ) -> pd.DataFrame:
+    etl_target = _ETL_RAW_TABLE.get(source)
     with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT trade_date, open, high, low, close, volume
-            FROM bp_index_quote_daily
-            WHERE symbol = %s AND source = %s AND adjust = %s
-            ORDER BY trade_date
-            """,
-            (symbol, source, adjust),
-        )
+        if etl_target is not None:
+            table, key_column = etl_target
+            cur.execute(
+                f"SELECT trade_date, open, high, low, close, volume FROM {table}"
+                f" WHERE {key_column} = %s AND adjust = %s ORDER BY trade_date",
+                (symbol, adjust),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT trade_date, open, high, low, close, volume
+                FROM bp_index_quote_daily
+                WHERE symbol = %s AND source = %s AND adjust = %s
+                ORDER BY trade_date
+                """,
+                (symbol, source, adjust),
+            )
         rows = cur.fetchall()
     if not rows:
         return pd.DataFrame()
@@ -214,20 +231,34 @@ def _list_targets(
 ) -> list[tuple[str, str]]:
     # 清洗只保留每个资产的**回测主口径**(bp_index_config.adjust)；
     # 多口径原始数据(股票 bfq/qfq/hfq)只服务展示，不进清洗面板。
-    sql = """
+    # 统一 ETL 资产（managed_by='bp_etl'）走 v3 原始表，但清洗目标同一套。
+    targets: list[tuple[str, str, str]] = []
+    params: list = []
+    etl_sql = (
+        "SELECT DISTINCT c.symbol, c.source, COALESCE(c.adjust, 'hfq') AS adjust"
+        " FROM bp_index_config c"
+        " WHERE c.is_deleted = 0 AND c.managed_by = 'bp_etl'"
+    )
+    if symbols:
+        etl_sql += " AND c.symbol = ANY(%s)"
+        params.append(symbols)
+    legacy_sql = """
         SELECT DISTINCT q.symbol, q.source, COALESCE(c.adjust, 'bfq') AS adjust
         FROM bp_index_quote_daily q
         LEFT JOIN bp_index_config c
                ON c.symbol = q.symbol AND c.source = q.source AND c.is_deleted = 0
         WHERE q.adjust = COALESCE(c.adjust, 'bfq')
     """
-    params: list = []
+    legacy_params: list = []
     if symbols:
-        sql += " AND q.symbol = ANY(%s)"
-        params.append(symbols)
+        legacy_sql += " AND q.symbol = ANY(%s)"
+        legacy_params.append(symbols)
     with conn.cursor() as cur:
-        cur.execute(sql, params)
-        return [(r[0], r[1], r[2]) for r in cur.fetchall()]
+        cur.execute(etl_sql, params)
+        targets.extend((r[0], r[1], r[2]) for r in cur.fetchall())
+        cur.execute(legacy_sql, legacy_params)
+        targets.extend((r[0], r[1], r[2]) for r in cur.fetchall())
+    return targets
 
 
 def _clean_natural(

@@ -1874,6 +1874,38 @@ def list_asset_portfolios(conn: psycopg.Connection) -> list[dict]:
         return [{"key": k, "portfolios": v} for k, v in out.items()]
 
 
+# 统一 ETL 资产的原始行情在 v3 表；bp_asset_data_status 的 raw 侧统计按源路由。
+_ETL_RAW_TABLE: dict[str, str] = {
+    "etl_a_stock": "bp_stock_quote_daily",
+    "etl_hk_stock": "bp_stock_quote_daily",
+    "etl_etf": "bp_etf_quote_daily",
+}
+
+
+def _raw_scan_sql(source: str, *, with_count: bool) -> tuple[str, tuple]:
+    """raw 侧 MAX/COUNT 查询与额外参数：ETL 源读 v3 表（hfq 口径），旧源读 bp_index_quote_daily。"""
+    table = _ETL_RAW_TABLE.get(source)
+    if table is not None:
+        column = "etf_code" if table == "bp_etf_quote_daily" else "symbol"
+        if with_count:
+            return (
+                f"SELECT MAX(trade_date), COUNT(*) FROM {table}"
+                f" WHERE {column}=%s AND adjust='hfq'",
+                (),
+            )
+        return (f"SELECT MAX(trade_date) FROM {table} WHERE {column}=%s AND adjust='hfq'", ())
+    if with_count:
+        return (
+            "SELECT MAX(trade_date), COUNT(*) FROM bp_index_quote_daily"
+            " WHERE symbol=%s AND source=%s",
+            (source,),
+        )
+    return (
+        "SELECT MAX(trade_date) FROM bp_index_quote_daily WHERE symbol=%s AND source=%s",
+        (source,),
+    )
+
+
 def refresh_asset_status(
     conn: psycopg.Connection,
     symbol: str,
@@ -1904,10 +1936,8 @@ def refresh_asset_status(
     with conn.cursor() as cur:
         success_at = datetime.now(timezone.utc) if error is None else None
         if with_count:
-            cur.execute(
-                "SELECT MAX(trade_date), COUNT(*) FROM bp_index_quote_daily WHERE symbol=%s AND source=%s",
-                (symbol, source),
-            )
+            raw_sql, raw_extra = _raw_scan_sql(source, with_count=True)
+            cur.execute(raw_sql, (symbol, *raw_extra))
             raw_date, raw_rows = cur.fetchone()
             # 50: MIN 与 MAX/COUNT 同一次扫描随身取回, 不给热路径增加查询。
             cur.execute(
@@ -1935,10 +1965,8 @@ def refresh_asset_status(
                 (symbol, source, raw_date, clean_date, clean_first, raw_rows or 0, clean_rows or 0, success_at, error, probe_ms, probe_kind),
             )
         else:
-            cur.execute(
-                "SELECT MAX(trade_date) FROM bp_index_quote_daily WHERE symbol=%s AND source=%s",
-                (symbol, source),
-            )
+            raw_sql, raw_extra = _raw_scan_sql(source, with_count=False)
+            cur.execute(raw_sql, (symbol, *raw_extra))
             raw_date = cur.fetchone()[0]
             cur.execute(
                 "SELECT MAX(trade_date) FROM bp_quote_clean WHERE symbol=%s AND source=%s",
