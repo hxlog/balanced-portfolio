@@ -372,6 +372,55 @@ def _compose_benchmark_series(
     return (1.0 + total).cumprod()
 
 
+# 统一 ETL 资产（managed_by='bp_etl'）：清洗改为**按需惰性**，避免一次性清洗 9,430 只
+# 全历史（约 1,300 万行）拖垮数据库；回测/构建器首次用到某只时才清洗该只。
+_ETL_CLEAN_SOURCES = frozenset({"etl_a_stock", "etl_hk_stock", "etl_etf"})
+_ETL_CALENDAR_CACHE: object | None = None
+
+
+def _etl_calendar() -> object:
+    global _ETL_CALENDAR_CACHE
+    if _ETL_CALENDAR_CACHE is None:
+        from bp_ingest.calendar import TradingCalendar
+
+        cal = TradingCalendar()
+        cal.load()
+        _ETL_CALENDAR_CACHE = cal
+    return _ETL_CALENDAR_CACHE
+
+
+def _ensure_etl_clean(conn: psycopg.Connection, symbol: str, source: str) -> None:
+    """ETL 资产按需清洗：清洗表缺失/落后于原始表时，用既有清洗口径补该只。"""
+    if source not in _ETL_CLEAN_SOURCES:
+        return
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT COALESCE(adjust, 'hfq') FROM bp_index_config"
+            " WHERE symbol=%s AND source=%s AND is_deleted=0",
+            (symbol, source),
+        )
+        row = cur.fetchone()
+        if not row:
+            return
+        adjust = row[0]
+        raw_sql, raw_extra = _raw_scan_sql(source, with_count=False)
+        cur.execute(raw_sql, (symbol, *raw_extra))
+        raw_max = cur.fetchone()[0]
+        cur.execute(
+            "SELECT MAX(trade_date) FROM bp_quote_clean WHERE symbol=%s AND source=%s",
+            (symbol, source),
+        )
+        clean_max = cur.fetchone()[0]
+    if raw_max is None:
+        return
+    if clean_max is not None and clean_max >= raw_max:
+        return
+    from bp_api.quant import cleaning
+
+    cleaning.clean_one(conn, symbol, source, _etl_calendar(), adjust)  # type: ignore[arg-type]
+    conn.commit()
+
+
 def load_price_panel(
     conn: psycopg.Connection, pairs: list[tuple[str, str]]
 ) -> pd.DataFrame:
@@ -383,6 +432,11 @@ def load_price_panel(
     """
     series = {}
     for symbol, source in pairs:
+        if source in _ETL_CLEAN_SOURCES:
+            try:
+                _ensure_etl_clean(conn, symbol, source)
+            except Exception:  # noqa: BLE001 - 清洗失败按原有「无数据」错误处理
+                logger.warning("ETL 资产按需清洗失败 %s@%s", symbol, source, exc_info=True)
         s = _load_series(conn, symbol, source)
         if s.empty:
             raise ValueError(f"{asset_key(symbol, source)} 无清洗行情数据, 请先运行 ingest/clean")
