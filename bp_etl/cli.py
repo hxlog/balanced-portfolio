@@ -37,6 +37,8 @@ def build_parser() -> argparse.ArgumentParser:
     rebuild_p.add_argument("--since", default="2020-01-01")
     rebuild_p.add_argument("--limit", type=int, default=0, help="仅处理前 N 只（冒烟）")
     rebuild_p.add_argument("--force", action="store_true")
+    rebuild_p.add_argument("--mode", default="delta", choices=["delta", "full"],
+                          help="delta=只补缺失 hfq 日期（默认，快）；full=整段重写历史")
     rebuild_p.add_argument("--json", action="store_true")
 
     verify_p = sub.add_parser("verify", help="重建/日常校验（覆盖、比率漂移）")
@@ -154,6 +156,7 @@ def cmd_rebuild(args: argparse.Namespace) -> int:
         since=date.fromisoformat(args.since),
         limit=args.limit or None,
         force=args.force,
+        mode=args.mode,
     )
     if args.json:
         print(json.dumps(reports, ensure_ascii=False, indent=1))

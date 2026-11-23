@@ -150,3 +150,26 @@ def test_cli_has_rebuild_and_verify() -> None:
     assert args.command == "rebuild" and args.limit == 5
     args2 = parser.parse_args(["verify", "--sample", "50", "--out", "x.json"])
     assert args2.command == "verify" and args2.sample == 50
+
+def test_rebuild_delta_mode_writes_only_missing_dates(monkeypatch: pytest.MonkeyPatch) -> None:
+    conn = FakeConn(rows=[("600036",)])
+    bfq = [
+        Bar(symbol="600036", trade_date=D1, open=9.0, high=11.0, low=8.0, close=10.0,
+            volume=100, amount=None, source="rebuild_bfq", adjust="bfq"),
+        Bar(symbol="600036", trade_date=D2, open=10.0, high=12.0, low=9.0, close=11.0,
+            volume=100, amount=None, source="rebuild_bfq", adjust="bfq"),
+    ]
+    monkeypatch.setattr(rebuild_mod, "read_bfq_history", lambda *a, **kw: bfq)
+    monkeypatch.setattr(rebuild_mod, "_max_date", lambda *a, **kw: D1)
+    monkeypatch.setattr(rebuild_mod, "_existing_hfq_dates", lambda *a, **kw: {D1})
+    monkeypatch.setattr(adapters.sina, "fetch_hfq_factor", lambda ch, sym: [(date(2020, 1, 1), 1.0)])
+    monkeypatch.setattr(adapters.sina, "build_hfq_from_bfq", lambda bars, factors: [
+        Bar(symbol=b.symbol, trade_date=b.trade_date, open=b.open, high=b.high, low=b.low,
+            close=b.close, volume=b.volume, amount=None, source="sina_kline", adjust="hfq")
+        for b in bars
+    ])
+    written: list[list] = []
+    monkeypatch.setattr(writer_mod, "write_bars", lambda conn_, spec, rows: written.append(list(rows)) or len(rows))
+    report = rebuild_a_stock_hfq(conn, FakeManager(), since=date(2020, 1, 1), mode="delta")
+    assert report.written == 1
+    assert len(written[0]) == 1 and written[0][0].trade_date == D2

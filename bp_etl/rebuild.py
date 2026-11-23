@@ -106,6 +106,16 @@ def delete_other_sources(
         return int(cur.rowcount or 0)
 
 
+def _existing_hfq_dates(conn: Any, spec: DatasetSpec, symbol: str, anchor: str) -> set[date]:
+    sql = (
+        f"SELECT trade_date FROM {spec.table}"
+        f" WHERE {spec.key_column} = %s AND adjust = 'hfq' AND source = %s"
+    )
+    with conn.cursor() as cur:
+        cur.execute(sql, (symbol, anchor))
+        return {row[0] for row in cur.fetchall()}
+
+
 def rebuild_a_stock_hfq(
     conn: Any,
     channels: ChannelManager,
@@ -113,6 +123,7 @@ def rebuild_a_stock_hfq(
     since: date,
     limit: int | None = None,
     force: bool = False,
+    mode: str = "delta",
 ) -> RebuildReport:
     spec = A_STOCK
     report = RebuildReport(dataset=spec.name, adjust="hfq")
@@ -132,10 +143,25 @@ def rebuild_a_stock_hfq(
         if not bfq:
             report.skipped += 1
             continue
-        existing_hfq = _max_date(conn, spec, code, "hfq")
-        if not force and existing_hfq is not None and existing_hfq >= bfq[-1].trade_date:
+        anchor_dates = _existing_hfq_dates(conn, spec, code, "sina_kline")
+        existing_hfq = max(anchor_dates) if anchor_dates else None
+        if (
+            not force
+            and mode == "delta"
+            and existing_hfq is not None
+            and existing_hfq >= bfq[-1].trade_date
+        ):
+            # 数据已覆盖到最新：仍需删除可能的非锚源历史行（修复混源口径），保留计数
+            report.deleted_legacy += delete_other_sources(
+                conn, spec, "hfq", "sina_kline", symbols=[code]
+            )
+            conn.commit()
             report.skipped += 1
             continue
+        if not force and mode == "delta":
+            existing_dates = anchor_dates
+        else:
+            existing_dates = set()
         sina_symbol, _ = adapters.tencent.split_market(code)
         try:
             factors = adapters.sina.fetch_hfq_factor(factor_channel, sina_symbol)
@@ -145,6 +171,8 @@ def rebuild_a_stock_hfq(
             report.failed += 1
             continue
         report.deleted_legacy += delete_other_sources(conn, spec, "hfq", "sina_kline", symbols=[code])
+        if existing_dates:
+            hfq_rows = [row for row in hfq_rows if row.trade_date not in existing_dates]
         report.written += writer.write_bars(conn, spec, hfq_rows)
         report.symbols += 1
         conn.commit()
@@ -214,6 +242,7 @@ def rebuild(
     since: date = date(2020, 1, 1),
     limit: int | None = None,
     force: bool = False,
+    mode: str = "delta",
 ) -> list[dict[str, Any]]:
     """执行重建（CLI 调用）。"""
     conn = default_conn_factory(config)()
@@ -223,7 +252,7 @@ def rebuild(
         if dataset in ("a_stock", "all"):
             reports.append(
                 rebuild_a_stock_hfq(
-                    next_conn(conn), channels, since=since, limit=limit, force=force
+                    next_conn(conn), channels, since=since, limit=limit, force=force, mode=mode
                 )
             )
         if dataset in ("hk_stock", "all"):
