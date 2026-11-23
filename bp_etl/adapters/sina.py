@@ -40,8 +40,19 @@ def parse_hfq_factor(text: str, *, source: str = SOURCE_A) -> list[tuple[date, f
     factors: list[tuple[date, float]] = []
     for row in rows:
         try:
-            factors.append((date.fromisoformat(str(row[0])[:10]), float(row[1])))
-        except (ValueError, IndexError, TypeError):
+            if isinstance(row, dict):
+                # 新浪 2026 格式: {"d":"2026-07-10","f":"6.74..."}；兼容旧键名
+                day = row.get("d") or row.get("date")
+                value = row.get("f") or row.get("hfq_factor") or row.get("factor")
+                if day is None or value is None:
+                    values = list(row.values())
+                    if len(values) < 2:
+                        continue
+                    day, value = values[0], values[1]
+            else:
+                day, value = row[0], row[1]
+            factors.append((date.fromisoformat(str(day)[:10]), float(value)))
+        except (ValueError, IndexError, TypeError, KeyError):
             continue
     factors.sort(key=lambda item: item[0])
     return factors

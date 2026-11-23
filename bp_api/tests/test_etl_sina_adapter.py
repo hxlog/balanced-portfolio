@@ -59,6 +59,14 @@ def test_parse_hfq_factor() -> None:
     ]
 
 
+def test_parse_hfq_factor_supports_new_dict_format() -> None:
+    factors = parse_hfq_factor(FACTOR_TEXT_NEW)
+    assert factors == [
+        (date(2026, 1, 16), 6.562194383141),
+        (date(2026, 7, 10), 6.7422879877129),
+    ]
+
+
 def test_parse_hfq_factor_rejects_html() -> None:
     with pytest.raises(SourceParseError):
         parse_hfq_factor("<html>WAF</html>")
