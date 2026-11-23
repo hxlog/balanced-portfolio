@@ -35,11 +35,11 @@ sleep 5
 curl -sf "http://127.0.0.1:8000/api/health" >/dev/null && log "API OK" || log "WARN API 未就绪"
 
 log "== 4) 串行补数（一次一个）=="
-wait_mem; .venv/bin/python -m bp_etl run --dataset a_stock --adjust bfq --json | tail -5
+wait_mem; .venv/bin/python -m bp_etl run --dataset a_stock --adjust bfq --force --json | tail -5
 wait_mem; .venv/bin/python -m bp_etl rebuild --dataset a_stock --mode delta --json | tail -5
-wait_mem; .venv/bin/python -m bp_etl run --dataset hk_stock --json | tail -5
-wait_mem; .venv/bin/python -m bp_etl run --dataset etf --json | tail -5
-wait_mem; .venv/bin/python -m bp_etl run --dataset fund_nav --json | tail -5
+wait_mem; .venv/bin/python -m bp_etl run --dataset hk_stock --force --json | tail -5
+wait_mem; .venv/bin/python -m bp_etl run --dataset etf --force --json | tail -5
+wait_mem; .venv/bin/python -m bp_etl run --dataset fund_nav --force --json | tail -5
 
 log "== 5) 启动 bp-etl 常驻无限追赶 =="
 pm2 start bp-etl --update-env 2>/dev/null || pm2 restart bp-etl --update-env
