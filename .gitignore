@@ -66,5 +66,8 @@ desktop.ini
 # ===== 临时脚本 =====
 _e2e.py
 
+# superpowers / SDD 工作区（ledger、brief、review package 等脚手架产物）
+.superpowers/
+
 # Playwright MCP 的截图/追踪/临时脚本产物
 .playwright-mcp
