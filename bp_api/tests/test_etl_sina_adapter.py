@@ -17,6 +17,11 @@ from bp_etl.adapters.sina import (
 )
 
 FACTOR_TEXT = 'var _hfq_factor = {"total":3,"data":[["2020-01-02",1.0],["2021-07-01",1.25],["2026-11-01",1.4]]};\n'
+# 2026 年新浪实际格式：data 行是 {"d": 日期, "f": 因子} 字典
+FACTOR_TEXT_NEW = (
+    'var sh600036hfq={"total":2,"data":'
+    '[{"d":"2026-07-10", "f":"6.7422879877129000"},{"d":"2026-01-16", "f":"6.5621943831410000"}]};'
+)
 
 
 class FakeResponse:
