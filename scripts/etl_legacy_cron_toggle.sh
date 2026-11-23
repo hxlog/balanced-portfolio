@@ -22,15 +22,16 @@ CRON_PATTERNS=(
   "refresh_asset_coverage.py"
 )
 
-# /etc/cron.d 下要禁用的旧行情链文件（保留 crypto/MVI/估值/基金风险）
+# /etc/cron.d 下要禁用的文件。
+# P1 阶段：只处理 bp-fund-nav（其 nav 抓取已被 bp_etl 接管；该文件另行改写为仅保留风险重算）。
+# P2 迁入旧指数链后，再把 bp-index-quotes / -retry / bp-xueqiu-quotes / bp-csindex-quotes /
+# bp-index-extremes 加入此列表（脚本逻辑已支持）。
 CRON_D_FILES=(
-  "bp-index-quotes"
-  "bp-index-quotes-retry"
-  "bp-xueqiu-quotes"
-  "bp-csindex-quotes"
-  "bp-quote-repair"
-  "bp-fund-nav"
-  "bp-index-extremes"
+  # "bp-index-quotes"
+  # "bp-index-quotes-retry"
+  # "bp-xueqiu-quotes"
+  # "bp-csindex-quotes"
+  # "bp-index-extremes"
 )
 
 latest_backup() {
