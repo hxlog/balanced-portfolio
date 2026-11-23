@@ -43,6 +43,17 @@ class Bar:
     adjust: str = "bfq"
 
 
+@dataclass(frozen=True)
+class NavRow:
+    """场外基金净值行（bp_fund_nav_daily）。"""
+
+    fund_code: str
+    trade_date: date
+    nav: float
+    acc_nav: Optional[float] = None
+    source: str = ""
+
+
 def ensure_adjust(adjust: str) -> str:
     """qfq 已停用：任何适配器收到 qfq 必须立即失败（防止口径回潮）。"""
     if adjust == "qfq":
