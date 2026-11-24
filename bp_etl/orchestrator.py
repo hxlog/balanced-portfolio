@@ -293,9 +293,10 @@ class Orchestrator:
                 coverage = self._db_coverage(
                     conn, spec, trade_date, result.adjust, expected
                 )
-                has_error = any(issue.severity == "error" for issue in wave_issues)
+                # 追平判定只看库内覆盖率：被质量门拒绝的行已不入库、且 issue 已落库审计，
+                # 不应因个别源脏行把整个 dataset 永远卡在未追平。
                 report = QualityReport(
-                    ok=coverage >= spec.coverage_min and not has_error,
+                    ok=coverage >= spec.coverage_min,
                     coverage=coverage,
                     issues=wave_issues,
                 )
