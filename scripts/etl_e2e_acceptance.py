@@ -124,9 +124,26 @@ def collect(conn, trade_date: date) -> dict:
         cur.execute("SELECT count(*) FROM bp_stock_master WHERE market IN ('SH','SZ','BJ') AND is_delisted=FALSE")
         a_total = int(cur.fetchone()[0])
         cur.execute("SELECT count(*) FROM bp_stock_master WHERE market='HK' AND is_delisted=FALSE")
-        hk_total = int(cur.fetchone()[0])
+        hk_master_total = int(cur.fetchone()[0])
         cur.execute("SELECT count(*) FROM bp_etf_master")
-        etf_total = int(cur.fetchone()[0])
+        etf_master_total = int(cur.fetchone()[0])
+        # 可交易子集：上一交易日实际有行情的标的数（停牌/退市不应计入分母）
+        cur.execute(
+            "SELECT count(DISTINCT symbol) FROM bp_stock_quote_daily"
+            " WHERE adjust='bfq' AND length(symbol)=5 AND trade_date ="
+            " (SELECT max(trade_date) FROM bp_stock_quote_daily"
+            "  WHERE adjust='bfq' AND length(symbol)=5 AND trade_date < %s)",
+            (trade_date,),
+        )
+        hk_total = int(cur.fetchone()[0]) or hk_master_total
+        cur.execute(
+            "SELECT count(DISTINCT etf_code) FROM bp_etf_quote_daily"
+            " WHERE adjust='bfq' AND trade_date ="
+            " (SELECT max(trade_date) FROM bp_etf_quote_daily"
+            "  WHERE adjust='bfq' AND trade_date < %s)",
+            (trade_date,),
+        )
+        etf_total = int(cur.fetchone()[0]) or etf_master_total
         # 基金分母 = 上一交易日已发布净值数（可发布子集），而非主数据全量；
         # 货币/封闭/晚披露基金天然不参与每日净值。
         cur.execute(
@@ -172,6 +189,12 @@ def collect(conn, trade_date: date) -> dict:
             "total": fund_total,
             "state_ok_nav": state("fund_nav", "nav"),
         },
+    }
+    payload["active_universe"] = {
+        "hk": hk_total,
+        "hk_master": hk_master_total,
+        "etf": etf_total,
+        "etf_master": etf_master_total,
     }
     payload["backlog"] = backlog
     payload["clean"] = {"etl_assets_with_clean_rows": clean_etl}
