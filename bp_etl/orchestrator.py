@@ -367,10 +367,14 @@ class Orchestrator:
 
     # -- batch / service ---------------------------------------------
     def run_due(self, *, now: datetime | None = None, force: bool = False) -> list[WaveResult]:
+        """执行所有已到期且未追平的波次：按 target_time 升序（越逾期越先跑，保障 SLA）。"""
+        from datetime import time as _time
+
         now = now or self._now_fn()
         outcomes: list[WaveResult] = []
         with self._conn_factory() as conn:
             confirmed: dict[str, date | None] = {}
+            candidates: list[tuple[_time, str, str, date]] = []
             for name, runner in self.runners.items():
                 kind = runner.spec.close_confirm
                 trade_date = confirmed.get(kind)
@@ -388,12 +392,19 @@ class Orchestrator:
                     next_at = self._last_retry.get(key)
                     if next_at is not None and now < next_at and not force:
                         continue
-                    outcome = self.run_wave(name, adjust, trade_date=trade_date, wave=1, now=now, force=force)
-                    outcomes.append(outcome)
-                    if not outcome.ok and not outcome.skipped:
-                        self._last_retry[key] = now + (outcome.next_retry_in or RETRY_INITIAL)
-                    else:
-                        self._last_retry.pop(key, None)
+                    target = runner.spec.target_time.get(adjust) or _time(23, 59)
+                    candidates.append((target, name, adjust, trade_date))
+            candidates.sort(key=lambda item: (item[0], item[1]))
+            for _target, name, adjust, trade_date in candidates:
+                outcome = self.run_wave(
+                    name, adjust, trade_date=trade_date, wave=1, now=now, force=force
+                )
+                outcomes.append(outcome)
+                key = (name, adjust)
+                if not outcome.ok and not outcome.skipped:
+                    self._last_retry[key] = now + (outcome.next_retry_in or RETRY_INITIAL)
+                else:
+                    self._last_retry.pop(key, None)
         return outcomes
 
     def run_backlog(

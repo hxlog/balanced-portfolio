@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+import os
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Sequence
 
 from bp_etl import adapters
@@ -9,6 +12,8 @@ from bp_etl.adapters.base import Bar
 from bp_etl.channels import ChannelManager
 from bp_etl.datasets._common import existing_symbols
 from bp_etl.registry import REGISTRY
+
+logger = logging.getLogger(__name__)
 
 UNIVERSE_SQL = (
     "SELECT stock_code FROM bp_stock_master"
@@ -47,16 +52,20 @@ class AStockRunner:
             "bp_stock_quote_daily", "symbol", "sina_kline", "hfq", trade_date
         )
         by_symbol = {bar.symbol: bar for bar in today_bfq}
-        for code in codes:
-            if code in done:
-                continue
-            bar = by_symbol.get(code)
-            if bar is None:
-                continue
+        pending = [code for code in codes if code not in done and code in by_symbol]
+
+        def _one(code: str) -> list[Bar]:
             sina_symbol, _ = adapters.tencent.split_market(code)
             try:
                 factors = adapters.sina.fetch_hfq_factor(sina_channel, sina_symbol)
             except Exception:  # noqa: BLE001 - 因子单只失败下次波次再补
-                continue
-            out.extend(adapters.sina.build_hfq_from_bfq([bar], factors))
+                return []
+            return adapters.sina.build_hfq_from_bfq([by_symbol[code]], factors)
+
+        # 因子请求是延迟瓶颈：并发 6 路（共享 TokenBucket 限速仍在 4/s），
+        # 日更从 ~1 只/秒提升到接近限速上限。
+        workers = int(os.getenv("BP_A_HFQ_WORKERS", "6") or "6")
+        with ThreadPoolExecutor(max_workers=max(1, min(workers, 8))) as pool:
+            for bars in pool.map(_one, pending):
+                out.extend(bars)
         return out
