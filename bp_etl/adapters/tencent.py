@@ -122,7 +122,15 @@ def parse_kline_rows(
 ) -> list[Bar]:
     """解析 fqkline/hkfqkline 的 data[symbol][day|qfqday|hfqday]。"""
     ensure_adjust(adjust)
-    data = (payload.get("data") or {}).get(symbol)
+    data_map = payload.get("data") or {}
+    data = data_map.get(symbol)
+    if not isinstance(data, dict):
+        # 腾讯返回的 data key 是带市场前缀的 qt 代码（sh600036/hk00700）；入库 key 用裸代码
+        for _prefix in ("sh", "sz", "bj", "hk"):
+            candidate = data_map.get(_prefix + symbol)
+            if isinstance(candidate, dict):
+                data = candidate
+                break
     if not isinstance(data, dict):
         return []
     key = {"bfq": "day", "hfq": "hfqday"}[adjust]
@@ -170,6 +178,8 @@ def fetch_kline(
     ensure_adjust(adjust)
     qt_symbol, detected_market = split_market(symbol)
     market = market or detected_market
+    # 落库 key 用裸代码（600036/00700/510300）：qt 前缀仅用于请求，绝不写进 symbol
+    bare_symbol = qt_symbol[2:] if qt_symbol[:2].lower() in {"sh", "sz", "bj", "hk"} else qt_symbol
     is_hk = market == "HK"
     path = "hkfqkline" if (is_hk and adjust == "hfq") else "fqkline"
     src = source or (SOURCE_KLINE_HK if is_hk else SOURCE_KLINE_A_ETF)
@@ -180,7 +190,7 @@ def fetch_kline(
         try:
             response = channel.get(f"{host}/{path}/get", timeout=15, params=params)
             payload = json_body(response, source=src)
-            return parse_kline_rows(payload, qt_symbol, adjust, source=src)
+            return parse_kline_rows(payload, bare_symbol, adjust, source=src)
         except Exception as exc:  # noqa: BLE001 - 主端点 WAF 时换备用端点
             last_error = exc
             if not isinstance(exc, SourceParseError):
