@@ -114,19 +114,28 @@ def cmd_service(_args: argparse.Namespace) -> int:
             time.sleep(3600)
     orch = Orchestrator(config, runners=get_runners(config))
     memory_min = int(os.getenv("BP_ETL_MIN_MEM_MB", "500") or "500")
+    logger = logging.getLogger(__name__)
+    logger.info("bp-etl service 启动: mode=%s relay_sg=%s relay2=%s", config.mode, config.relay_sg, config.relay_prologue)
+
+    def _in_priority_window(now: time) -> bool:
+        """15:00-23:00 为当日行情优先窗口：先跑计划波次，backlog 留到夜间/凌晨。"""
+        return time(15, 0) <= now <= time(23, 0)
+
     while True:
         available = mem_available_mb()
         if available is not None and available < memory_min:
-            logging.getLogger(__name__).warning(
-                "可用内存 %sMB < %sMB，ETL 暂停本轮（等待重活结束）", available, memory_min
-            )
+            logger.warning("可用内存 %sMB < %sMB，ETL 暂停本轮（等待重活结束）", available, memory_min)
             time.sleep(120)
             continue
         try:
-            orch.run_due()
-            orch.run_backlog()
+            due = orch.run_due()
+            ran = any(not getattr(item, "skipped", True) for item in due)
+            # 收盘优先窗口内：只要有计划波次在进行/刚完成，就先不跑 backlog（避免长尾拖慢当日 SLA）
+            now_time = orch.now_fn().time() if hasattr(orch, "now_fn") else __import__("datetime").datetime.now().time()
+            if not _in_priority_window(now_time) and not ran:
+                orch.run_backlog(limit=1)
         except Exception:  # noqa: BLE001 - 单轮失败不终止常驻
-            logging.getLogger(__name__).exception("ETL 轮次异常（继续下一轮）")
+            logger.exception("ETL 轮次异常（继续下一轮）")
         time.sleep(60)
 
 
