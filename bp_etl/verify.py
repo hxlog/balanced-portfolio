@@ -53,6 +53,13 @@ def _dataset_summary(conn: Any, spec: DatasetSpec) -> list[dict[str, Any]]:
     return out
 
 
+def _market_filter(spec: DatasetSpec) -> str:
+    """同一张 stock 表按 symbol 长度区分 A 股(6)/港股(5)，避免抽样串市场。"""
+    if spec.table == "bp_stock_quote_daily":
+        return " AND length(symbol)=6" if spec.name == "a_stock" else " AND length(symbol)=5"
+    return ""
+
+
 def sample_ratio_drift(
     conn: Any, spec: DatasetSpec, *, sample: int = 100, days: int = 60, seed: int = 42
 ) -> dict[str, Any]:
@@ -62,7 +69,7 @@ def sample_ratio_drift(
     since = date.today() - timedelta(days=days)
     sql = (
         f"SELECT {spec.key_column} FROM {spec.table} WHERE adjust='hfq'"
-        " GROUP BY 1 ORDER BY 1 LIMIT %s"
+        f"{_market_filter(spec)} GROUP BY 1 ORDER BY 1 LIMIT %s"
     )
     with conn.cursor() as cur:
         cur.execute(sql, (sample * 3,))
@@ -73,6 +80,7 @@ def sample_ratio_drift(
             f"SELECT trade_date, max(CASE WHEN adjust='bfq' THEN close END) AS bfq,"
             f" max(CASE WHEN adjust='hfq' THEN close END) AS hfq"
             f" FROM {spec.table} WHERE {spec.key_column} = %s AND trade_date >= %s"
+            f"{_market_filter(spec)}"
             " GROUP BY trade_date ORDER BY trade_date"
         )
         with conn.cursor() as cur:
