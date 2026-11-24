@@ -72,11 +72,13 @@ def collect(conn, trade_date: date) -> dict:
     payload["generated_at"] = datetime.now(timezone(timedelta(hours=8))).isoformat()
     with conn.cursor() as cur:
         def state(name: str, adjust: str) -> bool:
-            cur.execute(
-                "SELECT last_success_date FROM bp_etl_dataset_state WHERE dataset=%s AND adjust=%s",
-                (name, adjust),
-            )
-            row = cur.fetchone()
+            with conn.cursor() as state_cur:
+                state_cur.execute(
+                    "SELECT last_success_date FROM bp_etl_dataset_state"
+                    " WHERE dataset=%s AND adjust=%s",
+                    (name, adjust),
+                )
+                row = state_cur.fetchone()
             return bool(row and row[0] and row[0] >= trade_date)
 
         cur.execute(
