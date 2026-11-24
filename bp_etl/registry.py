@@ -142,8 +142,9 @@ SOURCES: dict[str, SourceSpec] = {
         dataset_kinds=("hk_stock",),
     ),
     "sina_kline": SourceSpec(
+        # hfq.js 因子文件轻量（~2KB），实测 16 线程可 70s 抓完 5,200 只；限速放宽到 12/s
         name="sina_kline", adapter="sina.a_stock", channel="direct",
-        adjust_support=("bfq", "hfq"), rate_per_sec=4.0, concurrency=4,
+        adjust_support=("bfq", "hfq"), rate_per_sec=12.0, concurrency=6,
         dataset_kinds=("a_stock",),
     ),
     "sina_hk_kline": SourceSpec(
