@@ -104,6 +104,8 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_service(_args: argparse.Namespace) -> int:
+    from datetime import time as dt_time
+
     from bp_etl.guard import mem_available_mb
 
     config = load_etl_config()
@@ -117,9 +119,9 @@ def cmd_service(_args: argparse.Namespace) -> int:
     logger = logging.getLogger(__name__)
     logger.info("bp-etl service 启动: mode=%s relay_sg=%s relay2=%s", config.mode, config.relay_sg, config.relay_prologue)
 
-    def _in_priority_window(now: time) -> bool:
+    def _in_priority_window(now: dt_time) -> bool:
         """15:00-23:00 为当日行情优先窗口：先跑计划波次，backlog 留到夜间/凌晨。"""
-        return time(15, 0) <= now <= time(23, 0)
+        return dt_time(15, 0) <= now <= dt_time(23, 0)
 
     while True:
         available = mem_available_mb()
