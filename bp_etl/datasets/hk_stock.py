@@ -74,7 +74,8 @@ class HKStockRunner:
                 lambda ch, code: adapters.sina.fetch_hk_bfq(ch, code, trade_date, trade_date),
             )
             missing = missing_symbols(pending, rows, trade_date)
-            if missing:
+            allow_tx = (os.getenv("BP_HK_BFQ_TENCENT_FALLBACK") or "on").strip().lower() != "off"
+            if missing and allow_tx:
                 # 新浪 akshare 对部分港股代码限流/不可达：腾讯 fqkline bfq 兜底（原始价跨源一致）
                 rows.extend(
                     fetch_parallel(
