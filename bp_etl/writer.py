@@ -66,14 +66,30 @@ class WriterError(AdapterError):
     """写入/覆盖刷新失败。"""
 
 
-def _prev_close(conn, dataset: DatasetSpec, key: str, before: date) -> float | None:
+def _prev_close(
+    conn, dataset: DatasetSpec, key: str, before: date, adjust: str, source: str
+) -> float | None:
+    """取同口径前收：同 adjust+source 优先，其次同 adjust（回退）。
+
+    必须带 adjust 过滤：同一标的在表内有 bfq/hfq 多口径行，跨口径取前收会得到
+    错误 pct_change（绝对价基准不同，曾导致 numeric(10,4) 溢出）。
+    """
     sql = (
         f"SELECT close FROM {dataset.table}"
-        f" WHERE {dataset.key_column} = %s AND trade_date < %s"
+        f" WHERE {dataset.key_column} = %s AND trade_date < %s AND adjust = %s"
         " ORDER BY trade_date DESC LIMIT 1"
     )
     with conn.cursor() as cur:
-        cur.execute(sql, (key, before))
+        cur.execute(sql, (key, before, adjust))
+        row = cur.fetchone()
+        if row is not None and row[0] is not None:
+            return float(row[0])
+        sql2 = (
+            f"SELECT close FROM {dataset.table}"
+            f" WHERE {dataset.key_column} = %s AND trade_date < %s AND adjust = %s"
+            f" AND source = %s ORDER BY trade_date DESC LIMIT 1"
+        )
+        cur.execute(sql2, (key, before, adjust, source))
         row = cur.fetchone()
     return float(row[0]) if row and row[0] is not None else None
 
@@ -91,12 +107,17 @@ def fill_pct_change(conn, dataset: DatasetSpec, bars: Sequence[Bar]) -> list[Bar
         if any(bar.pct_change is not None for bar in ordered):
             filled.extend(ordered)
             continue
-        base = _prev_close(conn, dataset, symbol, ordered[0].trade_date)
+        first = ordered[0]
+        base = _prev_close(
+            conn, dataset, symbol, first.trade_date, first.adjust, first.source
+        )
         previous: float | None = base
         for bar in ordered:
             pct: float | None = None
             if previous is not None and previous > 0:
-                pct = (bar.close / previous - 1.0) * 100.0
+                candidate = (bar.close / previous - 1.0) * 100.0
+                # 防御：跨口径/脏前收导致的荒谬涨跌幅不入库（numeric(10,4) 上限约 10^6）
+                pct = candidate if abs(candidate) < 10000.0 else None
             filled.append(
                 Bar(
                     symbol=bar.symbol, trade_date=bar.trade_date, open=bar.open,
