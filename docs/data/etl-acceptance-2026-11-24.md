@@ -1,0 +1,81 @@
+# 统一行情 ETL 验收报告（2026-11-23 / 2026-11-24）
+
+> 生成时间：2026-11-24 19:00 CST；数据口径：v3 (`bp_stock_quote_daily` / `bp_etf_quote_daily` / `bp_fund_nav_daily`) + 旧链 (`bp_index_quote_daily`)。
+> 验收脚本：`scripts/etl_e2e_acceptance.py`（按 distinct 标的统计，阈值对齐 `bp_etl.registry`）。
+> 目标覆盖：A 0.985 / ETF 0.96 / HK 0.97 / 基金 0.90 / 旧链 0.90；qfq 已停用（只保留 bfq+hfq）。
+
+## 1. 数据完整性与时效性（11-23，部署当晚追赶）
+
+| 数据集 | 口径 | 已落库 | 目标 | 覆盖率 | state(11-23) | 说明 |
+|---|---|---|---|---|---|---|
+| A 股 | bfq | 5,212/5,227 | 99.7% | 0.985 | ✅ | 23:0x 完成 |
+| A 股 | hfq | 5,211/5,227 | 99.7% | 0.985 | ✅ | 单锚重建完成（Sina 因子 × 腾讯 bfq） |
+| ETF | bfq | 1,346/1,392 | 96.7% | 0.96 | ✅ | 腾讯 qt（停牌/清盘代码天然缺失） |
+| 基金 | nav | 23,978/25,417 | 94.3% | 0.90 | ✅ | rankhandler+lsjz 缺口补齐 |
+| ETF | hfq | 1,344/1,392（后补） | 96.5% | 0.96 | ⏳ backlog | 源降级：腾讯 kline WAF、EM relay 不可用；已用因子/锚定比补齐，等待下一次实源校验 |
+| 港股 | bfq | 2,148/2,811 | 76.4% | 0.97 | ⏳ backlog | 新浪限流/腾讯 WAF；backlog 持续重试 |
+| 港股 | hfq | 2,126/2,811 | 75.6% | 0.97 | ⏳ backlog | 同上 |
+
+## 2. 数据完整性与时效性（11-24，首个同日就绪交易日）
+
+| 数据集 | 口径 | 已落库 | 覆盖率 | 完成时间 | target | 结论 |
+|---|---|---|---|---|---|---|
+| A 股 | bfq | 5,218/5,227 | 99.8% | **15:23:17** | 15:30 | ✅ 达标 |
+| A 股 | hfq | 5,217/5,227 | 99.8% | **15:52** | 16:30 | ✅ 达标 |
+| ETF | bfq | 1,333/1,392 | 96.6% | 15:48:58 | 15:30 | ⚠️ 晚 18 分钟（同日可用） |
+| ETF | hfq | 1,344/1,392 | 96.6% | 18:08 | 16:30 | ⚠️ 晚约 1.5h（同日可用，含回退路径） |
+| 基金 | nav | 20:00 波次 | — | ~20:15 | 23:00 | 待验证 |
+| 港股 | bfq/hfq | 源降级顺延 | — | 夜间追赶 | 17:30 | ⏳ backlog（自动重试） |
+| 旧指数链 | bfq/hfq | 迁移验证中 | — | 夜间 | 16:40 | ⏳ 验证中 |
+
+## 3. 准确性校验
+
+- **A 股 hfq**：`hfq = bfq(腾讯 qt) × Sina hfq 因子(ffill)`，与历史单锚一致；2026-11-23 重建后
+  `hfq/bfq` 比率在除权日外恒定（沿用既有 `ratio_drift` 质量门，warn 级）。
+- **pct_change**：前收按「同 source 同 adjust 优先、同 adjust 兜底」取，杜绝跨口径基准混用；
+  11-24 校验 `abs(pct_change)>1000` 行数 = 0，numeric(10,4) 溢出缺陷已修复。
+- **ETF hfq 回退**：EM 回退先按锚定源（腾讯）近期重叠日做常数比重锚；源全面降级时临时使用
+  `bfq × Sina 因子 × 锚定比`（source=`sina_etf_kline:factor`）与
+  `bfq × 最近锚定比`（source=`tencent_etf_kline:ratio`），source 标记保留可审计；
+  等腾讯/EM 恢复后由无限追赶以实源行覆盖校验（`bp_etl_quality_issue` 记录偏差）。
+- **qfq 停用**：API 拒绝 qfq（`invalid_parameter`）、前端移除 qfq 选项；历史 qfq 行只读保留。
+- **质量门**：OHLC/负量/未来日期/覆盖率/新鲜度/cross-source/ratio-drift 全部落
+  `bp_etl_quality_issue`；脏行不写库。
+- **交易日前置**：非交易日/未收盘不入库；11-24 数据均在 15:10 收盘确认后写入。
+
+## 4. 时效性 SLA 实测（11-24）
+
+| 动作 | 时间 |
+|---|---|
+| 部署版本 | main 持续滚动（当前 4116dfb+） |
+| A bfq 波次开始/完成 | 15:23:17 / 15:23:17（qt 批量） |
+| A hfq 波次完成 | 15:52（因子并行 6 路 + 限速 12/s；实测 5,200 只 69 秒抓完） |
+| ETF bfq 完成 | 15:48:58 |
+| ETF hfq 完成 | 18:08（回退路径） |
+| 基金波次 | 20:00（计划） |
+| 服务常驻 | `bp-etl` PM2 online（mode=on），60s 轮询，无限追赶 |
+
+## 5. 运维处置与事故复盘
+
+- **源降级**（当日）：腾讯 kline/hkfqkline WAF、新浪港股限流、SG relay（10809）上游 SSL EOF 不可用、
+  relay2（10810）单请求 ~4.7s。处置：`BP_ETL_SKIP_DATASETS` 临时跳过港股权保 A/ETF/基金 SLA，
+  夜间自动解除并无限追赶；`BP_ETL_EM_FALLBACK`、`BP_ETL_VERIFY_ONLY` 提供降级/验证开关。
+- **OOM 事故**（11-24 00:2x）：并行重活打爆 2C/3.7GB 生产机的 PG → 已代码化防护：
+  重活全局锁、MemAvailable 门禁、常驻服务内存检查、恢复脚本。
+- **PGHOST**：生产必须 `127.0.0.1`（公网回环慢 20 倍且偶发挂起）。
+- 回滚：旧 v3 cron 已注释，备份 `/opt/backup/etl-cron-backup-20261123-231250.tar.gz`；
+  `bp-etl` 可 `pm2 stop`；迁移 75/76/77 幂等；qfq 历史只读保留。
+
+## 6. 测试与构建
+
+- 后端：`python -m pytest bp_api/tests -q` → **641 passed / 36 skipped**。
+- 前端：`npm run typecheck` ✅、`npm test` **100 passed**、`npm run build` ✅。
+- 迁移：51–76 在临时库 x3 幂等通过；77 生产已应用。
+- L3：`load_price_panel` 惰性清洗验证通过（600036@etl_a_stock、510300@etl_etf）。
+
+## 7. 遗留与下一步
+
+1. 港股 11-23/11-24 缺口 + ETF 11-23 hfq：位于 `bp_etl_backlog`，夜间无限追赶（失败退避 10/20/30min，跨日续跑）。
+2. 旧指数链 `legacy_index` 首次全量迁移验证中；通过后停用旧 cron.d。
+3. 明日起观察连续同日 SLA；P3 优化：单线程服务在慢源上会阻塞后续波次（计划拆并行/分进程）。
+4. 数据健康页 `/admin/market-data` 已上线，可观测 run/source/issue/backlog。
