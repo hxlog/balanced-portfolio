@@ -396,18 +396,28 @@ class Orchestrator:
                         self._last_retry.pop(key, None)
         return outcomes
 
-    def run_backlog(self, *, now: datetime | None = None) -> list[WaveResult]:
-        """优先重试 backlog 中的未追平条目（跨交易日续跑）。"""
+    def run_backlog(
+        self, *, now: datetime | None = None, limit: int | None = None
+    ) -> list[WaveResult]:
+        """优先重试 backlog 中的未追平条目（跨交易日续跑）。
+
+        limit：本轮最多补几个 (dataset, adjust) 波次（常驻循环用 1，避免单波长尾
+        拖住下一轮 run_due，保障收盘当日波次 SLA）。
+        """
         now = now or self._now_fn()
         outcomes: list[WaveResult] = []
         with self._conn_factory() as conn:
             for name, runner in self.runners.items():
+                if limit is not None and len(outcomes) >= limit:
+                    break
                 kind = runner.spec.close_confirm
                 trade_date = self.confirmed_trade_date(conn, kind, now)
                 if trade_date is None:
                     continue
                 keys = ("nav",) if runner.spec.value_kind == "nav" else runner.spec.adjust_modes
                 for adjust in keys:
+                    if limit is not None and len(outcomes) >= limit:
+                        break
                     pending = due_backlog(conn, name, adjust, now, limit=5000)
                     if not pending:
                         continue
