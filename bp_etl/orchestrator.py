@@ -215,6 +215,42 @@ class Orchestrator:
             finally:
                 self._unlock(conn, dataset)
 
+    def _db_coverage(self, conn: Any, spec: DatasetSpec, trade_date: date, adjust: str, expected: int) -> float:
+        """覆盖率以**库内当日已落库行数**为口径（增量波次只写少量缺口，不能按本波 bars 计算）。"""
+        if not expected:
+            return 0.0
+        with conn.cursor() as cur:
+            if spec.value_kind == "nav":
+                cur.execute(
+                    "SELECT count(DISTINCT fund_code) FROM bp_fund_nav_daily WHERE trade_date = %s",
+                    (trade_date,),
+                )
+            else:
+                cur.execute(
+                    f"SELECT count(*) FROM {spec.table} WHERE trade_date = %s AND adjust = %s",
+                    (trade_date, adjust),
+                )
+            row = cur.fetchone()
+        achieved = int(row[0]) if row and row[0] is not None else 0
+        return min(1.0, achieved / expected)
+
+    def _db_present_symbols(
+        self, conn: Any, spec: DatasetSpec, trade_date: date, adjust: str
+    ) -> set[str]:
+        with conn.cursor() as cur:
+            if spec.value_kind == "nav":
+                cur.execute(
+                    "SELECT DISTINCT fund_code FROM bp_fund_nav_daily WHERE trade_date = %s",
+                    (trade_date,),
+                )
+            else:
+                cur.execute(
+                    f"SELECT DISTINCT {spec.key_column} FROM {spec.table}"
+                    " WHERE trade_date = %s AND adjust = %s",
+                    (trade_date, adjust),
+                )
+            return {row[0] for row in cur.fetchall()}
+
     def _persist(
         self,
         conn: Any,
@@ -235,8 +271,11 @@ class Orchestrator:
         issues: list[QualityIssue] = []
         if spec.value_kind == "nav":
             written = write_navs(conn, rows) if self._write_enabled else 0
-            got = {row.fund_code for row in rows if row.trade_date == trade_date}
-            coverage = len(got) / expected if expected else 0.0
+            coverage = (
+                self._db_coverage(conn, spec, trade_date, result.adjust, expected)
+                if self._write_enabled
+                else 0.0
+            )
             report = QualityReport(ok=coverage >= spec.coverage_min, coverage=coverage)
         else:
             good, issues = sanitize_bars(spec.name, rows, today=now.date())
@@ -248,18 +287,36 @@ class Orchestrator:
                 coverage_min=spec.coverage_min,
             )
             issues.extend(report.issues)
+            if self._write_enabled:
+                # 增量波次按库内当日覆盖重算（本波只补缺口，不能拿本波行数当覆盖率）
+                coverage = self._db_coverage(
+                    conn, spec, trade_date, result.adjust, expected
+                )
+                has_error = any(issue.severity == "error" for issue in issues)
+                report = QualityReport(
+                    ok=coverage >= spec.coverage_min and not has_error,
+                    coverage=coverage,
+                )
         result.fetched = len(rows)
         result.written = written
         result.coverage = report.coverage
         result.ok = report.ok
         result.issues = issues
 
-        got_symbols = (
-            {row.fund_code for row in rows if row.trade_date == trade_date}
-            if spec.value_kind == "nav"
-            else {bar.symbol for bar in rows if bar.trade_date == trade_date}
-        )
-        missing = [code for code in codes if code not in got_symbols]
+        if self._write_enabled:
+            present = self._db_present_symbols(conn, spec, trade_date, result.adjust)
+            if spec.value_kind == "nav":
+                got_symbols = {row.fund_code for row in rows if row.trade_date == trade_date}
+                missing = [code for code in codes if code not in got_symbols]
+            else:
+                missing = [code for code in codes if code not in present]
+        else:
+            got_symbols = (
+                {row.fund_code for row in rows if row.trade_date == trade_date}
+                if spec.value_kind == "nav"
+                else {bar.symbol for bar in rows if bar.trade_date == trade_date}
+            )
+            missing = [code for code in codes if code not in got_symbols]
 
         run.status = "ok" if report.ok else "catching_up"
         run.achieved_coverage = report.coverage

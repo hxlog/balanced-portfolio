@@ -146,6 +146,18 @@ def _orchestrator(conn: FakeConn, runner: FakeRunner, *, now: datetime, lock: bo
     monkeypatch_attr = lambda obj, name, value: setattr(obj, name, value)  # noqa: E731
     monkeypatch_attr(orch, "_try_lock", lambda c, d: lock)
     monkeypatch_attr(orch, "_unlock", lambda c, d: None)
+
+    def _db_coverage(conn: object, spec: object, trade_date: object, adjust: str, expected: int) -> float:
+        if not expected:
+            return 0.0
+        bars = runner.bars_by_adjust.get(adjust, [])
+        return min(1.0, len(bars) / expected)
+
+    def _db_present(conn: object, spec: object, trade_date: object, adjust: str) -> set[str]:
+        return {bar.symbol for bar in runner.bars_by_adjust.get(adjust, [])}
+
+    monkeypatch_attr(orch, "_db_coverage", _db_coverage)
+    monkeypatch_attr(orch, "_db_present_symbols", _db_present)
     return orch
 
 
