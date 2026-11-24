@@ -10,11 +10,17 @@ import os
 from dataclasses import dataclass
 from datetime import time
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
 from bp_ingest.config import DBConfig, load_config as load_ingest_config
 
 load_dotenv()
+# PM2 保存的旧进程环境可能带有过期的 BP_ETL_*（例如历史上以 off 启动）；
+# 以仓库 .env 为唯一口径强制覆盖，避免"改 .env 后 restart 仍 off"。
+_dotenv_values = dotenv_values()
+for _key, _value in _dotenv_values.items():
+    if _key.startswith("BP_ETL_") and _value is not None:
+        os.environ[_key] = _value
 
 _VALID_MODES = frozenset({"off", "shadow", "on"})
 _VALID_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR"})
