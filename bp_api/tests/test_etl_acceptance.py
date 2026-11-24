@@ -80,11 +80,12 @@ class FlakyRunner:
     def fetch(self, adjust: str, codes: list[str], trade_date: date, channels: object) -> list:
         self.calls += 1
         limit = 90 if self.calls <= self.fail_times else len(codes)
-        return [
+        self.last_rows = [
             Bar(symbol=code, trade_date=trade_date, open=9.0, high=11.0, low=8.0,
                 close=10.0, volume=100, source="sina_kline", adjust=adjust)
             for code in codes[:limit]
         ]
+        return self.last_rows
 
 
 def _config() -> EtlConfig:
@@ -125,6 +126,16 @@ def test_infinite_catch_up_across_rounds(monkeypatch: pytest.MonkeyPatch) -> Non
                         sleep_fn=lambda s: None)
     monkeypatch.setattr(orch, "_try_lock", lambda c, d: True)
     monkeypatch.setattr(orch, "_unlock", lambda c, d: None)
+    monkeypatch.setattr(
+        orch, "_db_coverage",
+        lambda conn, spec, td, adjust, expected: (
+            min(1.0, len(getattr(runner, "last_rows", [])) / expected) if expected else 0.0
+        ),
+    )
+    monkeypatch.setattr(
+        orch, "_db_present_symbols",
+        lambda conn, spec, td, adjust: {bar.symbol for bar in getattr(runner, "last_rows", [])},
+    )
     monkeypatch.setattr(orch, "dataset_last_success", lambda c, d, a: state.get((d, a)))
     monkeypatch.setattr(orch, "latest_trading_day", lambda c, d: D2)
     monkeypatch.setattr(orch, "confirmed_trade_date", lambda c, kind, now=None: D2)
