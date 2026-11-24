@@ -78,7 +78,13 @@ class LegacyIndexRunner:
     def _connection(self):
         """统一连接上下文：注入的 conn_factory 直接 yield；生产经 bp_ingest 连接上下文。"""
         if self._conn_factory is not None:
-            yield self._conn_factory()
+            conn = self._conn_factory()
+            try:
+                yield conn
+            finally:
+                close = getattr(conn, "close", None)
+                if callable(close):
+                    close()
             return
         from bp_ingest.config import load_config  # noqa: PLC0415
         from bp_ingest.db import connect  # noqa: PLC0415
