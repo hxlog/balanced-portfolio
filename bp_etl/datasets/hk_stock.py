@@ -99,7 +99,7 @@ class HKStockRunner:
         def _merge(window_bars: list, *, source: str) -> list[str]:
             """重锚（基准=腾讯）→ 只留当日 → 并入 rows；返回仍未取到的代码。"""
             if not window_bars:
-                return missing_symbols(codes, rows, trade_date)
+                return missing_symbols(pending, rows, trade_date)
             reanchored = reanchor_fallback_bars(
                 window_bars,
                 table="bp_stock_quote_daily",
@@ -109,7 +109,7 @@ class HKStockRunner:
                 trade_date=trade_date,
             )
             rows.extend(reanchored)
-            return missing_symbols(codes, rows, trade_date)
+            return missing_symbols(pending, rows, trade_date)
 
         if primary == "tencent":
             rows = fetch_parallel(
@@ -119,7 +119,7 @@ class HKStockRunner:
                 ),
             )
         if primary in ("tencent", "sina"):
-            missing = missing_symbols(codes, rows, trade_date)
+            missing = missing_symbols(pending, rows, trade_date)
             if missing:
                 sina_bars = fetch_parallel(
                     missing, channels, "sina_hk_kline",
@@ -128,7 +128,7 @@ class HKStockRunner:
                     ),
                 )
                 missing = _merge(sina_bars, source="sina")
-        missing = missing_symbols(codes, rows, trade_date)
+        missing = missing_symbols(pending, rows, trade_date)
         if missing and primary != "sina":
             direct = True
             try:

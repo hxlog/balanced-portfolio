@@ -170,7 +170,7 @@ class ETFRunner:
 
         def _merge(window_bars: list) -> list[str]:
             if not window_bars:
-                return missing_symbols(codes, rows, trade_date)
+                return missing_symbols(pending, rows, trade_date)
             reanchored = reanchor_fallback_bars(
                 window_bars,
                 table="bp_etf_quote_daily",
