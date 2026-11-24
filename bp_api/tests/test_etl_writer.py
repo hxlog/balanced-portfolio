@@ -94,7 +94,7 @@ def test_fill_pct_change_uses_prev_close_and_batch_chain() -> None:
     filled = fill_pct_change(conn, A_STOCK, bars)
     assert filled[0].pct_change == pytest.approx(10.0)
     assert filled[1].pct_change == pytest.approx(10.0)
-    assert any("SELECT close FROM bp_stock_quote_daily" in sql and "adjust = %s" in sql for sql, _ in conn.queries)
+    assert any("SELECT close FROM bp_stock_quote_daily" in sql and "source = %s" in sql for sql, _ in conn.queries)
 
 
 def test_fill_pct_change_keeps_source_pct() -> None:

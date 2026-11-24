@@ -74,22 +74,23 @@ def _prev_close(
     必须带 adjust 过滤：同一标的在表内有 bfq/hfq 多口径行，跨口径取前收会得到
     错误 pct_change（绝对价基准不同，曾导致 numeric(10,4) 溢出）。
     """
-    sql = (
+    same_series_sql = (
+        f"SELECT close FROM {dataset.table}"
+        f" WHERE {dataset.key_column} = %s AND trade_date < %s AND adjust = %s"
+        f" AND source = %s ORDER BY trade_date DESC LIMIT 1"
+    )
+    same_adjust_sql = (
         f"SELECT close FROM {dataset.table}"
         f" WHERE {dataset.key_column} = %s AND trade_date < %s AND adjust = %s"
         " ORDER BY trade_date DESC LIMIT 1"
     )
     with conn.cursor() as cur:
-        cur.execute(sql, (key, before, adjust))
+        cur.execute(same_series_sql, (key, before, adjust, source))
         row = cur.fetchone()
         if row is not None and row[0] is not None:
             return float(row[0])
-        sql2 = (
-            f"SELECT close FROM {dataset.table}"
-            f" WHERE {dataset.key_column} = %s AND trade_date < %s AND adjust = %s"
-            f" AND source = %s ORDER BY trade_date DESC LIMIT 1"
-        )
-        cur.execute(sql2, (key, before, adjust, source))
+        # 同 source 无历史时退化为同 adjust（bfq 原始价跨源一致；hfq 仅在无同源历史时兜底）
+        cur.execute(same_adjust_sql, (key, before, adjust))
         row = cur.fetchone()
     return float(row[0]) if row and row[0] is not None else None
 
