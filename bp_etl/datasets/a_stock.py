@@ -58,9 +58,12 @@ class AStockRunner:
             sina_symbol, _ = adapters.tencent.split_market(code)
             try:
                 factors = adapters.sina.fetch_hfq_factor(sina_channel, sina_symbol)
-            except Exception:  # noqa: BLE001 - 因子单只失败下次波次再补
+                if not factors:
+                    return []
+                return adapters.sina.build_hfq_from_bfq([by_symbol[code]], factors)
+            except Exception as exc:  # noqa: BLE001 - 单只失败/空因子不影响整波
+                logger.warning("A股 hfq 因子失败 %s: %s", code, type(exc).__name__)
                 return []
-            return adapters.sina.build_hfq_from_bfq([by_symbol[code]], factors)
 
         # 因子请求是延迟瓶颈：并发 6 路（共享 TokenBucket 限速仍在 4/s），
         # 日更从 ~1 只/秒提升到接近限速上限。
