@@ -91,3 +91,22 @@
 2. 旧指数链 `legacy_index` 首次全量迁移验证中；通过后停用旧 cron.d。
 3. 明日起观察连续同日 SLA；P3 优化：单线程服务在慢源上会阻塞后续波次（计划拆并行/分进程）。
 4. 数据健康页 `/admin/market-data` 已上线，可观测 run/source/issue/backlog。
+
+## 8. P2 收尾与最终状态（2026-11-24 23:30）
+
+- **旧指数链 legacy_index 迁移**：dataset 已注册并跑通（subset 校验 bfq/hfq coverage=1.0 → state 11-24）；
+  旧行情 cron 已下线：
+  - v3 root crontab 行情任务：已注释（20261123 备份）；
+  - /etc/cron.d 旧指数任务 5 个（bp-index-quotes / -retry / bp-xueqiu-quotes / bp-csindex-quotes / bp-index-extremes）：
+    已改名为 .disabled-20261124-225337，备份 `/opt/backup/etl-cron-backup-20261124-225337.tar.gz`，
+    `bash scripts/etl_legacy_cron_toggle.sh restore` 可回滚。
+- **清洗接入 ETL**：legacy_index 波次成功后自动执行 `refresh_legacy_clean`（DB 日历、旧链 747 个标的、
+  本次写入 139 万行清洗数据，并刷新资产状态）；此后旧链清洗不再依赖 bp_ingest 调度器。
+- **单锚数据卫生**：清理了历史混合复权基准行（A hfq tencent 53.13 万行、HK hfq 59.64 万行、ETF hfq em 229 行），
+  现在 A hfq 仅 sina_kline 一个锚定源；港股/ETF hfq 仅锚定源 + 显式 `:anchored`/`:ratio`/`:factor` 标记行。
+- **最终 e2e**：`2026-11-24 = ok（全绿，9 个 dataset/adjust state 全部 2026-11-24）`；
+  `2026-11-23 = 仅 hk_stock:hfq 91.8%`（缺 hfq 历史的 ~220 只标的无法回退；backlog 持续重试；
+  11-23 为部署当晚 + 源降级异常日，首个完整 SLA 交易日 11-24 全绿）。
+- **生产进程**：bp-api / bp-web / bp-etl / bp-worker / bp-beat online；bp-ingest（旧链调度器）已停用，
+  报价抓取由 bp-etl 接管、清洗由 ETL 钩子接管。
+- **最终测试**：后端 643 passed / 36 skipped；前端 typecheck + 100 tests + build 全绿。
