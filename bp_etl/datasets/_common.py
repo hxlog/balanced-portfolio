@@ -18,9 +18,12 @@ socket.setdefaulttimeout(20)
 
 
 def existing_symbols(
-    table: str, key_column: str, source: str, adjust: str, trade_date: Any
+    table: str, key_column: str, source: str | None, adjust: str, trade_date: Any
 ) -> set[str]:
-    """查询当日已落库的标的（用于重试/追赶时跳过已完成部分，显著降低重复请求）。"""
+    """查询当日已落库的标的（用于重试/追赶时跳过已完成部分，显著降低重复请求）。
+
+    source=None 表示任意口径来源（只要有当日 hfq 行即视为已覆盖，回退/因子路径写入的行也算）。
+    """
     try:
         from bp_ingest.config import load_config  # noqa: PLC0415
         from bp_ingest.db import connect  # noqa: PLC0415
@@ -28,11 +31,18 @@ def existing_symbols(
         return set()
     try:
         with connect(load_config().db) as conn, conn.cursor() as cur:
-            cur.execute(
-                f"SELECT DISTINCT {key_column} FROM {table}"
-                f" WHERE source=%s AND adjust=%s AND trade_date=%s",
-                (source, adjust, trade_date),
-            )
+            if source is None:
+                cur.execute(
+                    f"SELECT DISTINCT {key_column} FROM {table}"
+                    " WHERE adjust=%s AND trade_date=%s",
+                    (adjust, trade_date),
+                )
+            else:
+                cur.execute(
+                    f"SELECT DISTINCT {key_column} FROM {table}"
+                    " WHERE source=%s AND adjust=%s AND trade_date=%s",
+                    (source, adjust, trade_date),
+                )
             return {row[0] for row in cur.fetchall()}
     except Exception:  # noqa: BLE001
         return set()

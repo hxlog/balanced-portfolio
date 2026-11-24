@@ -227,7 +227,8 @@ class Orchestrator:
                 )
             else:
                 cur.execute(
-                    f"SELECT count(*) FROM {spec.table} WHERE trade_date = %s AND adjust = %s",
+                    f"SELECT count(DISTINCT {spec.key_column}) FROM {spec.table}"
+                    " WHERE trade_date = %s AND adjust = %s",
                     (trade_date, adjust),
                 )
             row = cur.fetchone()

@@ -89,7 +89,7 @@ class HKStockRunner:
         if adjust != "hfq":
             raise ValueError(f"不支持的 adjust: {adjust}")
         done = existing_symbols(
-            "bp_stock_quote_daily", "symbol", "tencent_hk_kline", "hfq", trade_date
+            "bp_stock_quote_daily", "symbol", None, "hfq", trade_date
         )
         pending = [code for code in codes if code not in done]
         primary = (os.getenv("BP_HK_HFQ_PRIMARY") or "tencent").strip().lower()
