@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import date
 from typing import Any, Callable, Sequence
@@ -73,13 +74,17 @@ class LegacyIndexRunner:
             self._app = replace(base, request_interval=0.0, request_jitter=0.0, max_retries=2)
         return self._ingest, self._app
 
-    def _conn(self) -> Any:
+    @contextmanager
+    def _connection(self):
+        """统一连接上下文：注入的 conn_factory 直接 yield；生产经 bp_ingest 连接上下文。"""
         if self._conn_factory is not None:
-            return self._conn_factory()
+            yield self._conn_factory()
+            return
         from bp_ingest.config import load_config  # noqa: PLC0415
         from bp_ingest.db import connect  # noqa: PLC0415
 
-        return connect(load_config().db)
+        with connect(load_config().db) as conn:
+            yield conn
 
     def _ensure_session(self) -> None:
         try:
@@ -109,20 +114,14 @@ class LegacyIndexRunner:
         ingest, app = self._load()
         if self._conn_factory is None:
             self._ensure_session()  # 生产路径安装硬化会话；测试注入连接时跳过
-        conn = self._conn()
-        try:
+        with self._connection() as conn:
             configs = self._query_configs(conn, codes)
             units = filter_configs(configs, adjust)
             symbols = list(dict.fromkeys(cfg["symbol"] for cfg in units))
             failed = self._run_chunks(ingest, app, symbols)
             if failed and self._relay:
                 failed = self._run_relay_pass(ingest, app, failed)
-            bars = self._readback(conn, symbols, adjust, trade_date)
-        finally:
-            close = getattr(conn, "close", None)
-            if callable(close):
-                close()
-        return bars
+            return self._readback(conn, symbols, adjust, trade_date)
 
     # -- 内部步骤 -----------------------------------------------------
     def _query_configs(self, conn: Any, codes: Sequence[str]) -> list[dict[str, Any]]:
