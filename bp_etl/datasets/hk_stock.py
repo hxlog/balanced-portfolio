@@ -129,7 +129,7 @@ class HKStockRunner:
                 )
                 missing = _merge(sina_bars, source="sina")
         missing = missing_symbols(pending, rows, trade_date)
-        if missing and primary != "sina":
+        if missing and primary != "sina" and (os.getenv("BP_ETL_EM_FALLBACK") or "on").strip().lower() != "off":
             direct = True
             try:
                 direct = getattr(channels.get("em_kline"), "channel_kind", "direct") == "direct"

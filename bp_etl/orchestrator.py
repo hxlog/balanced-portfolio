@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, time as dtime, timedelta, timezone
@@ -367,6 +368,11 @@ class Orchestrator:
             )
 
     # -- batch / service ---------------------------------------------
+    @staticmethod
+    def _skipped_datasets() -> set[str]:
+        raw = os.getenv("BP_ETL_SKIP_DATASETS") or ""
+        return {item.strip() for item in raw.split(",") if item.strip()}
+
     def run_due(self, *, now: datetime | None = None, force: bool = False) -> list[WaveResult]:
         """执行所有已到期且未追平的波次：按 target_time 升序（越逾期越先跑，保障 SLA）。"""
         from datetime import time as _time
@@ -376,7 +382,10 @@ class Orchestrator:
         with self._conn_factory() as conn:
             confirmed: dict[str, date | None] = {}
             candidates: list[tuple[_time, str, str, date]] = []
+            skipped = self._skipped_datasets()
             for name, runner in self.runners.items():
+                if name in skipped:
+                    continue
                 kind = runner.spec.close_confirm
                 trade_date = confirmed.get(kind)
                 if kind not in confirmed:
@@ -419,7 +428,10 @@ class Orchestrator:
         now = now or self._now_fn()
         outcomes: list[WaveResult] = []
         with self._conn_factory() as conn:
+            skipped = self._skipped_datasets()
             for name, runner in self.runners.items():
+                if name in skipped:
+                    continue
                 if limit is not None and len(outcomes) >= limit:
                     break
                 kind = runner.spec.close_confirm
