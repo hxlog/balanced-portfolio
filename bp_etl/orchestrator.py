@@ -286,17 +286,20 @@ class Orchestrator:
                 spec.name, trade_date, result.adjust, good, expected,
                 coverage_min=spec.coverage_min,
             )
-            issues.extend(report.issues)
             if self._write_enabled:
-                # 增量波次按库内当日覆盖重算（本波只补缺口，不能拿本波行数当覆盖率）
+                # 增量波次按库内当日覆盖重算（本波只补缺口，不能拿本波行数当覆盖率）；
+                # evaluate 的 coverage issue 反映的是本波取数比例，不是库内实况，剔除。
+                wave_issues = [issue for issue in report.issues if issue.kind != "coverage"]
                 coverage = self._db_coverage(
                     conn, spec, trade_date, result.adjust, expected
                 )
-                has_error = any(issue.severity == "error" for issue in issues)
+                has_error = any(issue.severity == "error" for issue in wave_issues)
                 report = QualityReport(
                     ok=coverage >= spec.coverage_min and not has_error,
                     coverage=coverage,
+                    issues=wave_issues,
                 )
+            issues.extend(report.issues)
         result.fetched = len(rows)
         result.written = written
         result.coverage = report.coverage
