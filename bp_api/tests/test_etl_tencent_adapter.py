@@ -133,7 +133,7 @@ def test_fetch_kline_hk_hfq_uses_hkfqkline() -> None:
     channel = FakeChannel([FakeResponse(payload=payload)])
     bars = fetch_kline(channel, "00700", "hfq", date(2026, 11, 18), date(2026, 11, 23), market="HK")
     assert channel.calls[0].endswith("/hkfqkline/get")
-    assert bars[0].symbol == "hk00700" and bars[0].close == pytest.approx(344.0)
+    assert bars[0].symbol == "00700" and bars[0].close == pytest.approx(344.0)
 
 
 def test_fetch_kline_falls_back_to_proxy_host_on_waf() -> None:
