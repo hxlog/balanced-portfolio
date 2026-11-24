@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Sequence
 
 from bp_etl import adapters
@@ -40,10 +41,24 @@ class HKStockRunner:
         channels: ChannelManager,
     ) -> list[Bar]:
         if adjust == "bfq":
+            # 操作开关：BP_HK_BFQ_PRIMARY=sina|tencent（新浪 akshare 限流时用腾讯 fqkline，
+            # 不复权原始价跨源一致；默认 sina 以保持历史锚一致）
+            primary = (os.getenv("BP_HK_BFQ_PRIMARY") or "sina").strip().lower()
             done = existing_symbols(
-                "bp_stock_quote_daily", "symbol", "sina_hk_kline", "bfq", trade_date
+                "bp_stock_quote_daily",
+                "symbol",
+                "tencent_hk_kline" if primary == "tencent" else "sina_hk_kline",
+                "bfq",
+                trade_date,
             )
             pending = [code for code in codes if code not in done]
+            if primary == "tencent":
+                return fetch_parallel(
+                    pending, channels, "tencent_hk_kline",
+                    lambda ch, code: adapters.tencent.fetch_kline(
+                        ch, code, "bfq", trade_date, trade_date, market="HK", count=30,
+                    ),
+                )
             rows = fetch_parallel(
                 pending, channels, "sina_hk_kline",
                 lambda ch, code: adapters.sina.fetch_hk_bfq(ch, code, trade_date, trade_date),
