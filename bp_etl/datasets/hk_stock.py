@@ -8,7 +8,12 @@ from typing import Any, Sequence
 from bp_etl import adapters
 from bp_etl.adapters.base import Bar
 from bp_etl.channels import ChannelManager
-from bp_etl.datasets._common import existing_symbols, fetch_parallel, missing_symbols
+from bp_etl.datasets._common import (
+    existing_symbols,
+    fetch_parallel,
+    missing_symbols,
+    reanchor_fallback_bars,
+)
 from bp_etl.registry import REGISTRY
 
 logger = logging.getLogger(__name__)
@@ -39,10 +44,22 @@ class HKStockRunner:
                 "bp_stock_quote_daily", "symbol", "sina_hk_kline", "bfq", trade_date
             )
             pending = [code for code in codes if code not in done]
-            return fetch_parallel(
+            rows = fetch_parallel(
                 pending, channels, "sina_hk_kline",
                 lambda ch, code: adapters.sina.fetch_hk_bfq(ch, code, trade_date, trade_date),
             )
+            missing = missing_symbols(pending, rows, trade_date)
+            if missing:
+                # 新浪 akshare 对部分港股代码限流/不可达：腾讯 fqkline bfq 兜底（原始价跨源一致）
+                rows.extend(
+                    fetch_parallel(
+                        missing, channels, "tencent_hk_kline",
+                        lambda ch, code: adapters.tencent.fetch_kline(
+                            ch, code, "bfq", trade_date, trade_date, market="HK", count=30,
+                        ),
+                    )
+                )
+            return rows
         if adjust != "hfq":
             raise ValueError(f"不支持的 adjust: {adjust}")
         done = existing_symbols(
@@ -60,13 +77,21 @@ class HKStockRunner:
             try:
                 em_channel = channels.get("em_kline")
                 if getattr(em_channel, "channel_kind", "direct") != "direct":
+                    em_bars = fetch_parallel(
+                        missing, channels, "em_kline",
+                        lambda ch, code: adapters.eastmoney.fetch_kline(
+                            ch, code, "hfq", trade_date, trade_date, market="HK",
+                        ),
+                        workers=3,
+                    )
+                    # EM 后复权基准与腾讯锚不同：必须重锚后再入库（否则同序列混基准）
                     rows.extend(
-                        fetch_parallel(
-                            missing[:800], channels, "em_kline",
-                            lambda ch, code: adapters.eastmoney.fetch_kline(
-                                ch, code, "hfq", trade_date, trade_date, market="HK",
-                            ),
-                            workers=3,
+                        reanchor_fallback_bars(
+                            em_bars,
+                            table="bp_stock_quote_daily",
+                            key_column="symbol",
+                            anchor_source="tencent_hk_kline",
+                            adjust="hfq",
                         )
                     )
             except Exception as exc:  # noqa: BLE001 - EM 兜底失败靠下一波继续

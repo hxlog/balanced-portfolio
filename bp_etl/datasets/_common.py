@@ -66,3 +66,63 @@ def fetch_parallel(
 def missing_symbols(codes: Iterable[str], rows: Sequence[Any], trade_date: Any) -> list[str]:
     got = {row.symbol for row in rows if row.trade_date == trade_date}
     return [code for code in codes if code not in got]
+
+def load_anchor_bars(
+    table: str, key_column: str, symbol: str, source: str, adjust: str, *, days: int = 90
+) -> list:
+    """读取锚定源的近期历史（供回退源重锚使用）。"""
+    from bp_etl.adapters.base import Bar
+    from bp_ingest.config import load_config
+    from bp_ingest.db import connect
+
+    try:
+        with connect(load_config().db) as conn, conn.cursor() as cur:
+            cur.execute(
+                f"SELECT trade_date, open, high, low, close, volume, amount"
+                f" FROM {table} WHERE {key_column}=%s AND source=%s AND adjust=%s"
+                f" AND trade_date >= current_date - %s ORDER BY trade_date",
+                (symbol, source, adjust, days),
+            )
+            rows = cur.fetchall()
+    except Exception:  # noqa: BLE001
+        return []
+    return [
+        Bar(
+            symbol=symbol, trade_date=row[0],
+            open=float(row[1]) if row[1] is not None else None,
+            high=float(row[2]) if row[2] is not None else None,
+            low=float(row[3]) if row[3] is not None else None,
+            close=float(row[4]), volume=int(row[5]) if row[5] is not None else None,
+            amount=float(row[6]) if row[6] is not None else None,
+            source=source, adjust=adjust,
+        )
+        for row in rows
+        if row[4] is not None
+    ]
+
+
+def reanchor_fallback_bars(
+    bars: list,
+    *,
+    table: str,
+    key_column: str,
+    anchor_source: str,
+    adjust: str,
+) -> list:
+    """把回退源 bars 重锚到锚定源基准（无重叠日的标的丢弃，绝不混入不同基准）。"""
+    from bp_etl.anchors import NoOverlapError, reanchor
+
+    grouped: dict[str, list] = {}
+    for bar in bars:
+        grouped.setdefault(bar.symbol, []).append(bar)
+    out: list = []
+    for symbol, symbol_bars in grouped.items():
+        anchor_bars = load_anchor_bars(table, key_column, symbol, anchor_source, adjust)
+        if not anchor_bars:
+            logger.warning("回退源重锚跳过 %s：无锚定源历史", symbol)
+            continue
+        try:
+            out.extend(reanchor(anchor_bars, symbol_bars))
+        except NoOverlapError:
+            logger.warning("回退源重锚跳过 %s：无重叠交易日", symbol)
+    return out

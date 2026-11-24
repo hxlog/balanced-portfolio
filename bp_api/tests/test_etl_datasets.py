@@ -84,6 +84,9 @@ def _isolate_existing_symbols(monkeypatch: pytest.MonkeyPatch) -> None:
     """runner 的「跳过已落库标的」会查真实库；测试统一打桩为空集。"""
     for module in (a_stock_mod, hk_mod, etf_mod):
         monkeypatch.setattr(module, "existing_symbols", lambda *a, **kw: set())
+    # 回退源重锚需要 DB 锚定历史；测试里按原样返回
+    monkeypatch.setattr(hk_mod, "reanchor_fallback_bars", lambda bars, **kw: list(bars))
+    monkeypatch.setattr(etf_mod, "reanchor_fallback_bars", lambda bars, **kw: list(bars))
 
 
 def _bar(symbol: str, d: date = D2, close: float = 10.0, adjust: str = "bfq") -> Bar:

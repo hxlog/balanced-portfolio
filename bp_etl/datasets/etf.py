@@ -8,7 +8,12 @@ from typing import Any, Sequence
 from bp_etl import adapters
 from bp_etl.adapters.base import Bar
 from bp_etl.channels import ChannelManager
-from bp_etl.datasets._common import existing_symbols, fetch_parallel, missing_symbols
+from bp_etl.datasets._common import (
+    existing_symbols,
+    fetch_parallel,
+    missing_symbols,
+    reanchor_fallback_bars,
+)
 from bp_etl.registry import REGISTRY
 
 logger = logging.getLogger(__name__)
@@ -54,13 +59,20 @@ class ETFRunner:
             try:
                 em_channel = channels.get("em_kline")
                 if getattr(em_channel, "channel_kind", "direct") != "direct":
+                    em_bars = fetch_parallel(
+                        missing, channels, "em_kline",
+                        lambda ch, code: adapters.eastmoney.fetch_kline(
+                            ch, code, "hfq", trade_date, trade_date,
+                        ),
+                        workers=3,
+                    )
                     rows.extend(
-                        fetch_parallel(
-                            missing[:800], channels, "em_kline",
-                            lambda ch, code: adapters.eastmoney.fetch_kline(
-                                ch, code, "hfq", trade_date, trade_date,
-                            ),
-                            workers=3,
+                        reanchor_fallback_bars(
+                            em_bars,
+                            table="bp_etf_quote_daily",
+                            key_column="etf_code",
+                            anchor_source="tencent_etf_kline",
+                            adjust="hfq",
                         )
                     )
             except Exception as exc:  # noqa: BLE001
