@@ -443,3 +443,16 @@ cd /opt/balanced-portfolio && set -a && . ./.env && set +a
 
 **诊断命令**：`free -m; uptime; systemctl status postgresql; pm2 status; dmesg | grep -i oom | tail`。
 
+## 数据库连接必须走 127.0.0.1（2026-11-24 性能事故）
+
+生产服务器同机部署 PostgreSQL 时，`.env` 的 `PGHOST` **必须写 `127.0.0.1`**，不要写公网 IP。
+实测经公网 IP 回环（hairpin NAT）访问本机库：40 次同口径查询耗时 **7.4s vs 0.37s（约 20 倍劣化）**，
+并偶发连接/读取挂起（表现为 psycopg 卡在 wait、PG 后端 idle in transaction）；
+重建/全量任务在该路径下会慢几十倍甚至卡死。
+
+```bash
+grep '^PGHOST=' /opt/balanced-portfolio/.env   # 应为 127.0.0.1
+```
+
+变更后 `pm2 restart bp-api bp-web bp-ingest bp-worker bp-beat bp-etl --update-env`。
+
