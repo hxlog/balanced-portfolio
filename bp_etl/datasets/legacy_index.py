@@ -105,10 +105,24 @@ class LegacyIndexRunner:
 
     # -- DatasetRunner 协议 -------------------------------------------
     def universe(self, conn: Any) -> list[str]:
+        symbols_filter = [
+            item.strip()
+            for item in (os.getenv("BP_ETL_LEGACY_SYMBOLS") or "").split(",")
+            if item.strip()
+        ]
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT DISTINCT symbol FROM bp_index_config WHERE is_deleted=0 ORDER BY symbol"
-            )
+            if symbols_filter:
+                # 灰度/验证：仅跑指定标的（生产日常不设置该 env）
+                cur.execute(
+                    "SELECT DISTINCT symbol FROM bp_index_config"
+                    " WHERE is_deleted=0 AND symbol = ANY(%s) ORDER BY symbol",
+                    (symbols_filter,),
+                )
+            else:
+                cur.execute(
+                    "SELECT DISTINCT symbol FROM bp_index_config"
+                    " WHERE is_deleted=0 ORDER BY symbol"
+                )
             return [row[0] for row in cur.fetchall()]
 
     def fetch(
