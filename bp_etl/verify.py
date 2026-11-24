@@ -14,7 +14,7 @@ from bp_etl.registry import REGISTRY, DatasetSpec
 
 def ratio_drift_stats(ratios: Sequence[float | None], *, max_change: float = 0.005) -> dict[str, Any]:
     """给定按日期排序的 hfq/bfq 比率序列，统计非除权日漂移比例。"""
-    valid = [value for value in ratios if value is not None and value > 0]
+    valid = [float(value) for value in ratios if value is not None and float(value) > 0]
     changes = 0
     big = 0
     for previous, current in zip(valid, valid[1:]):
