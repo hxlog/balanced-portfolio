@@ -9,18 +9,24 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from datetime import time
+from pathlib import Path
 
 from dotenv import dotenv_values, load_dotenv
 
 from bp_ingest.config import DBConfig, load_config as load_ingest_config
 
 load_dotenv()
-# PM2 保存的旧进程环境可能带有过期的 BP_ETL_*（例如历史上以 off 启动）；
-# 以仓库 .env 为唯一口径强制覆盖，避免"改 .env 后 restart 仍 off"。
-_dotenv_values = dotenv_values()
-for _key, _value in _dotenv_values.items():
-    if _key.startswith("BP_ETL_") and _value is not None:
-        os.environ[_key] = _value
+
+_ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
+
+
+def _apply_bp_etl_overrides() -> None:
+    """PM2 保存的旧进程环境可能带有过期 BP_ETL_*（如历史 off）：以仓库 .env 为准覆盖。"""
+    if not _ENV_PATH.exists():
+        return
+    for key, value in dotenv_values(_ENV_PATH).items():
+        if key.startswith("BP_ETL_") and value is not None:
+            os.environ[key] = value
 
 _VALID_MODES = frozenset({"off", "shadow", "on"})
 _VALID_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR"})
@@ -65,6 +71,7 @@ class EtlConfig:
 
 
 def load_etl_config() -> EtlConfig:
+    _apply_bp_etl_overrides()
     ingest = load_ingest_config()
     mode = (os.getenv("BP_ETL_MODE") or "off").strip().lower()
     if mode not in _VALID_MODES:
