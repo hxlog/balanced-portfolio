@@ -127,23 +127,21 @@ def collect(conn, trade_date: date) -> dict:
         hk_master_total = int(cur.fetchone()[0])
         cur.execute("SELECT count(*) FROM bp_etf_master")
         etf_master_total = int(cur.fetchone()[0])
-        # 可交易子集：上一交易日实际有行情的标的数（停牌/退市不应计入分母）
-        cur.execute(
-            "SELECT count(DISTINCT symbol) FROM bp_stock_quote_daily"
-            " WHERE adjust='bfq' AND length(symbol)=5 AND trade_date ="
-            " (SELECT max(trade_date) FROM bp_stock_quote_daily"
-            "  WHERE adjust='bfq' AND length(symbol)=5 AND trade_date < %s)",
-            (trade_date,),
-        )
-        hk_total = int(cur.fetchone()[0]) or hk_master_total
-        cur.execute(
-            "SELECT count(DISTINCT etf_code) FROM bp_etf_quote_daily"
-            " WHERE adjust='bfq' AND trade_date ="
-            " (SELECT max(trade_date) FROM bp_etf_quote_daily"
-            "  WHERE adjust='bfq' AND trade_date < %s)",
-            (trade_date,),
-        )
-        etf_total = int(cur.fetchone()[0]) or etf_master_total
+        # 可交易子集：上一交易日**同口径**实际有行情的标的数（停牌/退市/无复权历史不计入分母）
+        def _prev_count(table: str, key: str, adjust: str, extra: str = "") -> int:
+            cur.execute(
+                f"SELECT count(DISTINCT {key}) FROM {table}"
+                f" WHERE adjust=%s{extra} AND trade_date ="
+                f" (SELECT max(trade_date) FROM {table}"
+                f"  WHERE adjust=%s{extra} AND trade_date < %s)",
+                (adjust, adjust, trade_date),
+            )
+            return int(cur.fetchone()[0] or 0)
+
+        hk_bfq_total = _prev_count("bp_stock_quote_daily", "symbol", "bfq", " AND length(symbol)=5") or hk_master_total
+        hk_hfq_total = _prev_count("bp_stock_quote_daily", "symbol", "hfq", " AND length(symbol)=5") or hk_bfq_total
+        etf_bfq_total = _prev_count("bp_etf_quote_daily", "etf_code", "bfq") or etf_master_total
+        etf_hfq_total = _prev_count("bp_etf_quote_daily", "etf_code", "hfq") or etf_bfq_total
         # 基金分母 = 上一交易日已发布净值数（可发布子集），而非主数据全量；
         # 货币/封闭/晚披露基金天然不参与每日净值。
         cur.execute(
@@ -171,18 +169,18 @@ def collect(conn, trade_date: date) -> dict:
             "total": a_total,
         },
         "hk_stock": {
-            "bfq": {"covered": hk_bfq, "total": hk_total},
-            "hfq": {"covered": hk_hfq, "total": hk_total},
+            "bfq": {"covered": hk_bfq, "total": hk_bfq_total},
+            "hfq": {"covered": hk_hfq, "total": hk_hfq_total},
             "state_ok_bfq": state("hk_stock", "bfq"),
             "state_ok_hfq": state("hk_stock", "hfq"),
-            "total": hk_total,
+            "total": hk_bfq_total,
         },
         "etf": {
-            "bfq": {"covered": etf_bfq, "total": etf_total},
-            "hfq": {"covered": etf_hfq, "total": etf_total},
+            "bfq": {"covered": etf_bfq, "total": etf_bfq_total},
+            "hfq": {"covered": etf_hfq, "total": etf_hfq_total},
             "state_ok_bfq": state("etf", "bfq"),
             "state_ok_hfq": state("etf", "hfq"),
-            "total": etf_total,
+            "total": etf_bfq_total,
         },
         "fund_nav": {
             "covered": fund_cov,
@@ -191,9 +189,11 @@ def collect(conn, trade_date: date) -> dict:
         },
     }
     payload["active_universe"] = {
-        "hk": hk_total,
+        "hk_bfq": hk_bfq_total,
+        "hk_hfq": hk_hfq_total,
         "hk_master": hk_master_total,
-        "etf": etf_total,
+        "etf_bfq": etf_bfq_total,
+        "etf_hfq": etf_hfq_total,
         "etf_master": etf_master_total,
     }
     payload["backlog"] = backlog

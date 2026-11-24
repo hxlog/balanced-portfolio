@@ -129,15 +129,15 @@ class ETFRunner:
             )
         return out
 
-    def expected_count(self, conn: Any, trade_date: Any) -> int:
-        """当日可交易子集 = 上一交易日实际有行情的 ETF 数。"""
+    def expected_count(self, conn: Any, trade_date: Any, adjust: str = "bfq") -> int:
+        """当日可交易子集 = 上一交易日**同口径**实际有行情的 ETF 数。"""
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT count(DISTINCT etf_code) FROM bp_etf_quote_daily"
-                " WHERE adjust='bfq' AND trade_date ="
+                " WHERE adjust=%s AND trade_date ="
                 " (SELECT max(trade_date) FROM bp_etf_quote_daily"
-                "  WHERE adjust='bfq' AND trade_date < %s)",
-                (trade_date,),
+                "  WHERE adjust=%s AND trade_date < %s)",
+                (adjust, adjust, trade_date),
             )
             row = cur.fetchone()
         return int(row[0]) if row and row[0] else 0

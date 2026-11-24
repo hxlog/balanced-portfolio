@@ -34,15 +34,15 @@ class HKStockRunner:
             cur.execute(UNIVERSE_SQL)
             return [row[0] for row in cur.fetchall()]
 
-    def expected_count(self, conn: Any, trade_date: Any) -> int:
-        """当日可交易子集 = 上一交易日实际有行情的标的数（停牌/退市不应拉低覆盖率）。"""
+    def expected_count(self, conn: Any, trade_date: Any, adjust: str = "bfq") -> int:
+        """当日可交易子集 = 上一交易日**同口径**实际有行情的标的数（停牌/退市不拉低覆盖率）。"""
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT count(DISTINCT symbol) FROM bp_stock_quote_daily"
-                " WHERE adjust='bfq' AND length(symbol)=5"
+                " WHERE adjust=%s AND length(symbol)=5"
                 " AND trade_date = (SELECT max(trade_date) FROM bp_stock_quote_daily"
-                "                    WHERE adjust='bfq' AND length(symbol)=5 AND trade_date < %s)",
-                (trade_date,),
+                "                    WHERE adjust=%s AND length(symbol)=5 AND trade_date < %s)",
+                (adjust, adjust, trade_date),
             )
             row = cur.fetchone()
         return int(row[0]) if row and row[0] else 0

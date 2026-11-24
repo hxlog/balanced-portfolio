@@ -216,7 +216,10 @@ class Orchestrator:
                 expected = len(codes)
                 expected_fn = getattr(runner, "expected_count", None)
                 if callable(expected_fn):
-                    expected = int(expected_fn(conn, trade_date) or expected)
+                    try:
+                        expected = int(expected_fn(conn, trade_date, adjust) or expected)
+                    except TypeError:
+                        expected = int(expected_fn(conn, trade_date) or expected)
                 return self._persist(conn, spec, result, codes, rows, now, expected)
             finally:
                 self._unlock(conn, dataset)
