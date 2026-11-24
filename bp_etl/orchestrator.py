@@ -207,7 +207,12 @@ class Orchestrator:
                     result.ok = True
                     return result
                 codes = runner.universe(conn)
-                rows = runner.fetch(adjust, codes, trade_date, self.channels)
+                # 验证模式（源大面积降级时）：不再抓取，直接按库内当日覆盖判定是否追平；
+                # 用于已由回退/因子路径补齐后，让 state 正常推进（否则会永远卡在"未追平"）。
+                if (os.getenv("BP_ETL_VERIFY_ONLY") or "off").strip().lower() in ("1", "on", "true", "yes"):
+                    rows = []
+                else:
+                    rows = runner.fetch(adjust, codes, trade_date, self.channels)
                 expected = len(codes)
                 expected_fn = getattr(runner, "expected_count", None)
                 if callable(expected_fn):
