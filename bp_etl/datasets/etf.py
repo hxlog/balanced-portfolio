@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import timedelta
 from typing import Any, Sequence
 
 from bp_etl import adapters
@@ -42,7 +43,23 @@ class ETFRunner:
                 "bp_etf_quote_daily", "etf_code", "tencent_qt", "bfq", trade_date
             )
             pending = [code for code in codes if code not in done]
-            return adapters.tencent.fetch_qt_batch(channels.get("tencent_qt"), pending)
+            rows = adapters.tencent.fetch_qt_batch(channels.get("tencent_qt"), pending)
+            missing = missing_symbols(pending, rows, trade_date)
+            if missing:
+                # 腾讯 qt 缺报价（停牌/代码缺失）：EM 不复权原始价兜底（跨源一致）
+                try:
+                    rows.extend(
+                        fetch_parallel(
+                            missing, channels, "em_kline",
+                            lambda ch, code: adapters.eastmoney.fetch_kline(
+                                ch, code, "bfq", trade_date, trade_date,
+                            ),
+                            workers=3,
+                        )
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("ETF bfq EM 兜底失败: %s", type(exc).__name__)
+            return rows
         if adjust != "hfq":
             raise ValueError(f"不支持的 adjust: {adjust}")
         done = existing_symbols(
@@ -50,7 +67,23 @@ class ETFRunner:
         )
         pending = [code for code in codes if code not in done]
         primary = (os.getenv("BP_ETF_HFQ_PRIMARY") or "tencent").strip().lower()
-        rows = []
+        window_start = trade_date - timedelta(days=90)
+        rows: list[Bar] = []
+
+        def _merge(window_bars: list) -> list[str]:
+            if not window_bars:
+                return missing_symbols(codes, rows, trade_date)
+            reanchored = reanchor_fallback_bars(
+                window_bars,
+                table="bp_etf_quote_daily",
+                key_column="etf_code",
+                anchor_source="tencent_etf_kline",
+                adjust="hfq",
+                trade_date=trade_date,
+            )
+            rows.extend(reanchored)
+            return missing_symbols(codes, rows, trade_date)
+
         if primary == "tencent":
             rows = fetch_parallel(
                 pending, channels, "tencent_kline",
@@ -58,6 +91,16 @@ class ETFRunner:
                     ch, code, "hfq", trade_date, trade_date, market="A", count=30,
                 ),
             )
+        if primary in ("tencent", "sina"):
+            missing = missing_symbols(codes, rows, trade_date)
+            if missing:
+                sina_bars = fetch_parallel(
+                    missing, channels, "sina_kline",
+                    lambda ch, code: adapters.sina.fetch_etf_hfq(
+                        ch, code, window_start, trade_date
+                    ),
+                )
+                missing = _merge(sina_bars)
         missing = missing_symbols(codes, rows, trade_date)
         if missing:
             try:
@@ -66,19 +109,11 @@ class ETFRunner:
                     em_bars = fetch_parallel(
                         missing, channels, "em_kline",
                         lambda ch, code: adapters.eastmoney.fetch_kline(
-                            ch, code, "hfq", trade_date, trade_date,
+                            ch, code, "hfq", window_start, trade_date,
                         ),
                         workers=3,
                     )
-                    rows.extend(
-                        reanchor_fallback_bars(
-                            em_bars,
-                            table="bp_etf_quote_daily",
-                            key_column="etf_code",
-                            anchor_source="tencent_etf_kline",
-                            adjust="hfq",
-                        )
-                    )
+                    _merge(em_bars)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("ETF hfq EM 兜底失败: %s", type(exc).__name__)
         return rows

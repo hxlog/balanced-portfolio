@@ -168,6 +168,34 @@ def _opt_float(value: Any) -> float | None:
         return None
 
 
+def fetch_hk_hfq(channel: Any, code: str, start: date, end: date) -> list[Bar]:
+    """新浪港股后复权（新浪基准；调用方需重锚到锚定源基准后入库）。"""
+    channel.throttle()
+    c = code.strip().lower()
+    if c.startswith("hk"):
+        c = c[2:]
+    try:
+        df = _akshare().stock_hk_daily(symbol=c, adjust="hfq")
+    except Exception as exc:  # noqa: BLE001
+        raise SourceUnavailable(SOURCE_HK, f"{type(exc).__name__}: {exc}") from exc
+    bars = _df_to_bars(df, symbol=c, source=SOURCE_HK, adjust="hfq")
+    return [b for b in bars if start <= b.trade_date <= end]
+
+
+def fetch_etf_hfq(channel: Any, code: str, start: date, end: date) -> list[Bar]:
+    """新浪 ETF/LOF 后复权（新浪基准；调用方需重锚到锚定源基准后入库）。"""
+    channel.throttle()
+    from .tencent import split_market
+
+    sym, _market = split_market(code)
+    try:
+        df = _akshare().stock_zh_a_daily(symbol=sym, adjust="hfq")
+    except Exception as exc:  # noqa: BLE001
+        raise SourceUnavailable(SOURCE_ETF, f"{type(exc).__name__}: {exc}") from exc
+    bars = _df_to_bars(df, symbol=code, source=SOURCE_ETF, adjust="hfq")
+    return [b for b in bars if start <= b.trade_date <= end]
+
+
 def fetch_hk_bfq(
     channel: Any, symbol: str, start: date, end: date, *, source: str = SOURCE_HK
 ) -> list[Bar]:

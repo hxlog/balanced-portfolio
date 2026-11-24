@@ -130,6 +130,7 @@ def test_hk_runner_bfq_parallel(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_hk_runner_hfq_em_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tencent, "fetch_kline", lambda *a, **kw: [])
+    monkeypatch.setattr(sina, "fetch_hk_hfq", lambda *a, **kw: [])
     called: list[str] = []
 
     def fake_em(channel: object, code: str, adjust: str, start: date, end: date, **kw: object) -> list[Bar]:

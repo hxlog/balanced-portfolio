@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import timedelta
 from typing import Any, Sequence
 
 from bp_etl import adapters
@@ -90,34 +91,59 @@ class HKStockRunner:
             "bp_stock_quote_daily", "symbol", "tencent_hk_kline", "hfq", trade_date
         )
         pending = [code for code in codes if code not in done]
-        rows = fetch_parallel(
-            pending, channels, "tencent_hk_kline",
-            lambda ch, code: adapters.tencent.fetch_kline(
-                ch, code, "hfq", trade_date, trade_date, market="HK", count=30,
-            ),
-        )
+        primary = (os.getenv("BP_HK_HFQ_PRIMARY") or "tencent").strip().lower()
+        window_start = trade_date - timedelta(days=90)
+        rows: list[Bar] = []
+
+        def _merge(window_bars: list, *, source: str) -> list[str]:
+            """重锚（基准=腾讯）→ 只留当日 → 并入 rows；返回仍未取到的代码。"""
+            if not window_bars:
+                return missing_symbols(codes, rows, trade_date)
+            reanchored = reanchor_fallback_bars(
+                window_bars,
+                table="bp_stock_quote_daily",
+                key_column="symbol",
+                anchor_source="tencent_hk_kline",
+                adjust="hfq",
+                trade_date=trade_date,
+            )
+            rows.extend(reanchored)
+            return missing_symbols(codes, rows, trade_date)
+
+        if primary == "tencent":
+            rows = fetch_parallel(
+                pending, channels, "tencent_hk_kline",
+                lambda ch, code: adapters.tencent.fetch_kline(
+                    ch, code, "hfq", trade_date, trade_date, market="HK", count=30,
+                ),
+            )
+        if primary in ("tencent", "sina"):
+            missing = missing_symbols(codes, rows, trade_date)
+            if missing:
+                sina_bars = fetch_parallel(
+                    missing, channels, "sina_hk_kline",
+                    lambda ch, code: adapters.sina.fetch_hk_hfq(
+                        ch, code, window_start, trade_date
+                    ),
+                )
+                missing = _merge(sina_bars, source="sina")
         missing = missing_symbols(codes, rows, trade_date)
-        if missing:
+        if missing and primary != "sina":
+            direct = True
             try:
-                em_channel = channels.get("em_kline")
-                if getattr(em_channel, "channel_kind", "direct") != "direct":
+                direct = getattr(channels.get("em_kline"), "channel_kind", "direct") == "direct"
+            except Exception:  # noqa: BLE001
+                direct = True
+            if not direct:
+                try:
                     em_bars = fetch_parallel(
                         missing, channels, "em_kline",
                         lambda ch, code: adapters.eastmoney.fetch_kline(
-                            ch, code, "hfq", trade_date, trade_date, market="HK",
+                            ch, code, "hfq", window_start, trade_date, market="HK",
                         ),
                         workers=3,
                     )
-                    # EM 后复权基准与腾讯锚不同：必须重锚后再入库（否则同序列混基准）
-                    rows.extend(
-                        reanchor_fallback_bars(
-                            em_bars,
-                            table="bp_stock_quote_daily",
-                            key_column="symbol",
-                            anchor_source="tencent_hk_kline",
-                            adjust="hfq",
-                        )
-                    )
-            except Exception as exc:  # noqa: BLE001 - EM 兜底失败靠下一波继续
-                logger.warning("港股 hfq EM 兜底失败: %s", type(exc).__name__)
+                    _merge(em_bars, source="em")
+                except Exception as exc:  # noqa: BLE001 - EM 兜底失败靠下一波继续
+                    logger.warning("港股 hfq EM 兜底失败: %s", type(exc).__name__)
         return rows

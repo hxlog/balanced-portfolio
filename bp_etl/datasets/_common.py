@@ -108,6 +108,7 @@ def reanchor_fallback_bars(
     key_column: str,
     anchor_source: str,
     adjust: str,
+    trade_date=None,
 ) -> list:
     """把回退源 bars 重锚到锚定源基准（无重叠日的标的丢弃，绝不混入不同基准）。"""
     from bp_etl.anchors import NoOverlapError, reanchor
@@ -125,4 +126,6 @@ def reanchor_fallback_bars(
             out.extend(reanchor(anchor_bars, symbol_bars))
         except NoOverlapError:
             logger.warning("回退源重锚跳过 %s：无重叠交易日", symbol)
+    if trade_date is not None:
+        out = [bar for bar in out if bar.trade_date == trade_date]
     return out
