@@ -82,28 +82,40 @@ def collect(conn, trade_date: date) -> dict:
             return bool(row and row[0] and row[0] >= trade_date)
 
         cur.execute(
-            "SELECT count(*) FROM bp_stock_quote_daily WHERE trade_date=%s AND adjust='bfq' AND length(symbol)=6",
+            "SELECT count(DISTINCT symbol) FROM bp_stock_quote_daily"
+            " WHERE trade_date=%s AND adjust='bfq' AND length(symbol)=6",
             (trade_date,),
         )
         a_bfq = int(cur.fetchone()[0])
         cur.execute(
-            "SELECT count(*) FROM bp_stock_quote_daily WHERE trade_date=%s AND adjust='hfq' AND length(symbol)=6",
+            "SELECT count(DISTINCT symbol) FROM bp_stock_quote_daily"
+            " WHERE trade_date=%s AND adjust='hfq' AND length(symbol)=6",
             (trade_date,),
         )
         a_hfq = int(cur.fetchone()[0])
         cur.execute(
-            "SELECT count(*) FROM bp_stock_quote_daily WHERE trade_date=%s AND adjust='bfq' AND length(symbol)=5",
+            "SELECT count(DISTINCT symbol) FROM bp_stock_quote_daily"
+            " WHERE trade_date=%s AND adjust='bfq' AND length(symbol)=5",
             (trade_date,),
         )
         hk_bfq = int(cur.fetchone()[0])
         cur.execute(
-            "SELECT count(*) FROM bp_stock_quote_daily WHERE trade_date=%s AND adjust='hfq' AND length(symbol)=5",
+            "SELECT count(DISTINCT symbol) FROM bp_stock_quote_daily"
+            " WHERE trade_date=%s AND adjust='hfq' AND length(symbol)=5",
             (trade_date,),
         )
         hk_hfq = int(cur.fetchone()[0])
-        cur.execute("SELECT count(*) FROM bp_etf_quote_daily WHERE trade_date=%s AND adjust='bfq'", (trade_date,))
+        cur.execute(
+            "SELECT count(DISTINCT etf_code) FROM bp_etf_quote_daily"
+            " WHERE trade_date=%s AND adjust='bfq'",
+            (trade_date,),
+        )
         etf_bfq = int(cur.fetchone()[0])
-        cur.execute("SELECT count(*) FROM bp_etf_quote_daily WHERE trade_date=%s AND adjust='hfq'", (trade_date,))
+        cur.execute(
+            "SELECT count(DISTINCT etf_code) FROM bp_etf_quote_daily"
+            " WHERE trade_date=%s AND adjust='hfq'",
+            (trade_date,),
+        )
         etf_hfq = int(cur.fetchone()[0])
         cur.execute(
             "SELECT count(DISTINCT fund_code) FROM bp_fund_nav_daily WHERE trade_date=%s", (trade_date,)
