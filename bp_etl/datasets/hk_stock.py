@@ -59,6 +59,15 @@ class HKStockRunner:
                         ch, code, "bfq", trade_date, trade_date, market="HK", count=30,
                     ),
                 )
+            if primary == "em":
+                # 不复权原始价跨源一致；EM 经 relay 在腾讯/新浪 WAF 时仍可用
+                return fetch_parallel(
+                    pending, channels, "em_kline",
+                    lambda ch, code: adapters.eastmoney.fetch_kline(
+                        ch, code, "bfq", trade_date, trade_date, market="HK",
+                    ),
+                    workers=3,
+                )
             rows = fetch_parallel(
                 pending, channels, "sina_hk_kline",
                 lambda ch, code: adapters.sina.fetch_hk_bfq(ch, code, trade_date, trade_date),

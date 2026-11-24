@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Sequence
 
 from bp_etl import adapters
@@ -48,12 +49,15 @@ class ETFRunner:
             "bp_etf_quote_daily", "etf_code", "tencent_kline", "hfq", trade_date
         )
         pending = [code for code in codes if code not in done]
-        rows = fetch_parallel(
-            pending, channels, "tencent_kline",
-            lambda ch, code: adapters.tencent.fetch_kline(
-                ch, code, "hfq", trade_date, trade_date, market="A", count=30,
-            ),
-        )
+        primary = (os.getenv("BP_ETF_HFQ_PRIMARY") or "tencent").strip().lower()
+        rows = []
+        if primary == "tencent":
+            rows = fetch_parallel(
+                pending, channels, "tencent_kline",
+                lambda ch, code: adapters.tencent.fetch_kline(
+                    ch, code, "hfq", trade_date, trade_date, market="A", count=30,
+                ),
+            )
         missing = missing_symbols(codes, rows, trade_date)
         if missing:
             try:
