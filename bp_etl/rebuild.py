@@ -176,6 +176,11 @@ def rebuild_a_stock_hfq(
         report.written += writer.write_bars(conn, spec, hfq_rows)
         report.symbols += 1
         conn.commit()
+        if report.symbols % 200 == 0:
+            logger.info(
+                "A股 hfq 重建进度: %d/%d symbols, 写入 %d 行, 删除旧源 %d 行, 失败 %d",
+                report.symbols, len(codes), report.written, report.deleted_legacy, report.failed,
+            )
     report.elapsed_s = time.perf_counter() - started
     return report
 
