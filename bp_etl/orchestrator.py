@@ -358,6 +358,14 @@ class Orchestrator:
                     next_retry_at=now + result.next_retry_in,
                 )
         conn.commit()
+        if self._write_enabled and spec.name == "legacy_index" and report.ok:
+            # 旧链清洗/资产状态刷新（P2 收尾）：只在成功后触发，失败不影响 ETL 循环
+            try:
+                from bp_etl.cleaning_hook import refresh_legacy_clean
+
+                refresh_legacy_clean(conn)
+            except Exception:  # noqa: BLE001
+                logger.warning("旧链清洗刷新失败（下一轮再试）", exc_info=True)
         return result
 
     def _record_source_health(
