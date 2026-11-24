@@ -27,11 +27,11 @@ CRON_PATTERNS=(
 # P2 迁入旧指数链后，再把 bp-index-quotes / -retry / bp-xueqiu-quotes / bp-csindex-quotes /
 # bp-index-extremes 加入此列表（脚本逻辑已支持）。
 CRON_D_FILES=(
-  # "bp-index-quotes"
-  # "bp-index-quotes-retry"
-  # "bp-xueqiu-quotes"
-  # "bp-csindex-quotes"
-  # "bp-index-extremes"
+  "bp-index-quotes"
+  "bp-index-quotes-retry"
+  "bp-xueqiu-quotes"
+  "bp-csindex-quotes"
+  "bp-index-extremes"
 )
 
 latest_backup() {
@@ -103,6 +103,7 @@ if [[ "$MODE" == "restore" ]]; then
   fi
   for f in "${CRON_D_FILES[@]}"; do
     if [[ -f "$TMP/$f" ]]; then
+      rm -f "/etc/cron.d/$f.disabled-"* 2>/dev/null || true
       mv -f "$TMP/$f" "/etc/cron.d/$f"
       echo "已恢复 /etc/cron.d/$f"
     fi

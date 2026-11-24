@@ -71,7 +71,10 @@ class LegacyIndexRunner:
             base = load_config()
             # 旧链目标已有历史，增量窗口由库内 last_date 决定；把进程内睡眠降到最低，
             # 实际限速由 orchestrator 的通道/并发控制。
-            self._app = replace(base, request_interval=0.0, request_jitter=0.0, max_retries=2)
+            max_retries = int(os.getenv("BP_ETL_LEGACY_MAX_RETRIES", "2") or "2")
+            self._app = replace(
+                base, request_interval=0.0, request_jitter=0.0, max_retries=max_retries
+            )
         return self._ingest, self._app
 
     @contextmanager
