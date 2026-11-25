@@ -141,3 +141,22 @@ def test_runner_registered_in_registry() -> None:
     spec = REGISTRY["legacy_index"]
     assert spec.table == "bp_index_quote_daily"
     assert spec.anchor["bfq"] == "legacy_multi"
+def test_universe_scope_selectable(monkeypatch) -> None:
+    """生产默认只跑可选资产 + 汇率源（避免不可达自定义指数拖慢每夜迁移）。"""
+    from bp_etl.datasets.legacy_index import LegacyIndexRunner
+
+    class FakeCursor:
+        def __enter__(self): return self
+        def __exit__(self, *exc): return False
+        def execute(self, sql, params=None): self.sql = sql
+        def fetchall(self): return [("000300",)]
+
+    class FakeConn:
+        def cursor(self): return FakeCursor()
+
+    monkeypatch.setenv("BP_ETL_LEGACY_SCOPE", "selectable")
+    monkeypatch.delenv("BP_ETL_LEGACY_SYMBOLS", raising=False)
+    runner = LegacyIndexRunner()
+    conn = FakeConn()
+    symbols = runner.universe(conn)
+    assert symbols == ["000300"]

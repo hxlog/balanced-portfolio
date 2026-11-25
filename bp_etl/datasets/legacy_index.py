@@ -110,19 +110,19 @@ class LegacyIndexRunner:
             for item in (os.getenv("BP_ETL_LEGACY_SYMBOLS") or "").split(",")
             if item.strip()
         ]
+        # 生产默认 scope=selectable：只维护 builder/回测实际可用的资产 + 汇率源，
+        # 避免为不可达的自定义指数（EM 封禁、无降级源）每夜空转 30-60 分钟。
+        scope = (os.getenv("BP_ETL_LEGACY_SCOPE") or "all").strip().lower()
+        base = "SELECT DISTINCT symbol FROM bp_index_config WHERE is_deleted=0"
+        params: list = []
+        if scope == "selectable":
+            base += " AND (is_selectable = TRUE OR source = 'fx_sina')"
+        if symbols_filter:
+            base += " AND symbol = ANY(%s)"
+            params.append(symbols_filter)
+        base += " ORDER BY symbol"
         with conn.cursor() as cur:
-            if symbols_filter:
-                # 灰度/验证：仅跑指定标的（生产日常不设置该 env）
-                cur.execute(
-                    "SELECT DISTINCT symbol FROM bp_index_config"
-                    " WHERE is_deleted=0 AND symbol = ANY(%s) ORDER BY symbol",
-                    (symbols_filter,),
-                )
-            else:
-                cur.execute(
-                    "SELECT DISTINCT symbol FROM bp_index_config"
-                    " WHERE is_deleted=0 ORDER BY symbol"
-                )
+            cur.execute(base, params)
             return [row[0] for row in cur.fetchall()]
 
     def fetch(
