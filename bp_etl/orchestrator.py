@@ -23,6 +23,7 @@ from bp_etl.health import (
     RunRecord,
     clear_backlog,
     due_backlog,
+    due_backlog_dates,
     finish_run,
     record_issues,
     record_source_health,
@@ -450,20 +451,22 @@ class Orchestrator:
                     continue
                 if limit is not None and len(outcomes) >= limit:
                     break
-                kind = runner.spec.close_confirm
-                trade_date = self.confirmed_trade_date(conn, kind, now)
-                if trade_date is None:
-                    continue
                 keys = ("nav",) if runner.spec.value_kind == "nav" else runner.spec.adjust_modes
                 for adjust in keys:
                     if limit is not None and len(outcomes) >= limit:
                         break
-                    pending = due_backlog(conn, name, adjust, now, limit=5000)
-                    if not pending:
-                        continue
-                    outcomes.append(
-                        self.run_wave(name, adjust, trade_date=trade_date, wave=2, now=now, force=True)
-                    )
+                    # 关键：以 backlog 自身 trade_date 重放（此前误用"当前确认日"，
+                    # 导致历史缺口条目永不清理、每小时重复空跑）
+                    backlog_dates = due_backlog_dates(conn, name, adjust, now, limit=5)
+                    for trade_date in backlog_dates:
+                        if limit is not None and len(outcomes) >= limit:
+                            break
+                        outcomes.append(
+                            self.run_wave(
+                                name, adjust, trade_date=trade_date,
+                                wave=2, now=now, force=True,
+                            )
+                        )
         return outcomes
 
     def service(self) -> None:

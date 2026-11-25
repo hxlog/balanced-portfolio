@@ -176,6 +176,20 @@ def due_backlog(
         return [row[0] for row in cur.fetchall()]
 
 
+def due_backlog_dates(
+    conn, dataset: str, adjust: str, now: datetime, *, limit: int = 10
+) -> list[date]:
+    """到期待重试的 backlog 交易日（跨日续跑必须以 backlog 自身日期重放，不能用"当前"日期）。"""
+    sql = (
+        "SELECT trade_date, min(next_retry_at) FROM bp_etl_backlog"
+        " WHERE dataset=%s AND adjust=%s AND next_retry_at <= %s"
+        " GROUP BY trade_date ORDER BY min(next_retry_at), trade_date LIMIT %s"
+    )
+    with conn.cursor() as cur:
+        cur.execute(sql, (dataset, adjust, now, limit))
+        return [row[0] for row in cur.fetchall()]
+
+
 def clear_backlog(
     conn,
     dataset: str,

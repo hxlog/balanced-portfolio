@@ -261,3 +261,31 @@ def test_run_due_respects_retry_backoff(monkeypatch: pytest.MonkeyPatch) -> None
     # 下一轮仍在退避窗口内：不得重复轰炸源
     outcomes2 = orch.run_due(now=now + timedelta(minutes=1))
     assert outcomes2 == []
+
+def test_run_backlog_replays_backlog_trade_date(monkeypatch: pytest.MonkeyPatch) -> None:
+    """跨日续跑必须以 backlog 自身 trade_date 重放，不能用"当前确认日"。"""
+    from datetime import date as _date
+
+    replay_dates = [_date(2026, 11, 23), _date(2026, 11, 20)]
+    monkeypatch.setattr(
+        orch_mod, "due_backlog_dates",
+        lambda conn, dataset, adjust, now, *, limit=10: list(replay_dates),
+    )
+    code = "600036"
+    runner = FakeRunner(REGISTRY["a_stock"], [code], {"hfq": [_bar(code)]})
+    conn = FakeConn()
+    now = datetime(2026, 11, 24, 16, 0, tzinfo=CN)
+    orch = _orchestrator(conn, runner, now=now)
+    seen: list = []
+
+    def fake_run_wave(name: str, adjust: str, **kwargs: object) -> object:
+        seen.append(kwargs.get("trade_date"))
+        return orch_mod.WaveResult(
+            dataset=name, adjust=adjust, trade_date=kwargs["trade_date"],  # type: ignore[arg-type]
+            wave=2, ok=True,
+        )
+
+    monkeypatch.setattr(orch, "run_wave", fake_run_wave)
+    outcomes = orch.run_backlog(now=now)
+    assert seen == replay_dates
+    assert len(outcomes) == len(replay_dates)
