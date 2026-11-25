@@ -287,5 +287,6 @@ def test_run_backlog_replays_backlog_trade_date(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr(orch, "run_wave", fake_run_wave)
     outcomes = orch.run_backlog(now=now)
-    assert seen == replay_dates
-    assert len(outcomes) == len(replay_dates)
+    # a_stock 有 bfq/hfq 两个口径：每个口径都应按 backlog 日期重放
+    assert seen == replay_dates * 2
+    assert len(outcomes) == len(replay_dates) * 2
