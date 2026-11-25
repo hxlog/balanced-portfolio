@@ -286,7 +286,39 @@ def test_run_backlog_replays_backlog_trade_date(monkeypatch: pytest.MonkeyPatch)
         )
 
     monkeypatch.setattr(orch, "run_wave", fake_run_wave)
+    # 库内覆盖未达标 → 必须按 backlog 日期重放（若达标会被对账逻辑直接清理）
+    monkeypatch.setattr(orch, "_db_coverage", lambda *a, **kw: 0.0)
     outcomes = orch.run_backlog(now=now)
     # a_stock 有 bfq/hfq 两个口径：每个口径都应按 backlog 日期重放
     assert seen == replay_dates * 2
     assert len(outcomes) == len(replay_dates) * 2
+
+def test_run_backlog_clears_stale_entries_without_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """库内覆盖已达标的历史 backlog：直接清理，不再发慢请求。"""
+    from datetime import date as _date
+
+    backlog_date = _date(2026, 11, 23)
+    monkeypatch.setattr(
+        orch_mod, "due_backlog_dates",
+        lambda conn, dataset, adjust, now, *, limit=10: [backlog_date],
+    )
+    cleared: list = []
+    monkeypatch.setattr(
+        orch_mod, "clear_backlog",
+        lambda conn, dataset, trade_date, adjust, symbols=None: cleared.append(
+            (dataset, trade_date, adjust)
+        ) or 1,
+    )
+    code = "600036"
+    runner = FakeRunner(REGISTRY["a_stock"], [code], {"hfq": [_bar(code)]})
+    conn = FakeConn()
+    now = datetime(2026, 11, 24, 16, 0, tzinfo=CN)
+    orch = _orchestrator(conn, runner, now=now)
+    monkeypatch.setattr(orch, "_db_coverage", lambda *a, **kw: 1.0)
+    called: list = []
+    monkeypatch.setattr(orch, "run_wave", lambda *a, **kw: called.append(kw) or orch_mod.WaveResult(
+        dataset="a_stock", adjust="hfq", trade_date=backlog_date, ok=True
+    ))
+    orch.run_backlog(now=now)
+    assert called == [], "达标的历史 backlog 不应再发起抓取波次"
+    assert cleared, "应清理达标 backlog"

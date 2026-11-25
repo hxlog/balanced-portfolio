@@ -461,6 +461,28 @@ class Orchestrator:
                     for trade_date in backlog_dates:
                         if limit is not None and len(outcomes) >= limit:
                             break
+                        # 先按库内覆盖对账：历史缺口可能已被回退/因子路径补齐，
+                        # 无需再发慢请求，直接清 backlog（避免每小时重复空跑）。
+                        try:
+                            codes = runner.universe(conn)
+                            expected = len(codes)
+                            expected_fn = getattr(runner, "expected_count", None)
+                            if callable(expected_fn):
+                                try:
+                                    expected = int(expected_fn(conn, trade_date, adjust) or expected)
+                                except TypeError:
+                                    expected = int(expected_fn(conn, trade_date) or expected)
+                            coverage = self._db_coverage(conn, runner.spec, trade_date, adjust, expected)
+                        except Exception:  # noqa: BLE001
+                            coverage = 0.0
+                        if coverage >= runner.spec.coverage_min:
+                            cleared = clear_backlog(conn, name, trade_date, adjust)
+                            conn.commit()
+                            logger.info(
+                                "backlog 对账已达标，清理 %s/%s %s (%d 条, coverage=%.4f)",
+                                name, adjust, trade_date, cleared, coverage,
+                            )
+                            continue
                         outcomes.append(
                             self.run_wave(
                                 name, adjust, trade_date=trade_date,
