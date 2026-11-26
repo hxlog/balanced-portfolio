@@ -89,8 +89,8 @@ def test_legacy_wave_triggers_clean_hook(monkeypatch: pytest.MonkeyPatch) -> Non
         monkeypatch.setattr(orch_mod, name, lambda *a, **kw: 1)
     runner = FakeRunner(
         ["000300"],
-        {"bfq": [Bar(symbol="000300", trade_date=D2, open=1, high=2, low=0.5, close=1.5,
-                     volume=10, source="cn_index_em", adjust="bfq")]},
+        {"hfq": [Bar(symbol="000300", trade_date=D2, open=1, high=2, low=0.5, close=1.5,
+                     volume=10, source="cn_index_em", adjust="hfq")]},
     )
     conn = FakeConn()
     now = dt.datetime(2026, 11, 24, 16, 30, tzinfo=CN)
@@ -106,9 +106,9 @@ def test_legacy_wave_triggers_clean_hook(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(orch, "_unlock", lambda c, d: None)
     monkeypatch.setattr(orch, "_db_coverage", lambda *a, **kw: 1.0)
     monkeypatch.setattr(orch, "_db_present_symbols", lambda *a, **kw: {"000300"})
-    result = orch.run_wave("legacy_index", "bfq", trade_date=D2, now=now)
+    result = orch.run_wave("legacy_index", "hfq", trade_date=D2, now=now)
     assert result.ok
-    assert calls, "legacy 波次成功后应触发清洗刷新钩子"
+    assert calls, "legacy hfq 波次成功后应触发清洗刷新钩子"
 
 
 def test_legacy_hook_failure_does_not_break_wave(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -141,5 +141,40 @@ def test_legacy_hook_failure_does_not_break_wave(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(orch, "_unlock", lambda c, d: None)
     monkeypatch.setattr(orch, "_db_coverage", lambda *a, **kw: 1.0)
     monkeypatch.setattr(orch, "_db_present_symbols", lambda *a, **kw: {"000300"})
-    result = orch.run_wave("legacy_index", "bfq", trade_date=D2, now=now)
+    result = orch.run_wave("legacy_index", "hfq", trade_date=D2, now=now)
     assert result.ok, "清洗钩子异常不应影响 legacy 波次结果"
+
+def test_legacy_clean_triggered_even_when_coverage_short(monkeypatch: pytest.MonkeyPatch) -> None:
+    """覆盖率未达标（旧链有不可达指数）时，只要本轮有抓取也应刷新清洗。"""
+    calls: list[object] = []
+    monkeypatch.setattr(
+        "bp_etl.cleaning_hook.refresh_legacy_clean", lambda conn: calls.append(conn) or {}
+    )
+    for name in (
+        "start_run", "finish_run", "record_issues", "record_source_health",
+        "upsert_dataset_state", "upsert_backlog", "clear_backlog",
+        "write_bars", "write_navs", "refresh_coverage",
+    ):
+        monkeypatch.setattr(orch_mod, name, lambda *a, **kw: 1)
+    runner = FakeRunner(
+        ["000300"],
+        {"hfq": [Bar(symbol="000300", trade_date=D2, open=1, high=2, low=0.5, close=1.5,
+                     volume=10, source="cn_index_em", adjust="hfq")]},
+    )
+    conn = FakeConn()
+    now = dt.datetime(2026, 11, 24, 17, 0, tzinfo=CN)
+    orch = Orchestrator(
+        _config(),
+        runners={"legacy_index": runner},
+        conn_factory=lambda: conn,
+        channel_manager=ChannelManager(_config()),
+        now_fn=lambda: now,
+        sleep_fn=lambda seconds: None,
+    )
+    monkeypatch.setattr(orch, "_try_lock", lambda c, d: True)
+    monkeypatch.setattr(orch, "_unlock", lambda c, d: None)
+    monkeypatch.setattr(orch, "_db_coverage", lambda *a, **kw: 0.5)  # 未达标
+    monkeypatch.setattr(orch, "_db_present_symbols", lambda *a, **kw: {"000300"})
+    result = orch.run_wave("legacy_index", "hfq", trade_date=D2, now=now)
+    assert result.ok is False
+    assert calls, "未达标但有抓取时也应刷新旧链清洗"

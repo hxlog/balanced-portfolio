@@ -95,28 +95,39 @@ class ETFRunner:
         channel = channels.get("sina_kline")
         for code, row in bfq_today.items():
             sym, _m = split_market(code)
+            anchor_rows = anchor.get(code) or []
+            bh = bfq_hist.get(code) or {}
+            factors: list = []
             try:
                 channel.throttle()
                 response = channel.get(A_HFQ_FACTOR_URL.format(sym), timeout=20)
                 factors = parse_hfq_factor(response.text, source="sina_etf_kline")
-            except Exception:  # noqa: BLE001 - 单只失败靠下一波
-                continue
+            except Exception:  # noqa: BLE001 - 因子不可用时退化为锚定比
+                factors = []
+            scale: float | None = None
+            source = "sina_etf_kline:factor"
             points = [p for p in factors if p[0] <= today]
-            if not points:
-                continue
-            factor_today = points[-1][1]
-            anchor_rows = anchor.get(code) or []
-            ratios = [
-                a_close / (bfq_hist.get(code, {}).get(d) * _factor_on(factors, d))
-                for d, a_close in anchor_rows
-                if bfq_hist.get(code, {}).get(d) and _factor_on(factors, d)
-            ]
-            if not ratios:
-                continue
-            ratio = sorted(ratios)[len(ratios) // 2]  # 中位数抗单日异常
-            if abs(ratio - 1.0) > 1e6 or ratio <= 0:
-                continue
-            scale = factor_today * ratio
+            if points:
+                factor_today = points[-1][1]
+                ratios = [
+                    a_close / (bh.get(d) * _factor_on(factors, d))
+                    for d, a_close in anchor_rows
+                    if bh.get(d) and _factor_on(factors, d)
+                ]
+                if ratios:
+                    ratio = sorted(ratios)[len(ratios) // 2]
+                    if 0 < ratio < 1e6:
+                        scale = factor_today * ratio
+            if scale is None:
+                # 因子文件 404/空/无重叠：用锚定源最近的 hfq/bfq 比值外推（source 可审计）
+                ratios = [a_close / bh[d] for d, a_close in anchor_rows if bh.get(d)]
+                if not ratios:
+                    continue
+                ratio = sorted(ratios)[len(ratios) // 2]
+                if not (0 < ratio < 1e6):
+                    continue
+                scale = ratio
+                source = "tencent_etf_kline:ratio"
             out.append(
                 Bar(
                     symbol=code, trade_date=today,
@@ -124,7 +135,7 @@ class ETFRunner:
                     low=_scale(row[4], scale), close=_scale(row[5], scale),
                     volume=int(row[6]) if row[6] is not None else None,
                     amount=float(row[7]) if row[7] is not None else None,
-                    source="sina_etf_kline:factor", adjust="hfq",
+                    source=source, adjust="hfq",
                 )
             )
         return out

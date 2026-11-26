@@ -42,6 +42,8 @@ CLOSE_TIMES: dict[str, dtime] = {"A": dtime(15, 10), "HK": dtime(16, 15), "FUND"
 RETRY_INITIAL = timedelta(minutes=10)
 RETRY_MAX = timedelta(minutes=30)
 POLL_SECONDS = 60
+# 旧链清洗刷新节流（避免每次 catching_up 重试都跑 747 标的清洗）
+LEGACY_CLEAN_MIN_INTERVAL = timedelta(hours=4)
 
 
 class DatasetRunner(Protocol):
@@ -116,6 +118,7 @@ class Orchestrator:
         self._sleep = sleep_fn
         self._write_enabled = config.write_enabled if write_enabled is None else write_enabled
         self._last_retry: dict[tuple[str, str], datetime] = {}
+        self._legacy_clean_last: datetime | None = None
 
     # -- calendar -----------------------------------------------------
     def latest_trading_day(self, conn: Any, reference: date) -> date | None:
@@ -359,15 +362,42 @@ class Orchestrator:
                     next_retry_at=now + result.next_retry_in,
                 )
         conn.commit()
-        if self._write_enabled and spec.name == "legacy_index" and report.ok:
-            # 旧链清洗/资产状态刷新（P2 收尾）：只在成功后触发，失败不影响 ETL 循环
-            try:
-                from bp_etl.cleaning_hook import refresh_legacy_clean
-
-                refresh_legacy_clean(conn)
-            except Exception:  # noqa: BLE001
-                logger.warning("旧链清洗刷新失败（下一轮再试）", exc_info=True)
+        self._maybe_refresh_legacy_clean(conn, spec, now, result, report)
         return result
+
+    def _maybe_refresh_legacy_clean(
+        self,
+        conn: Any,
+        spec: DatasetSpec,
+        now: datetime,
+        result: WaveResult,
+        report: QualityReport,
+    ) -> None:
+        """旧链清洗/资产状态刷新（P2 收尾）。
+
+        触发条件：legacy_index hfq 波次（第二口径，bfq 已先写）且已过收盘窗口，
+        本轮确有抓取或已追平；节流 4h。**不依赖 coverage 达标**——旧链含少量
+        不可达自定义指数时覆盖率可能永远 <0.90，但可达资产的清洗必须照常刷新，
+        否则组合 T-1 自动更新会被旧 clean 数据卡死。
+        """
+        if not self._write_enabled or spec.name != "legacy_index":
+            return
+        if result.adjust != "hfq":
+            return
+        if now.timetz().replace(tzinfo=None) < dtime(16, 30):
+            return
+        last = self._legacy_clean_last
+        if last is not None and now - last < LEGACY_CLEAN_MIN_INTERVAL:
+            return
+        if not (report.ok or result.fetched > 0 or result.written > 0):
+            return
+        try:
+            from bp_etl.cleaning_hook import refresh_legacy_clean
+
+            refresh_legacy_clean(conn)
+            self._legacy_clean_last = now
+        except Exception:  # noqa: BLE001
+            logger.warning("旧链清洗刷新失败（下一轮再试）", exc_info=True)
 
     def _record_source_health(
         self, conn: Any, spec: DatasetSpec, trade_date: date, coverage: float
