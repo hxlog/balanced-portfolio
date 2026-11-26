@@ -110,3 +110,44 @@
 - **生产进程**：bp-api / bp-web / bp-etl / bp-worker / bp-beat online；bp-ingest（旧链调度器）已停用，
   报价抓取由 bp-etl 接管、清洗由 ETL 钩子接管。
 - **最终测试**：后端 643 passed / 36 skipped；前端 typecheck + 100 tests + build 全绿。
+
+## 9. 2026-11-26 故障排查：四象限组合停留在 2026-11-24
+
+**现象**：全部 quadrant 组合（多资产全天候等）结果停在 2026-11-24；`bp_task.daily_update`
+自 11-24 晚起持续失败，错误 `ValueError: cannot reindex on an axis with duplicate labels`；
+`bp_quote_clean` 最大日期停在 2026-11-24。
+
+**根因（两处叠加）**
+1. **回测读取未按主口径过滤**：清洗表按 `(symbol, source, adjust)` 保存多口径历史行
+   （bfq/hfq 历史共存），而 `repositories._load_series` 只按 `symbol+source` 读取 →
+   同一交易日两行 → Series 重复索引 → 每日自动回测全部在 `reindex` 处崩溃。
+   触发点：11-24 23:16 首次运行旧链清洗钩子，写入双口径历史行后，11-24 23:21 起
+   所有 `daily_update` 任务失败。
+2. **旧链 universe 被 ETL 资产污染**：11-23 的 L3 桥接把 9,430 只 v3 资产写入
+   `bp_index_config`（`is_selectable=TRUE, managed_by='bp_etl'`）。`legacy_index` 的
+   universe 未排除 managed 资产 → 期望 9,580 symbols / 实际可达 ~200 → 覆盖率恒 ~1.5%，
+   legacy 永不追平（backlog 4 万条）；清洗钩子按“成功才触发”设计 → `bp_quote_clean`
+   自 11-24 后不再刷新 → 即使回测读取修好也无可回测的新数据。
+
+**修复**
+- `_load_series`/benchmark/preview 全部按 `bp_index_config.adjust` 过滤（新增
+  `_primary_adjusts` + 回归测试）。
+- `legacy_index.universe` 增加 `managed_by IS NULL`（新增回归测试）。
+- 旧链清洗钩子改为**不依赖覆盖率达标**（hfq 波次 16:30 后、有抓取即触发，节流 4h），
+  保证“不可达自定义指数拖低覆盖率”不再阻断清洗/组合更新。
+- ETF hfq 因子路径增加锚定比回退（因子 404/空时自动降级，实测 11-26 覆盖率 0.99）。
+- 运维：重启 celery worker 加载新代码、重置 worker 重启遗留的 running 任务、
+  手动刷新旧链清洗（747 标的，139 万行，clean 追平 2026-11-26）、重排 21 个组合。
+
+**修复后验证（2026-11-26 21:00）**
+- 日行情：A bfq 5,220 / hfq 5,219；HK bfq 2,700 / hfq 1,982；ETF bfq 1,328 / hfq 1,327；
+  基金 23,180（全部 state = 2026-11-26，legacy_index 除外）。
+- 组合：21/21 quadrant 组合 status=done；`bp_portfolio_update_state` 21/22 已更新到
+  ≥2026-11-25；最近一次 daily_update 成功 = 2026-11-26 20:59。
+- 回归：后端 651 passed / 36 skipped。
+
+**遗留**
+- `legacy_index` state 仍 11-24：selectable 池含 EM-only 自定义指数（930xxx）持续不可达，
+  旧链波次夜间耗时长；清洗与组合更新已与 legacy state 解耦，不再阻塞业务。
+  建议 P3：按“实际被组合/基准引用”裁剪 legacy universe，或对 cn_index_em 先探测再降级。
+- 清洗表多口径历史行（约 1.6 万重复日期行）读取已安全，可在低峰期做一次性清理。
