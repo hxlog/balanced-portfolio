@@ -29,3 +29,5 @@ pyotp>=2.9.0
 
 # 测试(开发)
 pytest>=8.0.0
+# starlette TestClient 在 2026 版 Starlette 中改为依赖 httpx2（CI/本地测试必需）
+httpx2>=2.16.0
