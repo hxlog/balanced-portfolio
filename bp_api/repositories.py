@@ -332,12 +332,37 @@ def list_assets(conn: psycopg.Connection) -> list[dict]:
 # ---------------------------------------------------------------------
 # 价格面板
 # ---------------------------------------------------------------------
-def _load_series(conn: psycopg.Connection, symbol: str, source: str) -> pd.Series:
+def _primary_adjusts(
+    conn: psycopg.Connection, pairs: list[tuple[str, str]]
+) -> dict[tuple[str, str], str]:
+    """每个资产的回测主口径（bp_index_config.adjust）；缺失时回退 bfq。
+
+    清洗表按 (symbol, source, adjust) 存多口径历史行；读取必须只取主口径，
+    否则同一交易日会出现 bfq/hfq 两行 → Series 重复索引 → 回测 reindex 崩溃。
+    """
+    if not pairs:
+        return {}
+    symbols = [symbol for symbol, _ in pairs]
+    sources = [source for _, source in pairs]
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT c.symbol, c.source, COALESCE(c.adjust, 'bfq')"
+            " FROM bp_index_config c"
+            " WHERE c.is_deleted = 0 AND (c.symbol, c.source) IN"
+            "       (SELECT s, src FROM unnest(%s::text[], %s::text[]) AS t(s, src))",
+            (symbols, sources),
+        )
+        return {(row[0], row[1]): row[2] for row in cur.fetchall()}
+
+
+def _load_series(
+    conn: psycopg.Connection, symbol: str, source: str, adjust: str
+) -> pd.Series:
     with conn.cursor() as cur:
         cur.execute(
             "SELECT trade_date, close, fill_flag FROM bp_quote_clean "
-            "WHERE symbol = %s AND source = %s ORDER BY trade_date",
-            (symbol, source),
+            "WHERE symbol = %s AND source = %s AND adjust = %s ORDER BY trade_date",
+            (symbol, source, adjust),
         )
         rows = cur.fetchall()
     if not rows:
@@ -455,6 +480,7 @@ def load_price_panel(
     nav 物理上止于"所有成分都有数据的那一天"。某成分滞后则整组回退到该成分的最近完整日
     (T-N 回退); 不再用脏数据(fillna 0)延伸, 也不因滞后直接 raise。
     """
+    adjusts = _primary_adjusts(conn, pairs)
     series = {}
     for symbol, source in pairs:
         if source in _ETL_CLEAN_SOURCES:
@@ -462,7 +488,7 @@ def load_price_panel(
                 _ensure_etl_clean(conn, symbol, source)
             except Exception:  # noqa: BLE001 - 清洗失败按原有「无数据」错误处理
                 logger.warning("ETL 资产按需清洗失败 %s@%s", symbol, source, exc_info=True)
-        s = _load_series(conn, symbol, source)
+        s = _load_series(conn, symbol, source, adjusts.get((symbol, source), "bfq"))
         if s.empty:
             raise ValueError(f"{asset_key(symbol, source)} 无清洗行情数据, 请先运行 ingest/clean")
         series[asset_key(symbol, source)] = s
@@ -993,9 +1019,12 @@ def preview_coverage(
 
     loaded: dict[str, pd.Series] = {}
     missing: list[tuple[str, str]] = []
+    preview_adjusts = _primary_adjusts(conn, seen)
     for symbol, source in seen:
         try:
-            s = _load_series(conn, symbol, source)
+            s = _load_series(
+                conn, symbol, source, preview_adjusts.get((symbol, source), "bfq")
+            )
         except Exception:  # noqa: BLE001 - 单个资产读取失败不应使整次预览失败
             logger.exception("preview_coverage 读取失败 symbol=%s source=%s", symbol, source)
             s = pd.Series(dtype="float64")
@@ -1036,8 +1065,16 @@ def _compute(
 
     # 回测内部基准 = 注册表全腿合成(多腿按日再平衡), 与展示/归因口径一致
     bkey = _resolve_benchmark_key(pdef.benchmark_key)
+    bench_legs = BENCHMARKS[bkey]["legs"]
+    bench_adjusts = _primary_adjusts(
+        conn, [(sym, src) for _w, sym, src in bench_legs]
+    )
     bench = _compose_benchmark_series(
-        BENCHMARKS[bkey]["legs"], lambda sym, src: _load_series(conn, sym, src))
+        bench_legs,
+        lambda sym, src: _load_series(
+            conn, sym, src, bench_adjusts.get((sym, src), "bfq")
+        ),
+    )
     if bench.empty:
         raise ValueError(f"配置基准 {BENCHMARKS[bkey]['name']} 无清洗数据")
 
@@ -1130,11 +1167,15 @@ def _compute_benchmark_navs(conn: psycopg.Connection, dates: list) -> dict[str, 
     """在给定交易日序列上计算每个候选基准的单位净值(起点=1.0)。"""
     idx = pd.Index(dates)
     out: dict[str, pd.DataFrame] = {}
+    bench_adjusts = _primary_adjusts(
+        conn,
+        [(sym, src) for spec in BENCHMARKS.values() for _w, sym, src in spec["legs"]],
+    )
     for key, spec in BENCHMARKS.items():
         total_ret = pd.Series(0.0, index=idx)
         ok = True
         for w, sym, src in spec["legs"]:
-            s = _load_series(conn, sym, src)
+            s = _load_series(conn, sym, src, bench_adjusts.get((sym, src), "bfq"))
             if s.empty:
                 ok = False
                 break

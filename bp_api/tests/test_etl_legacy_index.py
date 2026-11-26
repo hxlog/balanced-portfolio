@@ -148,11 +148,18 @@ def test_universe_scope_selectable(monkeypatch) -> None:
     class FakeCursor:
         def __enter__(self): return self
         def __exit__(self, *exc): return False
-        def execute(self, sql, params=None): self.sql = sql
+        def execute(self, sql, params=None):
+            self.sql = sql
+            self._conn.last_sql = sql
         def fetchall(self): return [("000300",)]
 
     class FakeConn:
-        def cursor(self): return FakeCursor()
+        def __init__(self):
+            self.last_sql = ""
+        def cursor(self):
+            cur = FakeCursor()
+            cur._conn = self
+            return cur
 
     monkeypatch.setenv("BP_ETL_LEGACY_SCOPE", "selectable")
     monkeypatch.delenv("BP_ETL_LEGACY_SYMBOLS", raising=False)
@@ -160,3 +167,4 @@ def test_universe_scope_selectable(monkeypatch) -> None:
     conn = FakeConn()
     symbols = runner.universe(conn)
     assert symbols == ["000300"]
+    assert "managed_by IS NULL" in conn.last_sql

@@ -189,6 +189,7 @@ def _mock_conn():
     from unittest.mock import MagicMock
     conn = MagicMock()
     cur = MagicMock()
+    cur.fetchall.return_value = []  # _primary_adjusts 无配置 → 回退 bfq
     conn.cursor.return_value.__enter__ = MagicMock(return_value=cur)
     conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
     return conn, cur
@@ -196,7 +197,7 @@ def _mock_conn():
 
 def _series_loader(series_by_key: dict):
     """替身 _load_series: 按 (symbol, source) 返回预设序列(缺省空序列 = 无清洗数据)。"""
-    def _load(conn, symbol, source):
+    def _load(conn, symbol, source, adjust=None):
         return series_by_key.get(f"{symbol}@{source}", pd.Series(dtype="float64"))
     return _load
 
@@ -257,7 +258,7 @@ def test_preview_coverage_read_failure_degrades_to_no_data(monkeypatch):
     dates = [d.date() for d in pd.bdate_range("2020-01-01", periods=200)]
     good = pd.Series(np.linspace(100, 120, 200), index=dates)
 
-    def _load(conn, symbol, source):
+    def _load(conn, symbol, source, adjust=None):
         if symbol == "BOOM":
             raise RuntimeError("模拟读取失败")
         return good

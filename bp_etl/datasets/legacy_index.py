@@ -113,7 +113,12 @@ class LegacyIndexRunner:
         # 生产默认 scope=selectable：只维护 builder/回测实际可用的资产 + 汇率源，
         # 避免为不可达的自定义指数（EM 封禁、无降级源）每夜空转 30-60 分钟。
         scope = (os.getenv("BP_ETL_LEGACY_SCOPE") or "all").strip().lower()
-        base = "SELECT DISTINCT symbol FROM bp_index_config WHERE is_deleted=0"
+        # 必须排除 managed_by='bp_etl' 的 v3 资产：它们 is_selectable=TRUE 会污染
+        # 旧链 universe（期望 9,600+），导致覆盖率恒 ~1.5% 永不追平。
+        base = (
+            "SELECT DISTINCT symbol FROM bp_index_config"
+            " WHERE is_deleted=0 AND managed_by IS NULL"
+        )
         params: list = []
         if scope == "selectable":
             base += " AND (is_selectable = TRUE OR source = 'fx_sina')"
