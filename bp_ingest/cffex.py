@@ -672,9 +672,9 @@ def _ensure_index_data(
             with conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO bp_index_quote_daily
-                        (trade_date, symbol, source, category, name, close)
-                    VALUES (%s, %s, 'cn_index_sina', 'cn_index', %s, %s)
-                    ON CONFLICT (symbol, source, trade_date) DO UPDATE SET
+                        (trade_date, symbol, source, adjust, category, name, close)
+                    VALUES (%s, %s, 'cn_index_sina', 'bfq', 'cn_index', %s, %s)
+                    ON CONFLICT (symbol, source, adjust, trade_date) DO UPDATE SET
                         close = EXCLUDED.close, updated_at = now()
                 """, (td, idx_sym, sina_sym, _safe_num(close_val)))
             rows_written += 1
@@ -685,6 +685,11 @@ def _ensure_index_data(
             logger.info("指数 %s: 收盘未确认, 跳过今日 %d 行", variety, skipped_unconfirmed)
         logger.info("指数 %s: 写入 %d 行", variety, rows_written)
     except Exception as exc:
+        # 单标的补拉失败不得让事务停在 aborted 状态（否则后续 premium 计算全挂）
+        try:
+            conn.rollback()
+        except Exception:  # noqa: BLE001
+            pass
         logger.warning("指数 %s akshare 补拉失败: %s", variety, exc)
 
 
