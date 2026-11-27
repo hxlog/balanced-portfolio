@@ -21,6 +21,8 @@ import {
 import { formatDateCN } from "@/lib/asset-range";
 import { getChartTheme, withAlpha } from "@/lib/chart-theme";
 import {
+  basketNavLegend,
+  basketNavSeriesFlags,
   basketWeightRows,
   formatPct,
   formatRatio,
@@ -61,6 +63,8 @@ export function BasketResults({
   backtestLoading,
   backtestError,
   backtestDirty,
+  /** 已还原的 latest_result 参数与当前表单不一致（需重新回测才能写回结果）。 */
+  backtestParamsStale,
   bandPct,
   isDark,
 }: {
@@ -75,6 +79,8 @@ export function BasketResults({
   backtestLoading: boolean;
   backtestError: string | null;
   backtestDirty: boolean;
+  /** 已还原的 latest_result 参数与当前表单不一致（需重新回测才能写回结果）。 */
+  backtestParamsStale: boolean;
   bandPct: number;
   isDark: boolean;
 }) {
@@ -146,7 +152,8 @@ export function BasketResults({
         itemWidth: 14,
         itemHeight: 8,
         textStyle: { color: theme.subtext, fontSize: 11 },
-        data: ["篮子净值", "等权净值", "调仓"],
+        // 只列真实画出的系列：latest_result 还原 / 旧后端可能缺等权净值与调仓事件。
+        data: basketNavLegend(backtest),
       },
       tooltip: {
         trigger: "axis",
@@ -247,6 +254,9 @@ export function BasketResults({
 
   const showWeightsSkeleton = optimizeLoading && rows.length === 0;
   const showDiagSkeleton = backtestLoading && backtest == null;
+  const navSeries = backtest
+    ? basketNavSeriesFlags(backtest)
+    : { equalWeight: false, rebalance: false };
   const fees = backtest?.fees ?? null;
   const feeSummary = fees
     ? `佣金 ${formatPct(fees.fee_rate, 2)} · 滑点 ${formatPct(
@@ -447,11 +457,15 @@ export function BasketResults({
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
-              {backtestDirty && (
+              {backtestParamsStale ? (
+                <Badge variant="outline" className="border-warning/40 text-warning">
+                  结果参数已变更，请重新回测
+                </Badge>
+              ) : backtestDirty ? (
                 <Badge variant="outline" className="border-warning/40 text-warning">
                   参数已变更
                 </Badge>
-              )}
+              ) : null}
               {backtestLoading && (
                 <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
               )}
@@ -480,7 +494,15 @@ export function BasketResults({
                 onEvents={clickEvents}
               />
               <p className="mt-1 text-[11px] text-muted-foreground">
-                实线=篮子净值（{methodShort}，扣费后） · 虚线=等权净值 · <span className="text-warning">◆ 调仓点</span>（点击查看权重变化）
+                实线=篮子净值（{methodShort}，扣费后）
+                {navSeries.equalWeight ? " · 虚线=等权净值" : null}
+                {navSeries.rebalance ? (
+                  <>
+                    {" · "}
+                    <span className="text-warning">◆ 调仓点</span>
+                    （点击查看权重变化）
+                  </>
+                ) : null}
               </p>
               <div className="mt-4 grid grid-cols-2 gap-3 border-t border-border pt-4 sm:grid-cols-4">
                 <MiniStat

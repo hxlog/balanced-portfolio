@@ -35,6 +35,7 @@ import importlib.util
 import json
 import logging
 import os
+import re
 import sys
 from datetime import date, timedelta
 from typing import Any, Callable, Iterable, Optional, Sequence
@@ -127,8 +128,16 @@ def last_raw_date(conn: Any, symbol: str, source: str, adjust: str) -> Optional[
 def _market_for(symbol: str, source: str) -> Optional[str]:
     """推断免费源市场：HK 指数 / 中证系 / 沪 / 深。"""
     code = (symbol or "").strip()
-    if (source or "").startswith("hk_index") or (code.isalpha() and code.isupper()):
-        return "HK" if (source or "").startswith("hk_index") else None
+    source_text = source or ""
+    # HK 指数（HSI/HSTECH 等字母码 + hk_index_* 源）优先；中证系非数字码
+    # （H30007/H30269/H11xxx 等）必须在 isdigit 判断之前识别，否则会被误判
+    # 为 unsupported（旧实现让 27 个 H3 旧链标的整条跳过）。
+    if source_text.startswith("hk_index"):
+        return "HK"
+    if re.fullmatch(r"H\d+", code.upper()):
+        return "CSI"
+    if code.isalpha() and code.isupper():
+        return None
     if not code.isdigit():
         return None
     if code.startswith(("930", "931", "932", "950", "H3")):
@@ -196,18 +205,93 @@ def plan_backfill(
 # ---------------------------------------------------------------------------
 # 数据读取（可 monkeypatch 单测）
 # ---------------------------------------------------------------------------
-def load_v3_etf_rows(
-    conn: Any, symbol: str, adjust: str, start: date, target: date
+#: v3 ETF 多源优先级（与 docs/fund-risk.md / scripts/compute_fund_risk.py 同口径，
+#: 未列出的源按名称排序兜底）：固定单一源，禁止同日混用不同源绝对基价。
+V3_ETF_SOURCE_PRIORITY: tuple[str, ...] = (
+    "tencent_etf_kline",        # hfq 锚定源（单位累计净值口径）
+    "tencent_qt",               # bfq 锚定源（qt 快照）
+    "em_kline:anchored",        # EM 回退，已重锚到锚定基准
+    "sina_etf_kline",           # 新浪 bfq
+    "tencent_kline",            # 旧 ETF K 线路径
+    "tencent_etf_kline:ratio",  # 腾讯锚定比回退
+    "sina_etf_kline:factor",    # 新浪因子回退
+    "em_kline",
+)
+
+
+def _v3_source_rank(source: Any) -> tuple[int, str]:
+    text = str(source or "")
+    try:
+        return V3_ETF_SOURCE_PRIORITY.index(text), text
+    except ValueError:
+        return len(V3_ETF_SOURCE_PRIORITY), text
+
+
+def select_v3_source(
+    rows: Sequence[tuple], anchor_date: Optional[date] = None
+) -> Optional[str]:
+    """为一次回填选一个固定 v3 源（不同源的绝对基价不同，不能同日混用）。
+
+    规则：锚点日有重叠收盘的源优先（否则无法重锚）；同组内按窗口覆盖行数降序，
+    再按 V3_ETF_SOURCE_PRIORITY 固定优先级/名称兜底（覆盖差时优先高优先级源）。
+    """
+    grouped: dict[str, list[tuple]] = {}
+    for row in rows:
+        grouped.setdefault(str(row[5]), []).append(row)
+    if not grouped:
+        return None
+
+    def _rank(item: tuple[str, list[tuple]]) -> tuple[int, int, tuple[int, str]]:
+        source, items = item
+        has_overlap = anchor_date is not None and any(
+            row[0] == anchor_date and bool(row[4]) for row in items
+        )
+        return (0 if has_overlap else 1, -len(items), _v3_source_rank(source))
+
+    return min(grouped.items(), key=_rank)[0]
+
+
+def dedupe_v3_rows(
+    rows: Sequence[tuple], anchor_date: Optional[date] = None
 ) -> list[tuple]:
-    """v3 ETF 行情行 (trade_date, open, high, low, close)。"""
+    """多源行 -> 单一固定源的 5 列行（按 trade_date 升序）。
+
+    bp_etf_quote_daily 主键含 source，同一天可能同时有 tencent/em/新浪多行；
+    写回旧链表前必须只保留一个源，否则同一日期会互相覆盖、跨源基价漂移
+    （`:anchored`/`:factor` 回退源与锚定源绝对价基数不同）。
+    """
+    if not rows:
+        return []
+    source = select_v3_source(rows, anchor_date)
+    return [
+        (row[0], row[1], row[2], row[3], row[4])
+        for row in sorted(rows, key=lambda item: item[0])
+        if str(row[5]) == source
+    ]
+
+
+def load_v3_etf_rows(
+    conn: Any,
+    symbol: str,
+    adjust: str,
+    start: date,
+    target: date,
+    *,
+    anchor_date: Optional[date] = None,
+) -> list[tuple]:
+    """v3 ETF 行情行 (trade_date, open, high, low, close)；多源 -> 固定单一源。
+
+    start 可早于回填起点（execute_plan 传入旧链锚点日），以便用重叠日重锚；
+    anchor_date 用于优先选择锚点日有重叠收盘的源。
+    """
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT trade_date, open, high, low, close FROM bp_etf_quote_daily"
+            "SELECT trade_date, open, high, low, close, source FROM bp_etf_quote_daily"
             " WHERE etf_code = %s AND adjust = %s AND close IS NOT NULL"
             " AND trade_date >= %s AND trade_date <= %s ORDER BY trade_date",
             (symbol, adjust, start, target),
         )
-        return list(cur.fetchall())
+        return dedupe_v3_rows(list(cur.fetchall()), anchor_date)
 
 
 def load_legacy_anchor(
@@ -226,6 +310,25 @@ def load_legacy_anchor(
     if not row:
         return None, None
     return row[0], float(row[1])
+
+
+def resolve_v3_reanchor(
+    anchor: tuple[Optional[date], Optional[float]],
+    rows: Sequence[tuple],
+) -> tuple[float, Optional[str]]:
+    """旧链锚点收盘 / v3 同日重叠收盘 -> 重锚因子，并返回无法重锚的原因。
+
+    旧链 hfq 与 v3 hfq 复权基准不同，必须用同一交易日的重叠收盘求因子，
+    保证回填后旧链基准不变。rows 需包含锚点日（execute_plan 从锚点日起查）；
+    无重叠时保持 factor=1 并把原因回传给调用方记录（不静默混用基准）。
+    """
+    anchor_date, anchor_close = anchor
+    if anchor_date is None or not anchor_close:
+        return 1.0, "no_legacy_anchor"
+    overlap = next((row for row in rows if row[0] == anchor_date), None)
+    if overlap is None or not overlap[4]:
+        return 1.0, "v3_anchor_no_overlap"
+    return float(anchor_close) / float(overlap[4]), None
 
 
 def load_iqf_module():
@@ -278,18 +381,19 @@ def build_v3_etf_rows(
     *,
     rows: Sequence[tuple],
     anchor: tuple[Optional[date], Optional[float]],
+    start: Optional[date] = None,
 ) -> list[Any]:
-    """把 v3 ETF 行情按旧链锚收盘重锚为 bp_index_quote_daily 的 QuoteRow。"""
+    """把 v3 ETF 行情按旧链锚收盘重锚为 bp_index_quote_daily 的 QuoteRow。
+
+    rows 需包含旧链锚点日（execute_plan 从锚点日起查）才能计算重叠因子；
+    锚点日与 start 之前的行只用于对齐基准/推算 pct，不写出（避免覆盖既有行）。
+    """
     from bp_ingest.db import QuoteRow
 
     if not rows:
         return []
     anchor_date, anchor_close = anchor
-    factor = 1.0
-    if anchor_date is not None and anchor_close:
-        overlap = next((row for row in rows if row[0] == anchor_date), None)
-        if overlap is not None and overlap[4]:
-            factor = float(anchor_close) / float(overlap[4])
+    factor, _reason = resolve_v3_reanchor(anchor, rows)
     out: list[Any] = []
     previous = anchor_close
     for trade_date, open_, high, low, close in rows:
@@ -301,6 +405,9 @@ def build_v3_etf_rows(
             if previous
             else None
         )
+        if start is not None and trade_date < start:
+            previous = scaled_close
+            continue
         out.append(
             QuoteRow(
                 trade_date=trade_date,
@@ -380,7 +487,9 @@ def execute_plan(
     from bp_ingest.db import upsert_quotes
 
     write = writer or upsert_quotes
-    result: dict[str, Any] = {"rows_written": 0, "plans_done": 0, "skipped": []}
+    result: dict[str, Any] = {
+        "rows_written": 0, "plans_done": 0, "skipped": [], "warnings": [],
+    }
     for plan in plans:
         if plan["provider"] == "unsupported":
             result["skipped"].append(
@@ -396,10 +505,28 @@ def execute_plan(
         rows: list[Any] = []
         try:
             if plan["provider"] == "v3_etf":
-                v3_rows = load_v3_etf_rows(conn, symbol, adjust, start, target)
                 anchor = load_legacy_anchor(conn, symbol, source, adjust, start)
+                # 必须从旧链锚点日（< start）开始取 v3 行情：只查 >= start 会让
+                # 锚点日落在查询窗口外、重叠为空，重锚因子恒 1.0（旧链 hfq 基准错位）。
+                v3_start = anchor[0] or start
+                v3_rows = load_v3_etf_rows(
+                    conn, symbol, adjust, v3_start, target,
+                    anchor_date=anchor[0],
+                )
+                _factor, no_overlap_reason = resolve_v3_reanchor(anchor, v3_rows)
+                if v3_rows and no_overlap_reason:
+                    result["warnings"].append(
+                        {"symbol": symbol, "adjust": adjust,
+                         "reason": no_overlap_reason}
+                    )
+                    logger.warning(
+                        "v3 ETF 重锚无重叠（保持 factor=1，基准可能不一致）"
+                        " symbol=%s adjust=%s anchor=%s",
+                        symbol, adjust, anchor[0],
+                    )
                 rows = build_v3_etf_rows(
-                    symbol, source, adjust, target, rows=v3_rows, anchor=anchor
+                    symbol, source, adjust, target, rows=v3_rows,
+                    anchor=anchor, start=start,
                 )
             elif plan["provider"] == "free_index":
                 market = plan.get("market") or _market_for(symbol, source)

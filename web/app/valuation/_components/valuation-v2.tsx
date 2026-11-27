@@ -368,7 +368,9 @@ export function DividendValueChart({
   const medianYield = medianOf(points.map((point) => point.y));
   const option: Record<string, unknown> = {
     animation: false,
-    grid: { left: 10, right: 18, top: 34, bottom: 30, containLabel: true },
+    // 绝对模式 Y 轴刻度是「X.X」窄标签，containLabel 收缩后左侧只剩 10px，竖排轴名
+    // 「股息率（%）」会被裁掉（相对模式标签更宽所以可见）。留 20px 给轴名。
+    grid: { left: 20, right: 18, top: 34, bottom: 30, containLabel: true },
     tooltip: {
       confine: true,
       backgroundColor: theme.tooltipBg,

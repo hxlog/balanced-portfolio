@@ -27,6 +27,8 @@ from typing import Any, Iterator, Optional, Sequence
 
 from fastapi import FastAPI
 
+from bp_etl.registry import REGISTRY
+
 from . import db
 
 logger = logging.getLogger(__name__)
@@ -90,8 +92,21 @@ STATUS_SEVERITY: dict[str, int] = {
     "ok": 0, "lagging": 1, "stale": 2, "missing": 3, "unavailable": 4, "error": 5,
 }
 
-#: 覆盖率达标线：低于该比例即使 as_of 追平也应显示 lagging（用户反馈 P0）。
-COVERAGE_OK_MIN = 0.99
+#: 覆盖率达标线（按数据集，与 bp_etl.registry 门控同口径）：低于该比例即使
+#: as_of 追平也应显示 lagging（用户反馈 P0）。
+#: - a_stock/hk_stock/etf/fund_nav 直接取 registry.coverage_min（写方追平阈值）；
+#: - index_quotes/index_valuation 无 registry 条目，固定 0.99；
+#: - cffex/mvi 不以覆盖率判定（None：只按 as_of 时效）。
+COVERAGE_MIN_BY_DATASET: dict[str, Optional[float]] = {
+    "a_stock": REGISTRY["a_stock"].coverage_min,
+    "hk_stock": REGISTRY["hk_stock"].coverage_min,
+    "etf": REGISTRY["etf"].coverage_min,
+    "fund_nav": REGISTRY["fund_nav"].coverage_min,
+    "index_quotes": 0.99,
+    "index_valuation": 0.99,
+    "cffex": None,
+    "mvi": None,
+}
 
 #: meta 里可能出现的覆盖率字段（各写方历史口径不同，按优先级尝试）。
 _COVERAGE_RATIO_KEYS = ("ratio", "coverage")
@@ -667,9 +682,13 @@ def _build_item(
     )
     # 状态取「写入方状态 / 按应到日重算 / 覆盖率」三者中最严重者：
     # 覆盖率不足时即使 as_of 追平也应显示 lagging（不能只按 lag 判绿）。
+    # 阈值按数据集取（registry.coverage_min / 指数 0.99 / cffex·mvi 不判定），
+    # 不能一律 99%——否则 ETF 96%、基金 90% 的正常追平会被误判 lagging。
+    coverage_min = COVERAGE_MIN_BY_DATASET.get(spec.key)
     coverage_lagging = bool(
-        coverage and coverage.get("ratio") is not None
-        and float(coverage["ratio"]) < COVERAGE_OK_MIN
+        coverage_min is not None
+        and coverage and coverage.get("ratio") is not None
+        and float(coverage["ratio"]) < float(coverage_min)
     )
     # 写入方状态只在「没有更新的派生日期」时有效：ddl/79 初始行 status=missing，
     # 若源表已有更新数据（derived_as_of > stored_as_of 或 stored as_of 为空），
@@ -686,7 +705,7 @@ def _build_item(
     is_stale = status != "ok"
     note = state["note"] or stored.get("note")
     if note is None and coverage_lagging:
-        note = _coverage_note(spec, coverage)
+        note = _coverage_note(spec, coverage, float(coverage_min))
     if note is None and is_stale:
         note = f"数据状态 {status}"
     updated_at = stored.get("updated_at")
@@ -723,15 +742,20 @@ def _build_item(
     }
 
 
-def _coverage_note(spec: DatasetSpec, coverage: dict[str, Any]) -> str:
-    """覆盖率不足时的 note（如「覆盖 284/481（59%）」）。"""
+def _coverage_note(
+    spec: DatasetSpec,
+    coverage: dict[str, Any],
+    coverage_min: Optional[float] = None,
+) -> str:
+    """覆盖率不足时的 note（如「覆盖 284/481（59%）」；阈值按数据集）。"""
     covered = coverage.get("covered")
     total = coverage.get("total")
     ratio = coverage.get("ratio")
     if covered is not None and total:
         return f"覆盖 {int(covered)}/{int(total)}（{float(ratio or 0) * 100:.0f}%）"
     if ratio is not None:
-        return f"覆盖 {float(ratio) * 100:.0f}%（低于 {COVERAGE_OK_MIN:.0%}）"
+        threshold = coverage_min if coverage_min is not None else 1.0
+        return f"覆盖 {float(ratio) * 100:.0f}%（低于 {threshold:.0%}）"
     return "覆盖率不足"
 
 

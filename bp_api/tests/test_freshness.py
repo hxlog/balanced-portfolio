@@ -458,6 +458,48 @@ def test_coverage_below_threshold_makes_stored_ok_lagging_with_note() -> None:
     assert item["coverage"]["ratio"] == pytest.approx(0.59)
 
 
+def _coverage_item(dataset: str, ratio: float) -> dict:
+    spec = freshness._SPEC_BY_KEY[dataset]
+    return freshness._build_item(
+        spec,
+        {
+            "as_of": dt.date(2026, 11, 27), "status": "ok",
+            "meta": {"coverage": ratio},
+            "updated_at": None,
+        },
+        None,
+        dt.date(2026, 11, 27),
+        list(DAYS),
+    )
+
+
+def test_coverage_threshold_is_per_dataset_not_blanket_99pct() -> None:
+    """覆盖率阈值必须按数据集取 registry：ETF 96% / 基金 90% 追平应 ok。"""
+    assert _coverage_item("fund_nav", 0.914)["status"] == "ok"
+    assert _coverage_item("fund_nav", 0.90)["status"] == "ok"
+    assert _coverage_item("etf", 0.96)["status"] == "ok"
+    assert _coverage_item("etf", 0.959)["status"] == "lagging"
+    assert _coverage_item("hk_stock", 0.966)["status"] == "lagging"
+    assert _coverage_item("a_stock", 0.99)["status"] == "lagging"
+    assert _coverage_item("a_stock", 0.995)["status"] == "ok"
+    # 指数类别没有 registry 条目：保持 0.99
+    assert _coverage_item("index_quotes", 0.9)["status"] == "lagging"
+    assert _coverage_item("index_quotes", 0.99)["status"] == "ok"
+    assert _coverage_item("index_valuation", 0.995)["status"] == "ok"
+    # cffex/mvi 不以覆盖率判定（只按 as_of 时效）
+    assert _coverage_item("cffex", 0.5)["status"] == "ok"
+    assert _coverage_item("mvi", 0.5)["status"] == "ok"
+
+
+def test_coverage_note_reports_dataset_threshold() -> None:
+    fund = _coverage_item("fund_nav", 0.89)
+    assert fund["status"] == "lagging"
+    assert "90%" in fund["note"]
+    etf = _coverage_item("etf", 0.90)
+    assert etf["status"] == "lagging"
+    assert "96%" in etf["note"]
+
+
 def test_worst_status_and_meta_coverage() -> None:
     assert freshness.worst_status("ok", "lagging") == "lagging"
     assert freshness.worst_status("ok", None, "stale") == "stale"

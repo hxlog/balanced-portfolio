@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  basketNavLegend,
+  basketNavSeriesFlags,
   basketSkyColor,
   basketWeightRows,
   formatPct,
@@ -79,6 +81,14 @@ describe("number formatting", () => {
     expect(formatPct(Number.NaN)).toBe("—");
   });
 
+  it("不再把 0.03%（3bp 费用/权重）误判成 0.00%", () => {
+    // 入参是小数、展示时 ×100：阈值必须是 0.5*10^-(digits+2)，digits=2 时为 0.00005。
+    expect(formatPct(0.0003, 2)).toBe("0.03%");
+    expect(formatPct(-0.0003, 2)).toBe("-0.03%");
+    expect(formatPct(0.00004, 2)).toBe("0.00%");
+    expect(formatPct(0, 2)).toBe("0.00%");
+  });
+
   it("formats signed percentages for directional metrics", () => {
     expect(formatSignedPct(0.05)).toBe("+5.0%");
     expect(formatSignedPct(-0.05)).toBe("-5.0%");
@@ -88,5 +98,35 @@ describe("number formatting", () => {
   it("formats ratios", () => {
     expect(formatRatio(1.234)).toBe("1.23");
     expect(formatRatio(null)).toBe("—");
+  });
+});
+
+describe("basketNavSeriesFlags / basketNavLegend", () => {
+  it("只承诺真实画出的等权/调仓系列（缺失即隐藏图例项）", () => {
+    expect(basketNavSeriesFlags(null)).toEqual({ equalWeight: false, rebalance: false });
+    expect(basketNavSeriesFlags({})).toEqual({ equalWeight: false, rebalance: false });
+    expect(basketNavSeriesFlags({ equal_weight_nav: [], rebalance_events: [] })).toEqual({
+      equalWeight: false,
+      rebalance: false,
+    });
+    expect(basketNavLegend(undefined)).toEqual(["篮子净值"]);
+    expect(basketNavLegend({ rebalance_events: [] })).toEqual(["篮子净值"]);
+  });
+
+  it("后端/还原结果带等权净值与调仓事件时图例才出现", () => {
+    const flags = basketNavSeriesFlags({
+      equal_weight_nav: [{ trade_date: "2024-01-02", nav: 1 }],
+      rebalance_events: [{ trade_date: "2024-02-01" }],
+    });
+    expect(flags).toEqual({ equalWeight: true, rebalance: true });
+    expect(
+      basketNavLegend({
+        equal_weight_nav: [{ trade_date: "2024-01-02", nav: 1 }],
+        rebalance_events: [{ trade_date: "2024-02-01" }],
+      }),
+    ).toEqual(["篮子净值", "等权净值", "调仓"]);
+    expect(
+      basketNavLegend({ equal_weight_nav: [{ trade_date: "2024-01-02", nav: 1 }] }),
+    ).toEqual(["篮子净值", "等权净值"]);
   });
 });

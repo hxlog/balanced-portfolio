@@ -195,3 +195,29 @@ export function sortTrackerFunds(
     return sign * (left - right);
   });
 }
+
+/** 跟踪基金表头 aria-sort：当前排序列返回方向，其余 none（供 th 语义）。 */
+export function trackerFundAriaSort(
+  sort: { key: TrackerFundSortKey; dir: SortDirection } | null,
+  columnKey: TrackerFundSortKey,
+): "ascending" | "descending" | "none" {
+  if (sort?.key !== columnKey) return "none";
+  return sort.dir === "asc" ? "ascending" : "descending";
+}
+
+/**
+ * 可排序表头按钮的无障碍名称：包含当前方向与点击后的方向。
+ * 首次点击固定降序，再点切换升/降（与 toggleFundSort 一致）。
+ */
+export function trackerFundSortButtonLabel(
+  label: string,
+  sort: { key: TrackerFundSortKey; dir: SortDirection } | null,
+  columnKey: TrackerFundSortKey,
+): string {
+  const direction = trackerFundAriaSort(sort, columnKey);
+  if (direction === "none") return "按" + label + "降序排序";
+  if (direction === "ascending") {
+    return "按" + label + "升序排序（点击切换为降序）";
+  }
+  return "按" + label + "降序排序（点击切换为升序）";
+}

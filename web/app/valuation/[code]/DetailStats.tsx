@@ -7,6 +7,7 @@
  * - 基金对比：勾选最多 5 只基金、自定义区间（默认年初至今），对比收益/波动/回撤/跟踪误差/信息比率。
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -18,6 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { EChart } from "@/components/EChart";
+import { getChartTheme } from "@/lib/chart-theme";
 import { cn } from "@/lib/utils";
 import type { DetailTrackerFund } from "@/lib/valuation-detail-types";
 
@@ -52,6 +54,8 @@ function fmt(value: number | null | undefined, digits = 2, suffix = "") {
 }
 
 export function DetailStats({ indexCode }: { indexCode: string }) {
+  const { resolvedTheme } = useTheme();
+  const theme = getChartTheme(resolvedTheme === "dark");
   const [benchmark, setBenchmark] = useState("000300");
   const [stats, setStats] = useState<BenchmarkStats | null>(null);
   const [loading, setLoading] = useState(false);
@@ -94,20 +98,21 @@ export function DetailStats({ indexCode }: { indexCode: string }) {
             left: 4,
             itemWidth: 10,
             itemHeight: 6,
-            textStyle: { fontSize: 10, color: "#94a3b8" },
+            // 图例文案跟随主题（原先硬编码 #94a3b8，浅色主题下第二系列几乎看不清）。
+            textStyle: { fontSize: 10, color: theme.subtext },
             data: [indexName, benchmarkName],
           }
         : undefined,
       xAxis: {
         type: "category",
         data: bins.map((item) => item.bin.toFixed(1)),
-        axisLabel: { fontSize: 9, color: "#94a3b8" },
-        axisLine: { lineStyle: { color: "#e2e8f0" } },
+        axisLabel: { fontSize: 9, color: theme.subtext },
+        axisLine: { lineStyle: { color: theme.axisLine } },
       },
       yAxis: {
         type: "value",
-        splitLine: { lineStyle: { color: "#f1f5f9" } },
-        axisLabel: { fontSize: 9, color: "#94a3b8" },
+        splitLine: { lineStyle: { color: theme.splitLine } },
+        axisLabel: { fontSize: 9, color: theme.subtext },
       },
       series: [
         {
@@ -130,7 +135,7 @@ export function DetailStats({ indexCode }: { indexCode: string }) {
           : []),
       ],
     };
-  }, [stats]);
+  }, [stats, theme]);
 
   return (
     <section className="rounded-xl border border-border bg-card p-4">

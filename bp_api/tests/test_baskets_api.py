@@ -548,6 +548,11 @@ def test_recompute_writes_latest_result_from_server_side_backtest(routes, monkey
     assert abs(sum(weight["weight"] for weight in summary["weights"]) - 1.0) < 1e-6
     stored = state.rows[0]["latest_result"]
     assert stored is not None and stored["annualized_return"] == summary["annualized_return"]
+    # 参数指纹随 latest_result 落库（前端据此判断结果是否对应当前定义）
+    assert summary["params"]["method"] == "risk_parity"
+    assert summary["params"]["lookback_days"] == 60
+    assert len(summary["params"]["asset_hash"]) == 16
+    assert stored["params"] == summary["params"]
     assert state.commits >= 1
 
 

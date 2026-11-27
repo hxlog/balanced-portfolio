@@ -7,7 +7,9 @@ export function formatPct(
   digits = 1,
 ): string {
   if (value == null || !Number.isFinite(value)) return "—";
-  const epsilon = 0.5 * 10 ** -digits;
+  // 入参是小数、展示时 ×100：阈值必须按「百分数点」换算回小数，
+  // 否则 digits=2 时 0.0003（0.03%）会被误判成 0.00%（原文 0.5*10^-digits=0.005）。
+  const epsilon = 0.5 * 10 ** -(digits + 2);
   const safe = Math.abs(value) < epsilon ? 0 : value;
   return `${(safe * 100).toFixed(digits)}%`;
 }
@@ -27,6 +29,44 @@ export function formatRatio(
 ): string {
   if (value == null || !Number.isFinite(value)) return "—";
   return value.toFixed(digits);
+}
+
+/**
+ * 回测净值图实际存在的系列。
+ * latest_result 还原 / 旧后端响应可能缺 equal_weight_nav 或 rebalance_events，
+ * 缺失时图例与说明文案不得再承诺该系列（避免「图例有、曲线没有」）。
+ */
+export function basketNavSeriesFlags(
+  result:
+    | {
+        equal_weight_nav?: readonly unknown[] | null;
+        rebalance_events?: readonly unknown[] | null;
+      }
+    | null
+    | undefined,
+): { equalWeight: boolean; rebalance: boolean } {
+  return {
+    equalWeight: (result?.equal_weight_nav?.length ?? 0) > 0,
+    rebalance: (result?.rebalance_events?.length ?? 0) > 0,
+  };
+}
+
+/** 净值图图例：只列真实画出的系列（篮子净值恒存在）。 */
+export function basketNavLegend(
+  result:
+    | {
+        equal_weight_nav?: readonly unknown[] | null;
+        rebalance_events?: readonly unknown[] | null;
+      }
+    | null
+    | undefined,
+): string[] {
+  const flags = basketNavSeriesFlags(result);
+  return [
+    "篮子净值",
+    ...(flags.equalWeight ? ["等权净值"] : []),
+    ...(flags.rebalance ? ["调仓"] : []),
+  ];
 }
 
 /**

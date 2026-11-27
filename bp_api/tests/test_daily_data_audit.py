@@ -8,8 +8,10 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -75,8 +77,9 @@ def _patch_healthy(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr(
         ada, "load_trading_year_coverage",
-        lambda conn, years=None: [
-            {"year": 2026, "trading_days": 243, "calendar_days": 243}
+        lambda conn, reference=None, years=None: [
+            {"year": 2026, "trading_days": 242, "calendar_days": 243,
+             "ratio": 242 / 243, "ytd": True}
         ],
     )
     monkeypatch.setattr(
@@ -134,6 +137,60 @@ def test_audit_flags_coverage_freshness_and_backlog(monkeypatch: pytest.MonkeyPa
     assert by_key[("index_quotes", "coverage")]["status"] == "error"
     assert by_key[("backlog", "backlog_total")]["status"] == "error"
     assert by_key[("clean", "clean_raw_lag_days")]["status"] == "error"
+
+
+def test_trading_year_coverage_uses_cn_calendar_denominator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """年度覆盖 = clean 落在 CN 交易日上的天数 / CN 交易日历天数（当年 YTD）。"""
+    calls: list[tuple[str, tuple]] = []
+
+    def fake_fetchall(conn, sql, params=()):
+        calls.append((sql, tuple(params)))
+        if "bp_quote_clean" in sql:
+            # 分子必须 join CN 交易日历，剔除 7×24 源的周末/休市日行
+            assert "bp_trading_calendar" in sql
+            return [(2025, 200), (2026, 210)]
+        assert "bp_trading_calendar" in sql
+        return [(2025, 243), (2026, 220)]
+
+    monkeypatch.setattr(ada, "_fetchall", fake_fetchall)
+    items = ada.load_trading_year_coverage(object(), reference=D)
+    by_year = {item["year"]: item for item in items}
+    # 近 5 年：2022-2026（无日历数据的年份分母 0 -> 不判定）
+    assert sorted(by_year) == [2022, 2023, 2024, 2025, 2026]
+    assert by_year[2025]["trading_days"] == 200
+    assert by_year[2025]["calendar_days"] == 243
+    assert by_year[2025]["ratio"] == pytest.approx(200 / 243)
+    assert by_year[2025]["ytd"] is False
+    assert by_year[2026]["ratio"] == pytest.approx(210 / 220)
+    assert by_year[2026]["ytd"] is True
+    # 查询窗口：YTD 截止到 reference（不再按 date.today() 取全年）
+    assert all(params[1] == D for _, params in calls)
+
+
+def test_audit_flags_low_trading_year_coverage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """年度交易日覆盖低于 99.5% 必须 error（旧口径用固定 242 天会恒绿）。"""
+    _patch_healthy(monkeypatch)
+    monkeypatch.setattr(
+        ada, "load_trading_year_coverage",
+        lambda conn, reference=None, years=None: [
+            {"year": 2025, "trading_days": 219, "calendar_days": 243,
+             "ratio": 219 / 243, "ytd": False},
+            {"year": 2026, "trading_days": 243, "calendar_days": 243,
+             "ratio": 1.0, "ytd": True},
+        ],
+    )
+    report = ada.audit(object(), reference=D)
+    by_key = {(check["dataset"], check["metric"]): check for check in report["checks"]}
+    bad = by_key[("clean", "trading_day_coverage_2025")]
+    assert bad["status"] == "error"
+    assert bad["value"] == pytest.approx(219 / 243)
+    assert bad["threshold"] == pytest.approx(ada.TRADING_YEAR_COVERAGE_MIN) == 0.995
+    assert bad["detail"]["trading_days"] == 219
+    assert bad["detail"]["calendar_days"] == 243
+    assert by_key[("clean", "trading_day_coverage_2026")]["status"] == "ok"
+    assert report["exit_code"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +257,27 @@ class _MainConn:
         self.closed = True
 
 
+def _patch_main_db(monkeypatch: pytest.MonkeyPatch, conn: _MainConn) -> None:
+    # main 在函数内 `from bp_ingest.config import load_config` /
+    # `from bp_ingest.db import connect`，因此必须 patch 源模块属性
+    # （patch ada._connect 不会被 main 使用，会连真实库）。
+    import bp_ingest.config
+    import bp_ingest.db
+
+    monkeypatch.setattr(
+        bp_ingest.config, "load_config", lambda: SimpleNamespace(db=object())
+    )
+
+    @contextmanager
+    def fake_connect(db):
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+    monkeypatch.setattr(bp_ingest.db, "connect", fake_connect)
+
+
 def _report(*, errors: int = 0) -> dict:
     status = "error" if errors else "ok"
     return {
@@ -220,7 +298,7 @@ def test_main_dry_run_outputs_json_without_writing(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     conn = _MainConn()
-    monkeypatch.setattr(ada, "_connect", lambda: conn)
+    _patch_main_db(monkeypatch, conn)
     monkeypatch.setattr(ada, "audit", lambda c, reference=None: _report())
     monkeypatch.setattr(
         ada, "persist",
@@ -238,7 +316,7 @@ def test_main_apply_and_exit_1_on_error(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     conn = _MainConn()
-    monkeypatch.setattr(ada, "_connect", lambda: conn)
+    _patch_main_db(monkeypatch, conn)
     monkeypatch.setattr(ada, "audit", lambda c, reference=None: _report(errors=1))
     persisted: list = []
     monkeypatch.setattr(
@@ -257,7 +335,7 @@ def test_main_writes_output_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
     conn = _MainConn()
-    monkeypatch.setattr(ada, "_connect", lambda: conn)
+    _patch_main_db(monkeypatch, conn)
     monkeypatch.setattr(ada, "audit", lambda c, reference=None: _report())
     monkeypatch.setattr(
         ada, "persist", lambda c, report: {"rows_written": 1, "issues_written": 0}

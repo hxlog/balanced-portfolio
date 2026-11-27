@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   backtestFromLatestResult,
+  basketAssetHash,
   latestResultFromBacktest,
+  latestResultParams,
+  latestResultParamsMatch,
+  paramsMatch,
+  paramsSnapshotFromInput,
+  type BasketParamsSnapshot,
   type LatestResultContext,
 } from "./basket-latest-result";
 import type { BasketBacktestResult } from "./basket-types";
@@ -95,6 +101,73 @@ describe("latestResultFromBacktest", () => {
       "2023-01-03",
       "2023-01-05",
     ]);
+  });
+
+  it("后端响应含等权净值 / 调仓事件时一并保留", () => {
+    const latest = latestResultFromBacktest(
+      backtest({
+        equal_weight_nav: [
+          { trade_date: "2023-01-03", nav: 1 },
+          { trade_date: "2023-01-04", nav: 1.001 },
+        ],
+        rebalance_events: [
+          {
+            trade_date: "2023-01-04",
+            reason: "偏离带",
+            turnover: 0.12,
+            max_deviation: 0.06,
+            assets: [],
+          },
+        ],
+      }),
+      CONTEXT,
+    );
+    expect(latest.equal_weight_nav).toEqual([
+      { trade_date: "2023-01-03", nav: 1 },
+      { trade_date: "2023-01-04", nav: 1.001 },
+    ]);
+    expect(latest.rebalance_events).toHaveLength(1);
+  });
+
+  it("缺失时不为等权/调仓写空字段", () => {
+    const latest = latestResultFromBacktest(backtest(), CONTEXT);
+    expect(latest.equal_weight_nav).toBeUndefined();
+    expect(latest.rebalance_events).toBeUndefined();
+  });
+
+  it("把结果参数快照与 nav 一起写入（供打开时比对）", () => {
+    const latest = latestResultFromBacktest(backtest(), {
+      ...CONTEXT,
+      start: "2023-01-03",
+      end: "2023-01-05",
+    });
+    expect(latest.params).toEqual({
+      method: "risk_parity",
+      lookback_days: 156,
+      rebalance_band: 0.05,
+      risk_free: 0.02,
+      start: "2023-01-03",
+      end: "2023-01-05",
+      // 与后端 build_latest_result 同口径：60519/000300 按 symbol@source 升序后取 sha256 前 16 位。
+      asset_hash: "5a0cb86ecfb7e31d",
+    });
+  });
+});
+
+describe("basketAssetHash（与后端 params.asset_hash 同口径）", () => {
+  const ASSETS = [
+    { symbol: "600519", source: "etl_a_stock" },
+    { symbol: "000300", source: "cn_index_em" },
+  ];
+
+  it("symbol@source 升序换行连接后 sha256 前 16 位", () => {
+    expect(basketAssetHash(ASSETS)).toBe("5a0cb86ecfb7e31d");
+    // 输入顺序不影响指纹
+    expect(basketAssetHash([...ASSETS].reverse())).toBe("5a0cb86ecfb7e31d");
+  });
+
+  it("空资产列表取空串 sha256 前 16 位", () => {
+    expect(basketAssetHash([])).toBe("e3b0c44298fc1c14");
   });
 });
 
@@ -190,5 +263,204 @@ describe("backtestFromLatestResult", () => {
     expect(restored?.fees).toBeNull();
     expect(restored?.lookback).toBe(156);
     expect(restored?.n_obs).toBe(2);
+  });
+
+  it("还原等权净值 / 调仓事件；旧记录缺失时保持缺失（图例随之隐藏）", () => {
+    const latest = latestResultFromBacktest(
+      backtest({
+        equal_weight_nav: [
+          { trade_date: "2023-01-03", nav: 1 },
+          { trade_date: "2023-01-04", nav: 1.001 },
+        ],
+        rebalance_events: [
+          {
+            trade_date: "2023-01-04",
+            reason: "偏离带",
+            turnover: 0.12,
+            max_deviation: 0.06,
+            assets: [],
+          },
+        ],
+      }),
+      CONTEXT,
+    );
+    const restored = backtestFromLatestResult(latest);
+    expect(restored?.equal_weight_nav).toEqual(latest.equal_weight_nav);
+    expect(restored?.rebalance_events).toHaveLength(1);
+
+    const legacy = backtestFromLatestResult({
+      method: "risk_parity",
+      effective_start: "2023-01-03",
+      nav: [
+        { trade_date: "2023-01-03", nav: 1, ret: 0 },
+        { trade_date: "2023-01-04", nav: 1.001, ret: 0.001 },
+      ],
+    });
+    expect(legacy?.equal_weight_nav).toBeUndefined();
+    expect(legacy?.rebalance_events).toEqual([]);
+  });
+});
+
+describe("latest_result 参数绑定", () => {
+  const ASSET_HASH = "5a0cb86ecfb7e31d";
+  const CURRENT: BasketParamsSnapshot = {
+    lookback_days: 156,
+    rebalance_band: 0.05,
+    risk_free: 0.02,
+    start: null,
+    end: null,
+    method: "risk_parity",
+    asset_hash: ASSET_HASH,
+  };
+
+  it("旧记录没有 params 时返回 null（调用方降级为旧行为）", () => {
+    expect(latestResultParams(null)).toBeNull();
+    expect(latestResultParams({ nav: [] })).toBeNull();
+    expect(latestResultParams({ params: "bad" })).toBeNull();
+    expect(latestResultParams({ params: [] })).toBeNull();
+    expect(latestResultParams({ params: {} })).toBeNull();
+    expect(latestResultParamsMatch({ nav: [] }, CURRENT)).toBeNull();
+  });
+
+  it("前端写入的 params 与当前表单匹配", () => {
+    const latest = latestResultFromBacktest(backtest(), CONTEXT);
+    expect(latestResultParamsMatch(latest, CURRENT)).toBe(true);
+    expect(latestResultParamsMatch(latest, { ...CURRENT, lookback_days: 120 })).toBe(false);
+  });
+
+  it("方法与资产指纹变化也判为过期（后端 params 契约含 method/asset_hash）", () => {
+    const latest = latestResultFromBacktest(backtest(), CONTEXT);
+    expect(latestResultParamsMatch(latest, { ...CURRENT, method: "max_sharpe" })).toBe(false);
+    expect(
+      latestResultParamsMatch(latest, {
+        ...CURRENT,
+        asset_hash: "0000000000000000",
+      }),
+    ).toBe(false);
+  });
+
+  it("解析后端 build_latest_result 的 params 契约并可比对", () => {
+    const raw = {
+      nav: [],
+      params: {
+        method: "max_sharpe",
+        lookback_days: 120,
+        rebalance_band: 0.08,
+        risk_free: 0.01,
+        start: "2022-01-01",
+        end: "2025-12-31",
+        asset_hash: ASSET_HASH,
+      },
+    };
+    expect(latestResultParams(raw)).toEqual({
+      method: "max_sharpe",
+      lookback_days: 120,
+      rebalance_band: 0.08,
+      risk_free: 0.01,
+      start: "2022-01-01",
+      end: "2025-12-31",
+      asset_hash: ASSET_HASH,
+    });
+    const snapshot = paramsSnapshotFromInput({
+      lookback_days: 120,
+      rebalance_band: 0.08,
+      risk_free: 0.01,
+      start: "2022-01-01",
+      end: "2025-12-31",
+      method: "max_sharpe",
+      // 与后端同口径：输入顺序已由排序归一化
+      assets: [
+        { symbol: "600519", source: "etl_a_stock" },
+        { symbol: "000300", source: "cn_index_em" },
+      ],
+    });
+    expect(snapshot.asset_hash).toBe(ASSET_HASH);
+    expect(latestResultParamsMatch(raw, snapshot)).toBe(true);
+  });
+
+  it("回看窗口/再平衡带/无风险利率/日期变化均判为过期", () => {
+    const latest = latestResultFromBacktest(backtest(), {
+      ...CONTEXT,
+      start: "2023-01-03",
+      end: "2023-01-05",
+    });
+    const stored = latestResultParams(latest);
+    expect(stored).not.toBeNull();
+    if (!stored) return;
+    const base: BasketParamsSnapshot = {
+      ...CURRENT,
+      start: "2023-01-03",
+      end: "2023-01-05",
+    };
+    expect(paramsMatch(stored, base)).toBe(true);
+    expect(paramsMatch(stored, { ...base, lookback_days: 120 })).toBe(false);
+    expect(paramsMatch(stored, { ...base, rebalance_band: 0.08 })).toBe(false);
+    expect(paramsMatch(stored, { ...base, risk_free: 0.03 })).toBe(false);
+    expect(paramsMatch(stored, { ...base, start: "2022-01-03" })).toBe(false);
+    expect(paramsMatch(stored, { ...base, end: null })).toBe(false);
+  });
+
+  it("后端只补数值参数（无日期）时不与表单默认区间误报", () => {
+    const stored = latestResultParams({
+      params: { lookback_days: 156, rebalance_band: 0.05, risk_free: 0 },
+    });
+    expect(stored).not.toBeNull();
+    if (!stored) return;
+    expect(
+      paramsMatch(stored, {
+        ...CURRENT,
+        risk_free: 0,
+        start: "2021-01-01",
+        end: "2026-01-01",
+      }),
+    ).toBe(true);
+  });
+
+  it("paramsSnapshotFromInput 归一化 lookback/日期并计算资产指纹", () => {
+    expect(
+      paramsSnapshotFromInput({
+        lookback_days: 155.6,
+        rebalance_band: 0.05,
+        risk_free: 0,
+        start: "2023-01-03T00:00:00Z",
+        end: "",
+        method: "risk_parity",
+        assets: [
+          { symbol: "600519", source: "etl_a_stock" },
+          { symbol: "000300", source: "cn_index_em" },
+        ],
+      }),
+    ).toEqual({
+      lookback_days: 156,
+      rebalance_band: 0.05,
+      risk_free: 0,
+      start: "2023-01-03",
+      end: null,
+      method: "risk_parity",
+      asset_hash: ASSET_HASH,
+    });
+  });
+
+  it("还原结果时：params 匹配则写入 sig，不匹配则判过期（不置 sig）", () => {
+    const latest = latestResultFromBacktest(backtest(), {
+      ...CONTEXT,
+      start: "2023-01-03",
+      end: "2023-01-05",
+    });
+    const raw = latest as unknown as Record<string, unknown>;
+    expect(
+      latestResultParamsMatch(raw, {
+        ...CURRENT,
+        start: "2023-01-03",
+        end: "2023-01-05",
+      }),
+    ).toBe(true);
+    expect(
+      latestResultParamsMatch(raw, {
+        ...CURRENT,
+        start: "2022-01-03",
+        end: "2023-01-05",
+      }),
+    ).toBe(false);
   });
 });

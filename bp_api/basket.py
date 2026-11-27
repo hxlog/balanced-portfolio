@@ -11,6 +11,7 @@ main.py 的路由注册由主控完成，本模块只提供 `register_routes(app
 
 from __future__ import annotations
 
+import hashlib
 import math
 from datetime import date, datetime, timezone
 from typing import Optional
@@ -156,6 +157,16 @@ def _split_key(key: str) -> tuple[str, str]:
     return symbol, source
 
 
+def _asset_hash(columns) -> str:
+    """资产列表指纹：排序后取 sha256 前 16 位（与列顺序无关）。
+
+    前端可按同一规则（symbol@source 升序用 "\n" 连接、sha256 前 16 位）
+    重建指纹，与 latest_result.params.asset_hash 比对，判断结果是否对应当前定义。
+    """
+    payload = "\n".join(sorted(str(key) for key in columns))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
 # ---------------------------------------------------------------------------
 # 服务端重算（供 POST /api/baskets/{id}/recompute 与 seed 脚本共用）
 # ---------------------------------------------------------------------------
@@ -221,6 +232,17 @@ def build_latest_result(
     ]
     summary = {
         "method": method,
+        # 参数指纹：供前端判断 latest_result 是否对应当前篮子定义（定义变更后旧
+        # 结果应提示重算）。不改变既有顶层字段，只新增 params 子对象。
+        "params": {
+            "method": method,
+            "lookback_days": lookback,
+            "rebalance_band": float(rebalance_band),
+            "risk_free": float(risk_free),
+            "start": start.isoformat() if start is not None else None,
+            "end": end.isoformat() if end is not None else None,
+            "asset_hash": _asset_hash(frame.columns),
+        },
         "as_of": nav_rows[-1]["trade_date"] if nav_rows else None,
         "computed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "effective_start": _iso_date(result.effective_start),

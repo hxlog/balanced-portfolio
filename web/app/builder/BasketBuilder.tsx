@@ -51,7 +51,13 @@ import {
 } from "@/lib/basket-demo";
 import {
   backtestFromLatestResult,
+  basketAssetHash,
   latestResultFromBacktest,
+  latestResultParams,
+  paramsMatch,
+  paramsSnapshotFromInput,
+  type BasketParamsSnapshot,
+  type BasketResultParams,
 } from "@/lib/basket-latest-result";
 import { modeSwitchHref } from "@/lib/basket-mode";
 import {
@@ -267,6 +273,8 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
   const [backtestLoading, setBacktestLoading] = useState(false);
   const [backtestError, setBacktestError] = useState<string | null>(null);
   const [backtestSig, setBacktestSig] = useState<string | null>(null);
+  /** 当前展示的回测结果对应的参数快照；null = 结果未携带 params（旧记录，降级旧行为）。 */
+  const [resultParams, setResultParams] = useState<BasketResultParams | null>(null);
   const [ingestingKey, setIngestingKey] = useState<string | null>(null);
   const [saveOpen, setSaveOpen] = useState(false);
   const [saveName, setSaveName] = useState("");
@@ -323,6 +331,7 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
     setItems([]);
     setBasketMapped(false);
     setBasketError(null);
+    setResultParams(null);
     if (basketId == null) {
       setBasketLoading(false);
       return;
@@ -424,13 +433,18 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
         end: endDate || undefined,
       };
       if (method === "risk_budget") params.risk_budget = budgetValues;
-      const latestResult = backtest
-        ? latestResultFromBacktest(backtest, {
-            lookback_days: lookbackDays,
-            rebalance_band: band,
-            risk_free: riskFree,
-          })
-        : null;
+      // 仅当展示中的回测结果仍对应当前表单（含 latest_result.params 绑定）时才写回；
+      // 参数已变更/结果过期时保留库里旧结果，避免把旧净值标成新参数。
+      const latestResult =
+        backtest && backtestResultBound
+          ? latestResultFromBacktest(backtest, {
+              lookback_days: lookbackDays,
+              rebalance_band: band,
+              risk_free: riskFree,
+              start: startDate || null,
+              end: endDate || null,
+            })
+          : null;
       const definition = {
         name: saveName.trim(),
         description: saveDesc.trim() || null,
@@ -575,6 +589,35 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
     optimizeResult != null && optimizeSig !== currentOptimizeSig;
   const backtestDirty =
     backtest != null && backtestSig !== currentBacktestSig;
+  /** 当前表单的回测参数快照（与 latest_result.params 同口径）。 */
+  const currentFormParams = useMemo<BasketParamsSnapshot>(
+    () => ({
+      lookback_days: lookbackDays,
+      rebalance_band: band,
+      risk_free: riskFree,
+      start: startDate || null,
+      end: endDate || null,
+      method,
+      // 与后端 build_latest_result 的 params.asset_hash 同口径。
+      asset_hash: basketAssetHash(
+        items.map((item) => ({ symbol: item.symbol, source: item.source })),
+      ),
+    }),
+    [lookbackDays, band, riskFree, startDate, endDate, method, items],
+  );
+  /**
+   * 展示中的结果参数已知且与当前表单不一致 → 提示「结果参数已变更，请重新回测」；
+   * 结果未携带 params（旧记录）时 resultParams 为 null，保持旧行为不提示。
+   */
+  const backtestParamsStale =
+    backtest != null &&
+    resultParams != null &&
+    !paramsMatch(resultParams, currentFormParams);
+  /** 结果仍对应当前表单（参数未知视为旧行为放行）才允许写回 latest_result。 */
+  const backtestResultBound =
+    backtest != null &&
+    !backtestDirty &&
+    !backtestParamsStale;
 
   /**
    * 打开已保存篮子：用详情里的 latest_result 直接还原净值曲线 + 扣费后 7 项指标，
@@ -586,10 +629,20 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
     if (restoredBasketRef.current === loadedBasket.basket_id) return;
     restoredBasketRef.current = loadedBasket.basket_id;
     const restored = backtestFromLatestResult(loadedBasket.latest_result);
-    if (!restored) return;
+    if (!restored) {
+      setResultParams(null);
+      return;
+    }
     setBacktest(restored);
     setBacktestError(null);
-    if (backtestPayload) setBacktestSig(JSON.stringify(backtestPayload));
+    // 结果参数绑定到当前表单：缺失 params（旧记录）时降级旧行为；已知且与当前表单
+    // 不一致时不置 backtestSig（backtestDirty 保持），由 backtestParamsStale 给出
+    // 「结果参数已变更，请重新回测」提示，避免把旧结果标成新参数。
+    const storedParams = latestResultParams(loadedBasket.latest_result);
+    setResultParams(storedParams);
+    const paramsBound =
+      storedParams == null || paramsMatch(storedParams, currentFormParams);
+    if (paramsBound && backtestPayload) setBacktestSig(JSON.stringify(backtestPayload));
     // backtestPayload 只参与「当前参数 vs 结果参数」的过期标记；恢复本身不触发请求。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backtestPayload, basketMapped, loadedBasket]);
@@ -638,6 +691,7 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
     setBacktest(null);
     setBacktestError(null);
     setBacktestSig(null);
+    setResultParams(null);
     setBacktestLoading(false);
   }, [items.length]);
 
@@ -691,13 +745,18 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
       if (controller.signal.aborted) return;
       setBacktest(result);
       setBacktestSig(JSON.stringify(backtestPayload));
-      // 自有篮子：回测成功后把完整结果（含 nav）PATCH 到 latest_result，
-      // 下次打开直接用该结果还原，不必重跑回测。示例篮子只能走服务端 recompute，跳过。
+      // 本次结果由当前回测入参计算，参数必然匹配：记录下来供「保存」判定与过期提示使用。
+      setResultParams(paramsSnapshotFromInput(backtestPayload));
+      // 自有篮子：回测成功后把完整结果（含 nav + params 绑定 + 后端提供的等权/调仓数据）
+      // PATCH 到 latest_result，下次打开直接用该结果还原，不必重跑回测。
+      // 示例篮子只能走服务端 recompute，跳过。
       if (loadedBasket && !isDemoBasket(loadedBasket) && access?.canEdit) {
         const latestResult = latestResultFromBacktest(result, {
           lookback_days: backtestPayload.lookback_days,
           rebalance_band: backtestPayload.rebalance_band,
           risk_free: backtestPayload.risk_free,
+          start: backtestPayload.start ?? null,
+          end: backtestPayload.end ?? null,
         });
         void updateBasket(loadedBasket.basket_id, {
           latest_result: latestResult,
@@ -1151,6 +1210,7 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
             backtestLoading={backtestLoading}
             backtestError={backtestError}
             backtestDirty={backtestDirty}
+            backtestParamsStale={backtestParamsStale}
             bandPct={bandPct}
             isDark={isDark}
           />

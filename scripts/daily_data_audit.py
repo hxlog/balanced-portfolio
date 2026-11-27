@@ -8,7 +8,7 @@ docs/superpowers/specs/2026-11-23-unified-market-etl-design.md §8 与
 docs/design/2026-11-27-unified-redesign/data-timeliness-plan.md §5：
 - A 股 ≥0.995、ETF ≥0.96、港股 ≥0.97、基金 ≥0.90（与 bp_etl.registry 同口径）；
 - 跟踪指数行情 ≥0.99、指数估值 ≥0.99、MVI 最新周有值、CFFEX 当日有值；
-- 近 5 年每年交易日覆盖 ≥99.5%（≈242/243）；
+- 近 5 年每年交易日覆盖 ≥99.5%（≈242/243；CN 交易日历分母，当年按 YTD）；
 - clean 与 raw 最大日期差 ≤0 天；跨源 PE 相对偏差 <5%；backlog < 1000；
 - OHLC 非法行占比 / 收益跳变 / 指数跨源收盘差 作为准确性告警（warn）。
 
@@ -64,9 +64,9 @@ AUDIT_DATASETS = (
     "a_stock", "hk_stock", "etf", "fund_nav",
     "cffex", "index_quotes", "index_valuation", "mvi",
 )
-#: 近 N 年每年交易日覆盖检查（用户要求 ≥99.5%，≈242/243）。
+#: 近 N 年每年交易日覆盖检查（用户要求 ≥99.5%，≈242/243；当年按 YTD）。
 TRADING_YEARS = 5
-MIN_TRADING_DAYS_PER_YEAR = 242
+TRADING_YEAR_COVERAGE_MIN = 0.995
 #: clean/组合清洗最大允许滞后（自然日，要求 0）。
 CLEAN_RAW_MAX_LAG_DAYS = 0
 #: 跨源 PE（csindex_value vs pingan_index）最大相对偏差与回看窗口。
@@ -344,31 +344,52 @@ def load_clean_raw_lag(conn: Any) -> dict[str, Any]:
     return {"clean_max": clean_max, "raw_max": raw_max, "lag_days": lag}
 
 
-def load_trading_year_coverage(conn: Any, years: int = TRADING_YEARS) -> list[dict[str, Any]]:
-    start = date(date.today().year - years + 1, 1, 1)
-    rows = _fetchall(
+def load_trading_year_coverage(
+    conn: Any, reference: Optional[date] = None, years: int = TRADING_YEARS
+) -> list[dict[str, Any]]:
+    """近 N 年每年「clean 覆盖的 CN 交易日 / CN 交易日历」比率（当年按 YTD）。
+
+    修复：旧口径用 bp_quote_clean 的 distinct trade_date 与固定 242 天比较，
+    而 clean 含 7×24 源（crypto/DXY/gold 等）的周末/休市日行 -> 每年 distinct
+    天数 ≈ 365，检查恒绿。新口径：
+    - 分子 = clean 落在 CN 交易日上的 distinct 日期（剔除 7×24 的非交易日行）；
+    - 分母 = CN 交易日历当年交易日数（reference 当年截到 YTD）；
+    - 阈值 0.995（≈242/243），当年同样按 YTD 判定，不再用固定天数。
+    """
+    current = reference or date.today()
+    start = date(current.year - years + 1, 1, 1)
+    actual_rows = _fetchall(
         conn,
-        "SELECT extract(year FROM trade_date)::int, count(DISTINCT trade_date)"
-        " FROM bp_quote_clean WHERE trade_date >= %s GROUP BY 1 ORDER BY 1",
-        (start,),
+        "SELECT extract(year FROM q.trade_date)::int, count(DISTINCT q.trade_date)"
+        " FROM bp_quote_clean q"
+        " JOIN bp_trading_calendar c ON c.cal_date = q.trade_date"
+        " WHERE c.market = 'CN' AND c.is_trading"
+        " AND q.trade_date >= %s AND q.trade_date <= %s"
+        " GROUP BY 1 ORDER BY 1",
+        (start, current),
     )
-    actual = {int(row[0]): int(row[1] or 0) for row in rows}
+    actual = {int(row[0]): int(row[1] or 0) for row in actual_rows}
     cal_rows = _fetchall(
         conn,
         "SELECT extract(year FROM cal_date)::int, count(*)"
         " FROM bp_trading_calendar"
-        " WHERE market = 'CN' AND is_trading AND cal_date >= %s"
+        " WHERE market = 'CN' AND is_trading"
+        " AND cal_date >= %s AND cal_date <= %s"
         " GROUP BY 1 ORDER BY 1",
-        (start,),
+        (start, current),
     )
     calendar = {int(row[0]): int(row[1] or 0) for row in cal_rows}
     out: list[dict[str, Any]] = []
-    for year in range(start.year, date.today().year + 1):
+    for year in range(start.year, current.year + 1):
+        trading_days = actual.get(year, 0)
+        calendar_days = calendar.get(year, 0)
         out.append(
             {
                 "year": year,
-                "trading_days": actual.get(year, 0),
-                "calendar_days": calendar.get(year, 0),
+                "trading_days": trading_days,
+                "calendar_days": calendar_days,
+                "ratio": (trading_days / calendar_days) if calendar_days else None,
+                "ytd": year == current.year,
             }
         )
     return out
@@ -595,14 +616,20 @@ def audit(conn: Any, reference: Optional[date] = None) -> dict[str, Any]:
         )
     )
 
-    # 7) 近 5 年每年交易日覆盖
-    for item in load_trading_year_coverage(conn):
+    # 7) 近 5 年每年交易日覆盖（CN 交易日历分母；当年 YTD）
+    for item in load_trading_year_coverage(conn, reference=expected):
+        if not item.get("calendar_days"):
+            continue  # 当年尚未产生交易日的边界（如元旦），无分母不判定
         checks.append(
             make_check(
-                "clean", f"trading_days_{item['year']}", item["trading_days"],
-                MIN_TRADING_DAYS_PER_YEAR, severity="error",
-                detail={"calendar_days": item["calendar_days"],
-                        "min_ratio": 0.995},
+                "clean", f"trading_day_coverage_{item['year']}", item["ratio"],
+                TRADING_YEAR_COVERAGE_MIN, severity="error",
+                detail={
+                    "trading_days": item["trading_days"],
+                    "calendar_days": item["calendar_days"],
+                    "year": item["year"],
+                    "ytd": bool(item.get("ytd")),
+                },
             )
         )
 

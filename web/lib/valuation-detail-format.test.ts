@@ -11,7 +11,9 @@ import {
   percentileUnavailableText,
   sortTrackerFunds,
   sumTrackerFundScale,
+  trackerFundAriaSort,
   trackerFundScale,
+  trackerFundSortButtonLabel,
   trackingErrorClass,
   trackingErrorTone,
 } from "./valuation-detail-format";
@@ -188,5 +190,27 @@ describe("跟踪基金前端排序", () => {
   it("全 null 时保持原顺序（稳定）", () => {
     const rows = [fund({ fund_code: "A" }), fund({ fund_code: "B" })];
     expect(sortTrackerFunds(rows, "ret_12m", "asc").map((item) => item.fund_code)).toEqual(["A", "B"]);
+  });
+});
+
+describe("跟踪基金表头可访问性（aria-sort / 方向文案）", () => {
+  it("aria-sort 只标注当前排序列，其余 none", () => {
+    expect(trackerFundAriaSort(null, "scale")).toBe("none");
+    expect(trackerFundAriaSort({ key: "scale", dir: "desc" }, "scale")).toBe("descending");
+    expect(trackerFundAriaSort({ key: "scale", dir: "asc" }, "scale")).toBe("ascending");
+    expect(trackerFundAriaSort({ key: "scale", dir: "asc" }, "ret_12m")).toBe("none");
+  });
+
+  it("按钮名包含方向：未排序提示降序，已排序提示当前/切换方向", () => {
+    expect(trackerFundSortButtonLabel("规模", null, "scale")).toBe("按规模降序排序");
+    expect(
+      trackerFundSortButtonLabel("规模", { key: "scale", dir: "desc" }, "scale"),
+    ).toBe("按规模降序排序（点击切换为升序）");
+    expect(
+      trackerFundSortButtonLabel("规模", { key: "scale", dir: "asc" }, "scale"),
+    ).toBe("按规模升序排序（点击切换为降序）");
+    expect(
+      trackerFundSortButtonLabel("规模", { key: "scale", dir: "asc" }, "ret_12m"),
+    ).toBe("按规模降序排序");
   });
 });

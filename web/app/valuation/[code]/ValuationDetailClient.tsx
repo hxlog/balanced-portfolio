@@ -34,7 +34,9 @@ import {
   hasUsablePercentile,
   percentileUnavailableText,
   sortTrackerFunds,
+  trackerFundAriaSort,
   trackerFundScale,
+  trackerFundSortButtonLabel,
   trackingErrorClass,
   trackingErrorTone,
   type SortDirection,
@@ -250,12 +252,15 @@ function FundSortHeader({
 }) {
   const active = sort?.key === columnKey;
   return (
-    <th className="py-1.5 text-right font-medium">
+    <th
+      className="py-1.5 text-right font-medium"
+      aria-sort={trackerFundAriaSort(sort, columnKey)}
+    >
       <button
         type="button"
         onClick={() => onSort(columnKey)}
         className="inline-flex items-center gap-1 transition-colors hover:text-foreground"
-        aria-label={"按" + label + "排序"}
+        aria-label={trackerFundSortButtonLabel(label, sort, columnKey)}
       >
         {label}
         {active ? (

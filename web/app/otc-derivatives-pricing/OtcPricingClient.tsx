@@ -39,6 +39,16 @@ import {
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { getChartTheme } from "@/lib/chart-theme";
 
@@ -496,6 +506,8 @@ export function OtcPricingClient() {
   }, []);
 
   const [repricingId, setRepricingId] = useState<number | null>(null);
+  /** 待删除簿记（危险确认走 AlertDialog，禁止原生 confirm）。 */
+  const [deleteTarget, setDeleteTarget] = useState<OtcDeal | null>(null);
   const repriceDeal = useCallback(async (deal: OtcDeal) => {
     setRepricingId(deal.deal_id);
     try {
@@ -509,11 +521,17 @@ export function OtcPricingClient() {
     }
   }, [loadDeals]);
 
-  const deleteDeal = useCallback(async (deal: OtcDeal) => {
-    if (!confirm(`删除簿记「${deal.name}」?`)) return;
-    try { await api.otcDeleteDeal(deal.deal_id); loadDeals(); }
-    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-  }, [loadDeals]);
+  const deleteDeal = useCallback(async () => {
+    if (!deleteTarget) return;
+    try {
+      await api.otcDeleteDeal(deleteTarget.deal_id);
+      loadDeals();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDeleteTarget(null);
+    }
+  }, [deleteTarget, loadDeals]);
 
   const viewExampleResult = useCallback((deal: OtcDeal) => {
     if (deal.last_result) {
@@ -1264,7 +1282,7 @@ export function OtcPricingClient() {
                             )}
                             {canEdit && (
                               <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" title="删除" aria-label="删除该簿记"
-                                onClick={() => deleteDeal(d)}>
+                                onClick={() => setDeleteTarget(d)}>
                                 <Trash2 className="w-3.5 h-3.5" />
                               </Button>
                             )}
@@ -1371,6 +1389,32 @@ export function OtcPricingClient() {
       <p className="text-xs text-muted-foreground/70 text-center pb-4">
         定价结果仅供研究参考，不构成投资建议。蒙特卡洛与真实交易系统存在模型/约定差异。
       </p>
+
+      {/* 删除簿记：危险确认统一走 AlertDialog（禁止 window.confirm） */}
+      <AlertDialog
+        open={deleteTarget != null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除簿记</AlertDialogTitle>
+            <AlertDialogDescription>
+              确认删除簿记「{deleteTarget?.name ?? ""}」？其定价历史将一并删除且不可恢复。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => void deleteDeal()}
+            >
+              删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

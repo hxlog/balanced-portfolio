@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import math
 from contextlib import contextmanager
@@ -470,6 +471,59 @@ def test_build_latest_result_includes_seven_diagnostics_and_fees():
     assert summary["fees"]["total_cost"] > 0.0
     assert len(summary["nav"]) > 10
     assert summary["nav"][0]["nav"] == pytest.approx(1.0 - 0.0013)
+
+
+def test_build_latest_result_records_params_fingerprint() -> None:
+    """latest_result 必须带参数指纹，供前端判断结果是否对应当前定义。"""
+    panel = _panel()
+    summary = basket.build_latest_result(
+        panel,
+        method="risk_parity",
+        lookback_days=120,
+        rebalance_band=0.08,
+        risk_free=0.02,
+        start=date(2021, 3, 1),
+        end=date(2022, 3, 1),
+        trading_days=244,
+        min_window=60,
+    )
+    params = summary["params"]
+    assert params["method"] == "risk_parity"
+    assert params["lookback_days"] == 120
+    assert params["rebalance_band"] == pytest.approx(0.08)
+    assert params["risk_free"] == pytest.approx(0.02)
+    assert params["start"] == "2021-03-01"
+    assert params["end"] == "2022-03-01"
+    expected_hash = hashlib.sha256(
+        "\n".join(sorted(panel.columns)).encode("utf-8")
+    ).hexdigest()[:16]
+    assert params["asset_hash"] == expected_hash
+    # 既有字段不被破坏
+    for key in (
+        "method", "lookback_days", "rebalance_band", "risk_free",
+        "annualized_return", "sharpe", "weights", "nav", "fees", "assets",
+    ):
+        assert key in summary
+
+
+def test_build_latest_result_asset_hash_order_insensitive_and_changes() -> None:
+    panel = _panel()
+    first = basket.build_latest_result(
+        panel, method="risk_parity", lookback_days=120,
+        trading_days=244, min_window=60,
+    )
+    assert first["params"]["start"] is None
+    assert first["params"]["end"] is None
+    reordered = basket.build_latest_result(
+        panel[list(reversed(panel.columns))], method="risk_parity",
+        lookback_days=120, trading_days=244, min_window=60,
+    )
+    assert first["params"]["asset_hash"] == reordered["params"]["asset_hash"]
+    smaller = basket.build_latest_result(
+        panel[["A@s", "B@s"]], method="risk_parity",
+        lookback_days=120, trading_days=244, min_window=60,
+    )
+    assert smaller["params"]["asset_hash"] != first["params"]["asset_hash"]
 
 
 # ---------------------------------------------------------------------------
