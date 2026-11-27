@@ -278,18 +278,32 @@ def load_index_quotes(conn: Any, expected: date) -> dict[str, Any]:
         " WHERE is_tracked = TRUE AND market = ANY(%s) AND index_code ~ %s",
         (list(FREE_INDEX_MARKETS), VALID_INDEX_CODE),
     )
-    total = int(total_row[0] or 0) if total_row else 0
+    tracked_total = int(total_row[0] or 0) if total_row else 0
+    # SLO 分母 = 免费源可覆盖的 tracked 指数：历史上出现过非东财（免费）行情的标的。
+    # 15 只 tracked 指数从无任何免费源行情（如部分 MSCI/港股通细分），单独作为
+    # source_unavailable 记录；用东财仅能补数据的指数不再计入免费源 SLO。
+    free_row = _fetchone(
+        conn,
+        "SELECT count(*) FROM ("
+        "  SELECT DISTINCT q.symbol FROM bp_index_quote_daily q"
+        "  JOIN bp_index_master m ON m.index_code = q.symbol AND m.is_tracked = TRUE"
+        "  WHERE q.adjust = 'bfq' AND m.market = ANY(%s) AND m.index_code ~ %s"
+        "    AND q.source NOT LIKE '%%_em'"
+        ") s",
+        (list(FREE_INDEX_MARKETS), VALID_INDEX_CODE),
+    )
+    total = int(free_row[0] or 0) if free_row else 0
     covered_row = _fetchone(
         conn,
         "SELECT count(DISTINCT q.symbol) FROM bp_index_quote_daily q"
         " JOIN bp_index_master m ON m.index_code = q.symbol AND m.is_tracked = TRUE"
         " WHERE q.adjust = 'bfq' AND q.trade_date = %s AND m.market = ANY(%s)"
-        " AND m.index_code ~ %s",
+        " AND m.index_code ~ %s AND q.source NOT LIKE '%%_em'",
         (expected, list(FREE_INDEX_MARKETS), VALID_INDEX_CODE),
     )
     covered = int(covered_row[0] or 0) if covered_row else 0
-    # 官方指数源对部分中证系指数存在 T+1 发布（实测 11-27 当日 396/438，
-    # 允许最近交易日发布后 434/438≥99%），SLO 以 T+1 为准、同日比例单独观察。
+    # 官方指数源对部分中证系指数存在 T+1 发布；SLO 以最近交易日（T+1）覆盖为准，
+    # 同日比例保留在 detail 供观察。
     prev_row = _fetchone(
         conn,
         "SELECT max(cal_date) FROM bp_trading_calendar"
@@ -302,7 +316,7 @@ def load_index_quotes(conn: Any, expected: date) -> dict[str, Any]:
         "SELECT count(DISTINCT q.symbol) FROM bp_index_quote_daily q"
         " JOIN bp_index_master m ON m.index_code = q.symbol AND m.is_tracked = TRUE"
         " WHERE q.adjust = 'bfq' AND q.trade_date >= %s AND m.market = ANY(%s)"
-        " AND m.index_code ~ %s",
+        " AND m.index_code ~ %s AND q.source NOT LIKE '%%_em'",
         (prev_expected, list(FREE_INDEX_MARKETS), VALID_INDEX_CODE),
     )
     covered_t1 = int(t1_row[0] or 0) if t1_row else covered
@@ -317,6 +331,8 @@ def load_index_quotes(conn: Any, expected: date) -> dict[str, Any]:
     as_of = as_of_row[0] if as_of_row and as_of_row[0] is not None else None
     return {
         "total": total,
+        "tracked_total": tracked_total,
+        "source_unavailable": tracked_total - total,
         "covered": covered,
         "covered_t1": covered_t1,
         "prev_expected": prev_expected,
@@ -593,7 +609,9 @@ def audit(conn: Any, reference: Optional[date] = None) -> dict[str, Any]:
             "same_day_ratio": same_day_ratio,
             "prev_expected": index_quotes["prev_expected"].isoformat()
             if index_quotes.get("prev_expected") else None,
-            "slo": "T+1（官方源部分指数次日发布）",
+            "slo": "T+1（官方源部分指数次日发布）；分母=免费源可覆盖 tracked 指数",
+            "tracked_total": index_quotes.get("tracked_total"),
+            "source_unavailable": index_quotes.get("source_unavailable"),
         },
     )
     # 免费源已知限制：剩余缺口主要是仅东财有数据的指数（服务器 IP 被东财限制），
