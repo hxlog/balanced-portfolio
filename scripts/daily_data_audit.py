@@ -196,8 +196,11 @@ def load_dataset_state(conn: Any, dataset: str, adjust: str) -> Optional[date]:
 def load_latest_run_coverage(conn: Any, dataset: str, adjust: str) -> tuple[Optional[float], Optional[date]]:
     row = _fetchone(
         conn,
+        # bp_etl_run 没有 adjust 列（adjust 记录在 detail JSONB 内），
+        # 审计按 detail->>'adjust' 过滤，避免 UndefinedColumn。
         "SELECT achieved_coverage, trade_date FROM bp_etl_run"
-        " WHERE dataset = %s AND adjust = %s ORDER BY run_id DESC LIMIT 1",
+        " WHERE dataset = %s AND COALESCE(detail->>'adjust', '') = %s"
+        " ORDER BY run_id DESC LIMIT 1",
         (dataset, adjust),
     )
     if not row:
@@ -262,24 +265,33 @@ def load_prev_day_ratio(conn: Any, dataset: str, adjust: str, expected: date) ->
     return today_count / prev_count
 
 
+#: 免费源可覆盖的 tracked 指数市场（US/GLOBAL 无免费日 K 源，不计入分母，单独记录限制）。
+FREE_INDEX_MARKETS: tuple[str, ...] = ("CSI", "SH", "SZ", "HK")
+
+
 def load_index_quotes(conn: Any, expected: date) -> dict[str, Any]:
     total_row = _fetchone(
-        conn, "SELECT count(*) FROM bp_index_master WHERE is_tracked = TRUE"
+        conn,
+        "SELECT count(*) FROM bp_index_master"
+        " WHERE is_tracked = TRUE AND market = ANY(%s)",
+        (list(FREE_INDEX_MARKETS),),
     )
     total = int(total_row[0] or 0) if total_row else 0
     covered_row = _fetchone(
         conn,
         "SELECT count(DISTINCT q.symbol) FROM bp_index_quote_daily q"
         " JOIN bp_index_master m ON m.index_code = q.symbol AND m.is_tracked = TRUE"
-        " WHERE q.adjust = 'bfq' AND q.trade_date = %s",
-        (expected,),
+        " WHERE q.adjust = 'bfq' AND q.trade_date = %s AND m.market = ANY(%s)",
+        (expected, list(FREE_INDEX_MARKETS)),
     )
     covered = int(covered_row[0] or 0) if covered_row else 0
     as_of_row = _fetchone(
         conn,
         "SELECT max(q.trade_date) FROM bp_index_quote_daily q"
         " JOIN bp_index_master m ON m.index_code = q.symbol AND m.is_tracked = TRUE"
-        " WHERE q.adjust = 'bfq' AND q.trade_date >= current_date - 800",
+        " WHERE q.adjust = 'bfq' AND q.trade_date >= current_date - 800"
+        " AND m.market = ANY(%s)",
+        (list(FREE_INDEX_MARKETS),),
     )
     as_of = as_of_row[0] if as_of_row and as_of_row[0] is not None else None
     return {"total": total, "covered": covered, "as_of": as_of}
@@ -751,8 +763,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
     )
     reference = date.fromisoformat(args.date) if args.date else date.today()
-    conn = _connect()
-    try:
+    from bp_ingest.config import load_config  # noqa: PLC0415
+    from bp_ingest.db import connect  # noqa: PLC0415
+
+    # bp_ingest.db.connect 是 @contextmanager（yield 连接并按块提交/回滚），
+    # 不能直接当连接对象用；历史上误用导致 '_GeneratorContextManager' has no attribute cursor。
+    with connect(load_config().db) as conn:
         conn.autocommit = False
         report = audit(conn, reference=reference)
         if args.skip_accuracy:
@@ -775,14 +791,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         else:
             report["persisted"] = persist(conn, report)
             conn.commit()
-    finally:
-        try:
-            conn.rollback()
-        except Exception:  # noqa: BLE001
-            pass
-        close = getattr(conn, "close", None)
-        if callable(close):
-            close()
     text = json.dumps(report, ensure_ascii=False, default=str, indent=1)
     print(text)
     if args.output:

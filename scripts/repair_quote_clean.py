@@ -372,12 +372,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 payload["clean_applied"] = rebuild_clean_for(conn, targets)
             logger.info("clean 对账: %d 个 symbol 待重建", len(targets))
 
-    if args.json:
-        import json  # noqa: PLC0415
+    import json  # noqa: PLC0415
 
-        print(json.dumps(payload, ensure_ascii=False, default=str, indent=1))
-    else:
-        print(json.dumps(payload, ensure_ascii=False, default=str, indent=1))
+    print(json.dumps(payload, ensure_ascii=False, default=str, indent=1))
+    if not args.json:
         if not apply:
             print("")  # 空行分隔 dry-run 提示
             print("[dry-run] 未写库；确认后加 --apply 执行。安全 SQL 见 --print-sql。")
