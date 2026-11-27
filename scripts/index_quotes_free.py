@@ -919,7 +919,10 @@ def run(
             "missing_total": len(missing),
             "generated_at": wall.isoformat(),
         }
-        if not dry_run and universe:
+        # 仅全量运行写全局 freshness/覆盖率 meta：--symbols/--limit 的补数运行
+        # 只覆盖部分标的，若直接写会把 index_quotes 覆盖率篡改成 1/1 误导徽标。
+        full_universe_run = not symbols and not limit
+        if not dry_run and universe and full_universe_run:
             _record_freshness(target, payload)
             if postprocess:
                 payload["postprocess"] = _postprocess(
