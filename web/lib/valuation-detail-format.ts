@@ -5,7 +5,10 @@
  * 详情页特有的「亿元」「0~100 分位」「样本是否可用」三类逻辑。
  */
 
-import type { PercentileSummary } from "./valuation-detail-types";
+import type {
+  DetailTrackerFund,
+  PercentileSummary,
+} from "./valuation-detail-types";
 import {
   EMPTY_DISPLAY,
   formatNumber,
@@ -37,24 +40,51 @@ export function formatPercentileValue(
 }
 
 /**
- * 分位语气色：低分位=便宜=success，中间=warning，高分位=高估=destructive。
+ * 分位语气色（**全站唯一实现**，`valuation-ui.tsx` 只做 re-export，勿再复制阈值）。
+ *
+ * 阈值口径：<30 分位=便宜=success，30~70=中性=primary（sky 蓝），>70=高估=destructive。
  * 入参为 0~100（API 口径），与涨跌色 text-up/text-down 解耦。
  */
 export function percentileTone(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "text-muted-foreground";
-  if (value <= 30) return "text-success";
-  if (value >= 70) return "text-destructive";
-  return "text-warning";
+  if (value < 30) return "text-success";
+  if (value > 70) return "text-destructive";
+  return "text-primary";
 }
 
-/** 分位 -> 「低估 / 中性 / 高估」；样本不足返回 null。 */
+/** 分位 -> 「低估 / 中性 / 高估」；与 percentileTone 共用同一组阈值，样本不足返回 null。 */
 export function percentileLabel(
   value: number | null | undefined,
 ): "低估" | "中性" | "高估" | null {
   if (value == null || !Number.isFinite(value)) return null;
-  if (value <= 30) return "低估";
-  if (value >= 70) return "高估";
+  if (value < 30) return "低估";
+  if (value > 70) return "高估";
   return "中性";
+}
+
+/**
+ * 跟踪基金规模口径（元）：优先最新基金规模 fund_scale，缺失回退快照规模 aum。
+ *
+ * 明细表、Top10 条形图与「规模合计」必须共用本函数，否则同一页面会出现
+ * 「各行相加 ≠ 合计」的口径分叉。
+ */
+export function trackerFundScale(
+  fund: Pick<DetailTrackerFund, "fund_scale" | "aum">,
+): number | null {
+  const scale = fund.fund_scale ?? fund.aum;
+  return scale != null && Number.isFinite(scale) ? scale : null;
+}
+
+/** 跟踪基金规模合计（元）；无有效规模时返回 null（不伪造 0）。 */
+export function sumTrackerFundScale(
+  funds: readonly Pick<DetailTrackerFund, "fund_scale" | "aum">[],
+): number | null {
+  let total: number | null = null;
+  for (const fund of funds) {
+    const scale = trackerFundScale(fund);
+    if (scale != null) total = (total ?? 0) + scale;
+  }
+  return total;
 }
 
 /** 分位统计是否可用（pct 非空且样本 ≥120）。 */
@@ -75,4 +105,52 @@ export function percentileUnavailableText(
 ): string {
   if (!stats) return "暂无分位统计";
   return `样本不足（${formatNumber(stats.sample_size, 0)} < ${MIN_PERCENTILE_SAMPLE}）`;
+}
+
+/**
+ * 跟踪误差告警阈值（百分数点）：TE > 5% 视为跟踪质量偏弱，UI 用 warning 提示。
+ * 口径：bp_fund_risk.tracking_error_1y（acc_nav / 回退 ETF 后复权，年化日收益差标准差）。
+ */
+export const TE_WARNING_THRESHOLD_PCT = 5;
+
+export type TrackingErrorTone = "warning" | "normal" | "missing";
+
+/** TE 语气：>5% 告警（琥珀），否则普通数值，缺失单独标记。 */
+export function trackingErrorTone(
+  value: number | null | undefined,
+): TrackingErrorTone {
+  if (value == null || !Number.isFinite(value)) return "missing";
+  return value > TE_WARNING_THRESHOLD_PCT ? "warning" : "normal";
+}
+
+/** TE 文字色 class（告警=warning，普通=默认，缺失=muted）。 */
+export function trackingErrorClass(
+  value: number | null | undefined,
+): string {
+  const tone = trackingErrorTone(value);
+  if (tone === "warning") return "text-warning font-medium";
+  if (tone === "missing") return "text-muted-foreground";
+  return "";
+}
+
+/** ISO datetime -> "YYYY-MM-DD HH:mm"（截断字符串，不做时区换算；用于「更新于」）。 */
+export function formatUpdatedAtCompact(
+  value: string | null | undefined,
+): string {
+  if (!value) return EMPTY_DISPLAY;
+  return value.replace("T", " ").slice(0, 16);
+}
+
+/** 「跟踪基金」右上角的元信息：规模合计 · 数据截至 · 更新于。 */
+export function formatTrackerMeta(args: {
+  totalAum: number | null;
+  asOf: string | null | undefined;
+  updatedAt: string | null | undefined;
+}): string {
+  const aum = args.totalAum == null ? EMPTY_DISPLAY : `${formatAumYi(args.totalAum)} 亿元`;
+  return [
+    `规模合计 ${aum}`,
+    `数据截至 ${args.asOf ?? EMPTY_DISPLAY}`,
+    `更新于 ${formatUpdatedAtCompact(args.updatedAt)}`,
+  ].join(" · ");
 }

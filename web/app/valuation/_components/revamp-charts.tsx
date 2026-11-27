@@ -213,27 +213,39 @@ export function PeBandChart({
   );
 }
 
-/** 行业估值热力块：颜色编码 PE 分位。 */
+/**
+ * 行业估值热力块：颜色编码 PE 分位。
+ *
+ * 口径（标题旁 ? tooltip 与每格 hover 均可查看）：该行业下所有跟踪指数的
+ * PE-TTM 所选窗口分位均值；样本数 = 参与计算的指数数量；分位越低越便宜。
+ * 点击方格筛选下方指数列表（保持现网交互）。
+ */
 export function IndustryHeatmap({
   rows,
   onSelect,
+  windowLabel = "5 年",
+  asOf = null,
 }: {
   rows: IndexQuoteRow[];
   onSelect: (industry: string) => void;
+  windowLabel?: string;
+  asOf?: string | null;
 }) {
-  const groups = new Map<string, number[]>();
+  const groups = new Map<string, { values: number[]; names: string[] }>();
   for (const row of rows) {
     if (!row.industry) continue;
     if (row.pe_percentile == null) continue;
-    const list = groups.get(row.industry) ?? [];
-    list.push(row.pe_percentile);
-    groups.set(row.industry, list);
+    const group = groups.get(row.industry) ?? { values: [], names: [] };
+    group.values.push(row.pe_percentile);
+    if (group.names.length < 3) group.names.push(row.name);
+    groups.set(row.industry, group);
   }
   const cells = [...groups.entries()]
-    .map(([industry, values]) => ({
+    .map(([industry, group]) => ({
       industry,
-      pe: values.reduce((sum, value) => sum + value, 0) / values.length,
-      count: values.length,
+      pe: group.values.reduce((sum, value) => sum + value, 0) / group.values.length,
+      count: group.values.length,
+      representatives: group.names.join("、"),
     }))
     .sort((a, b) => b.pe - a.pe);
 
@@ -247,28 +259,43 @@ export function IndustryHeatmap({
 
   const colorFor = (pct: number) => {
     if (pct >= 80) return "bg-destructive/15 text-destructive";
-    if (pct >= 60) return "bg-warning/20 text-warning-foreground";
+    if (pct >= 60) return "bg-warning/20 text-warning";
     if (pct >= 40) return "bg-muted text-foreground";
     if (pct >= 20) return "bg-success/15 text-success";
     return "bg-success/25 text-success";
   };
 
   return (
-    <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4">
-      {cells.slice(0, 16).map((cell) => (
-        <button
-          key={cell.industry}
-          type="button"
-          onClick={() => onSelect(cell.industry)}
-          className={cn(
-            "rounded-lg border border-transparent px-2 py-2 text-left transition-transform hover:scale-[1.02]",
-            colorFor(cell.pe),
-          )}
-        >
-          <div className="truncate text-[10px] opacity-80">{cell.industry}</div>
-          <div className="text-base font-semibold tabular-nums">{cell.pe.toFixed(0)}%</div>
-        </button>
-      ))}
+    <div>
+      <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4">
+        {cells.slice(0, 16).map((cell) => (
+          <button
+            key={cell.industry}
+            type="button"
+            onClick={() => onSelect(cell.industry)}
+            title={
+              cell.industry +
+              " · PE " + windowLabel + "分位均值 " + cell.pe.toFixed(1) + "%" +
+              " · 样本 " + cell.count + " 只" +
+              (cell.representatives ? " · 代表 " + cell.representatives : "") +
+              (asOf ? " · 数据截至 " + asOf : "")
+            }
+            className={cn(
+              "rounded-lg border border-transparent px-2 py-2 text-left transition-transform hover:scale-[1.02]",
+              colorFor(cell.pe),
+            )}
+          >
+            <div className="truncate text-[10px] opacity-80">{cell.industry}</div>
+            <div className="flex items-baseline justify-between gap-1">
+              <span className="text-base font-semibold tabular-nums">{cell.pe.toFixed(0)}%</span>
+              <span className="text-[9px] opacity-70 tabular-nums">{cell.count} 只</span>
+            </div>
+          </button>
+        ))}
+      </div>
+      <p className="mt-1.5 text-[10px] text-muted-foreground">
+        样本数为参与计算的指数数量 · 窗口 {windowLabel} · 数据截至 {asOf ?? "—"}
+      </p>
     </div>
   );
 }

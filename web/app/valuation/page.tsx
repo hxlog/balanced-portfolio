@@ -1,27 +1,13 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { connection } from "next/server";
-import {
-  getCachedValuationHistory,
-  getCachedValuationIndices,
-  getCachedValuationOverview,
-} from "@/lib/cached-data";
-import {
-  mapBroadProxy,
-  mapIndexRow,
-  mapMarketCard,
-  mapMvi,
-  mapValuationHistory,
-} from "@/lib/valuation-api-map";
+import { getValuationHomeData } from "@/lib/valuation-server-data";
 import type {
-  BroadProxyCard,
-  IndexQuoteRow,
-  MarketValuationCard,
   PercentileWindow,
-  ValuationHistory,
   ValuationMetric,
 } from "@/lib/valuation-types";
 import { ValuationHomeV2 } from "./ValuationHomeV2";
+import { DataFreshnessBadge } from "./_components/valuation-freshness-badge";
 
 export const metadata: Metadata = {
   title: "指数估值 — Valuation Band 与分位矩阵",
@@ -36,7 +22,6 @@ export const metadata: Metadata = {
   },
 };
 
-const DEFAULT_PROXY = "000300";
 const WINDOWS = new Set<PercentileWindow>(["1y", "3y", "5y", "10y", "all"]);
 const METRICS = new Set<ValuationMetric>(["pe_ttm", "pb", "dividend_yield_ttm", "erp"]);
 
@@ -58,35 +43,15 @@ async function ValuationContent({
   metric: ValuationMetric;
 }) {
   await connection();
-  let rows: IndexQuoteRow[] = [];
-  let boards: MarketValuationCard[] = [];
-  let proxies: BroadProxyCard[] = [];
-  let history: ValuationHistory | null = null;
-  let mvi: ReturnType<typeof mapMvi> = null;
-  try {
-    const [indices, overview, historyPayload] = await Promise.all([
-      getCachedValuationIndices(1000, window, metric),
-      getCachedValuationOverview(window),
-      getCachedValuationHistory(DEFAULT_PROXY, metric, window),
-    ]);
-    rows = (indices.data ?? []).map(mapIndexRow).filter((row) => row.index_code);
-    boards = (overview.data ?? []).map(mapMarketCard);
-    const rawProxies = overview.meta?.proxies;
-    proxies = Array.isArray(rawProxies)
-      ? rawProxies.map((item) => mapBroadProxy(item as Record<string, unknown>))
-      : [];
-    mvi = mapMvi(overview.meta?.mvi);
-    history = mapValuationHistory(DEFAULT_PROXY, historyPayload, metric, window);
-  } catch {
-    // 不伪造数据：异常时渲染空态
-  }
+  // 服务端一次取数：新快照接口（4 指标分位）+ 默认指数 4 指标历史 + MVI。
+  // 任一接口失败只降级对应区块，页面其余部分照常渲染（不伪造数据）。
+  const data = await getValuationHomeData({ window, metric });
   return (
     <ValuationHomeV2
-      rows={rows}
-      boards={boards}
-      proxies={proxies}
-      history={history}
-      mvi={mvi}
+      rows={data.rows}
+      proxies={data.proxies}
+      histories={data.histories}
+      mvi={data.mvi}
       window={window}
       metric={metric}
     />
@@ -129,7 +94,7 @@ export default async function ValuationPage({
       <div className="mx-auto w-full max-w-[1600px] px-4 pt-7 sm:px-6 sm:pt-9 lg:px-8">
         <header className="flex flex-wrap items-end justify-between gap-4 border-b border-border pb-4">
           <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">指数估值</h1>
-          <p className="text-xs text-muted-foreground">Valuation Band · 市场估值指数 · 多窗口分位</p>
+          <DataFreshnessBadge />
         </header>
       </div>
       <Suspense fallback={<ContentSkeleton />}>

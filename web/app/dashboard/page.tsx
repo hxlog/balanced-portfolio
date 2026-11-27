@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getCachedDemoResult, resolveDefaultPortfolioId } from "@/lib/cached-data";
 import { DashboardModeGate } from "./DashboardModeGate";
+import { DashboardPageSkeleton } from "./DashboardSkeleton";
 
 export const metadata: Metadata = {
   title: "产品 Dashboard",
@@ -45,7 +46,7 @@ export default async function DashboardPage({
       : null;
 
   return (
-    <Suspense fallback={<div className="p-12 text-center text-muted-foreground">加载中...</div>}>
+    <Suspense fallback={<DashboardPageSkeleton mode={mode} />}>
       <DashboardModeGate mode={mode} initialDemo={initialDemo} />
     </Suspense>
   );

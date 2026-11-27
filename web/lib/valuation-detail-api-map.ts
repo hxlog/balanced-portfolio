@@ -43,6 +43,12 @@ function dateStr(value: unknown): string | null {
   return text ? text.slice(0, 10) : null;
 }
 
+/** 严格 ISO 日期（序列点用：非法日期会让时间轴/图表崩溃，直接丢弃）。 */
+function isoDate(value: unknown): string | null {
+  const text = dateStr(value);
+  return text && /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : null;
+}
+
 function asCategory(value: unknown): IndexCategory {
   const text = typeof value === "string" ? value : "";
   return (CATEGORIES.has(text) ? text : "其他") as IndexCategory;
@@ -100,6 +106,9 @@ function mapTrackerFund(raw: unknown): DetailTrackerFund | null {
     info_ratio_1y: num(item.info_ratio_1y),
     risk_ret_3y_ann: num(item.risk_ret_3y_ann),
     risk_ret_5y_ann: num(item.risk_ret_5y_ann),
+    // 后端 get_index_tracker_funds 只返回批量 risk_updated_at / updated_at，
+    // 不返回单只基金的风险净值截止日；这里只做兼容映射，不再臆造 risk_as_of。
+    risk_updated_at: str(item.risk_updated_at) ?? str(item.updated_at),
   };
 }
 
@@ -139,6 +148,60 @@ function mapDetailPercentile(raw: unknown): DetailPercentile | null {
   };
 }
 
+function objectRecord(raw: unknown): Record<string, unknown> | null {
+  return raw && typeof raw === "object" && !Array.isArray(raw)
+    ? (raw as Record<string, unknown>)
+    : null;
+}
+
+function mapPriceSeries(raw: unknown): ValuationDetailData["price_series"] {
+  if (!Array.isArray(raw)) return [];
+  const points: ValuationDetailData["price_series"] = [];
+  for (const item of raw) {
+    const record = objectRecord(item);
+    if (!record) continue;
+    const tradeDate = isoDate(record.trade_date) ?? isoDate(record.date);
+    const close = num(record.close) ?? num(record.value);
+    if (!tradeDate || close == null || close <= 0) continue;
+    points.push({ trade_date: tradeDate, close });
+  }
+  points.sort((a, b) => a.trade_date.localeCompare(b.trade_date));
+  return points;
+}
+
+/**
+ * 跟踪基金「数据截至 / 更新于」元信息。
+ *
+ * 后端契约（task-2）：data.tracker_funds_meta = {data_as_of, updated_at, risk_updated_at, fund_count}；
+ * 「数据截至」= data_as_of（max trade_date），「更新于」= risk_updated_at（缺失回退 updated_at）。
+ * 旧接口没有 meta 时用每只基金 trade_date 的最大值兜底，绝不伪造成今天。
+ */
+function mapTrackerFundsMeta(
+  raw: Record<string, unknown>,
+  funds: readonly DetailTrackerFund[],
+): { asOf: string | null; updatedAt: string | null } {
+  const meta: Record<string, unknown> =
+    objectRecord(raw.tracker_funds_meta) ?? objectRecord(raw.trackers_meta) ?? {};
+  const fundDates = funds
+    .map((fund) => fund.trade_date)
+    .filter((value): value is string => Boolean(value))
+    .sort();
+  return {
+    asOf:
+      dateStr(meta.data_as_of) ??
+      dateStr(meta.as_of) ??
+      dateStr(raw.tracker_funds_as_of) ??
+      (fundDates.length ? fundDates[fundDates.length - 1] : null),
+    updatedAt:
+      str(meta.risk_updated_at) ??
+      str(meta.updated_at) ??
+      str(raw.tracker_funds_updated_at) ??
+      str(raw.fund_risk_updated_at) ??
+      str(raw.data_updated_at) ??
+      null,
+  };
+}
+
 /** 详情响应 `data` -> `ValuationDetailData`；缺少指数代码时返回 null（按错误态处理）。 */
 export function mapValuationDetail(
   raw: Record<string, unknown> | null | undefined,
@@ -162,6 +225,7 @@ export function mapValuationDetail(
         .map(mapDetailPercentile)
         .filter((item): item is DetailPercentile => item !== null)
     : [];
+  const trackerMeta = mapTrackerFundsMeta(raw, trackerFunds);
 
   const rawRisk = raw.risk;
   const risk: ValuationDetailData["risk"] = {};
@@ -200,6 +264,11 @@ export function mapValuationDetail(
     tracker_funds: trackerFunds,
     percentiles,
     risk,
+    tracker_funds_as_of: trackerMeta.asOf,
+    tracker_funds_updated_at: trackerMeta.updatedAt,
+    price_series: mapPriceSeries(
+      raw.price_series ?? raw.price_history ?? raw.index_price_history,
+    ),
   };
 }
 
@@ -219,7 +288,7 @@ function mapRiskStats(raw: unknown): DetailRiskStats | null {
 function mapHistoryPoint(raw: unknown): ValuationHistoryPoint | null {
   if (!raw || typeof raw !== "object") return null;
   const item = raw as Record<string, unknown>;
-  const date = dateStr(item.trade_date);
+  const date = isoDate(item.trade_date);
   const value = num(item.value);
   if (!date || value == null) return null;
   return { trade_date: date, value };

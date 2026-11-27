@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getToken } from "@/lib/api";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const DATASET_LABEL: Record<string, string> = {
   a_stock: "A 股个股",
@@ -115,9 +116,39 @@ export function DataHealthPanel({ className }: { className?: string }) {
   }, [load]);
 
   if (loading && !overview) {
+    // 骨架与下方真实布局同尺寸（顶部状态条 + 4 张数据集卡 + 3 张表格卡），避免内容到达时跳动。
     return (
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="size-4 animate-spin" /> 加载数据健康状态…
+      <div aria-busy="true" role="status" className="space-y-4">
+        <span className="sr-only">正在加载数据健康状态</span>
+        <div className="flex flex-wrap items-center gap-3">
+          <Skeleton className="h-5 w-32 rounded-full" />
+          <Skeleton className="h-3.5 w-64" />
+          <Skeleton className="h-8 w-16 rounded-md" />
+        </div>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="space-y-3 rounded-xl border border-border bg-card p-5">
+              <Skeleton className="h-5 w-32" />
+              <Skeleton className="h-3.5 w-40" />
+              <div className="space-y-2 pt-2">
+                <Skeleton className="h-3 w-full" />
+                <Skeleton className="h-3 w-4/5" />
+                <Skeleton className="h-8 w-28 rounded-md" />
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="grid gap-4 xl:grid-cols-2">
+          {Array.from({ length: 3 }).map((_, index) => (
+            <div key={index} className="space-y-3 rounded-xl border border-border bg-card p-5">
+              <Skeleton className="h-5 w-28" />
+              <Skeleton className="h-3.5 w-56 max-w-full" />
+              {Array.from({ length: 5 }).map((__, row) => (
+                <Skeleton key={row} className="h-4 w-full" />
+              ))}
+            </div>
+          ))}
+        </div>
       </div>
     );
   }

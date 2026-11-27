@@ -129,6 +129,10 @@ export interface IndexQuoteRow {
   quote_status?: string | null;
   /** 行情滞后交易日数。 */
   quote_lag_days?: number | null;
+  /** 估值序列起始日（如中证A500 自 2024-06 起），用于窗口口径标注。 */
+  coverage_start?: string | null;
+  /** 快照写入/更新时间（新版本估值快照接口返回）。 */
+  updated_at?: string | null;
 }
 
 /** 估值历史序列点（bp_index_valuation_series）。 */

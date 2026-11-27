@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
 import BuilderClient from "./BuilderClient";
+import { BuilderPageSkeleton } from "./BuilderSkeleton";
 
 export const metadata: Metadata = {
   title: "组合构建器",
@@ -19,7 +20,7 @@ export default function BuilderPage() {
   // 不在服务端阻塞资产清单：BuilderClient 内部会自行拉取 /api/assets。
   // 这样即使后端慢/不可用，页面壳与模式切换也能立即交互（避免整页停在“加载中”）。
   return (
-    <Suspense fallback={<div className="p-12 text-center text-muted-foreground">加载中...</div>}>
+    <Suspense fallback={<BuilderPageSkeleton />}>
       <BuilderClient initialAssets={[]} />
     </Suspense>
   );

@@ -20,6 +20,11 @@ import {
 } from "@/components/ui/select";
 import { EChart } from "@/components/EChart";
 import { getChartTheme } from "@/lib/chart-theme";
+import { ChartSkeleton, TableSkeleton } from "@/components/ui/loading";
+import { InlineErrorState } from "@/components/ui/error-state";
+import { EmptyState } from "@/components/ui/empty-state";
+import { REVEAL_CLASS, revealStyle } from "@/components/ui/reveal";
+import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -153,6 +158,10 @@ export function CffexClient() {
   const [selectedIndices, setSelectedIndices] = useState<string[]>([...VARIETIES]);
   const [statPeriod, setStatPeriod] = useState("3Y");
   const [spotError, setSpotError] = useState<string | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [statError, setStatError] = useState<string | null>(null);
+  const [historyReloadKey, setHistoryReloadKey] = useState(0);
+  const [statReloadKey, setStatReloadKey] = useState(0);
   const [indexSeries, setIndexSeries] = useState<string>("none");
   const historyKeyRef = useRef<string>("");
 
@@ -174,17 +183,23 @@ export function CffexClient() {
 
   // --- Fetch history (full data for dataZoom) ---
   useEffect(() => {
+    let cancelled = false;
+    setHistoryError(null);
     fetchJSON<HistoryResponse>("/api/cffex/history?days=0")
-      .then(setHistoryData)
-      .catch(() => {});
-  }, []);
+      .then((data) => !cancelled && setHistoryData(data))
+      .catch((e) => !cancelled && setHistoryError(e instanceof Error ? e.message : "获取历史数据失败"));
+    return () => { cancelled = true; };
+  }, [historyReloadKey]);
 
   // --- Fetch statistics (on period change) ---
   useEffect(() => {
+    let cancelled = false;
+    setStatError(null);
     fetchJSON<StatResponse>(`/api/cffex/statistics?period=${statPeriod}`)
-      .then(setStatData)
-      .catch(() => {});
-  }, [statPeriod]);
+      .then((data) => !cancelled && setStatData(data))
+      .catch((e) => !cancelled && setStatError(e instanceof Error ? e.message : "获取统计数据失败"));
+    return () => { cancelled = true; };
+  }, [statPeriod, statReloadKey]);
 
   // --- Filtering ---
   const toggleIndex = (id: string) => {
@@ -369,7 +384,7 @@ export function CffexClient() {
           已收盘
         </Badge>
         {awaitingSync && (
-          <Badge variant="outline" className="text-amber-700/80 dark:text-amber-400/80 text-xs border-amber-500/30">
+          <Badge variant="outline" className="border-warning/40 bg-warning/10 text-xs text-warning">
             待现货对齐
           </Badge>
         )}
@@ -399,17 +414,6 @@ export function CffexClient() {
     return result;
   }, [spotData]);
 
-  // --- Current percentile in historical distribution ---
-  const currentPercentile = useCallback((variety: string, histValues: number[]) => {
-    const cur = currentComposite[variety];
-    if (cur == null || histValues.length === 0) return null;
-    let countBelow = 0;
-    for (const v of histValues) {
-      if (v < cur) countBelow++;
-    }
-    return countBelow / histValues.length;
-  }, [currentComposite]);
-
   // -------------------------------------------------------------------
   // Render
   // -------------------------------------------------------------------
@@ -435,15 +439,17 @@ export function CffexClient() {
       </div>
 
       <div className="container mx-auto max-w-[1600px] px-4 sm:px-6 py-6 sm:py-8 space-y-8">
-        {/* Spot Error Banner */}
+        {/* Spot Error Banner: 保留最近一次成功加载的数据, 提供重试出口 */}
         {spotError && (
-          <div className="bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-3 text-sm text-destructive">
-            行情加载异常: {spotError} (显示缓存数据)
-          </div>
+          <InlineErrorState
+            title="行情加载异常"
+            message={`${spotError}（下方仍显示最近一次成功加载的数据）`}
+            onRetry={() => void fetchSpot()}
+          />
         )}
 
         {/* Section 1: Index Overview */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className={cn("grid grid-cols-2 md:grid-cols-4 gap-4", REVEAL_CLASS)} style={revealStyle(0)}>
           {filteredIndices.map(idx => (
             <Card
               key={idx.variety}
@@ -480,7 +486,7 @@ export function CffexClient() {
         </div>
 
         {/* Section 2: Live Contract Table */}
-        <Card className="border-border/50 bg-card/30 backdrop-blur-sm">
+        <Card className={cn("border-border/50 bg-card/30 backdrop-blur-sm", REVEAL_CLASS)} style={revealStyle(60)}>
           <CardHeader className="border-b border-border/40 pb-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-2">
@@ -489,17 +495,22 @@ export function CffexClient() {
               </div>
               <div className="flex items-center gap-2 flex-wrap">
                 <Filter className="w-4 h-4 text-muted-foreground" />
-                {VARIETIES.map(v => (
-                  <Button
-                    key={v}
-                    variant={selectedIndices.includes(v) ? "default" : "outline"}
-                    size="sm"
-                    className="h-7 text-xs"
-                    onClick={() => toggleIndex(v)}
-                  >
-                    {v}
-                  </Button>
-                ))}
+                {VARIETIES.map(v => {
+                  const on = selectedIndices.includes(v);
+                  return (
+                    <Button
+                      key={v}
+                      variant={on ? "default" : "outline"}
+                      size="sm"
+                      className="h-7 text-xs"
+                      aria-pressed={on}
+                      aria-label={`${on ? "隐藏" : "显示"} ${v} ${VARIETY_NAMES[v]} 合约`}
+                      onClick={() => toggleIndex(v)}
+                    >
+                      {v}
+                    </Button>
+                  );
+                })}
               </div>
             </div>
           </CardHeader>
@@ -547,13 +558,29 @@ export function CffexClient() {
               </TableHeader>
               <TableBody>
                 {filteredContracts.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={9} className="text-center text-muted-foreground py-12">
-                      {spotError
-                        ? `行情加载异常: ${spotError}`
-                        : spotData?.source?.startsWith("db_close")
-                          ? `显示最新收盘数据 (${spotData.source.replace("db_close_", "")})`
-                          : "数据加载中..."}
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={9} className="p-0">
+                      {spotData === null && !spotError ? (
+                        <TableSkeleton rows={8} columns={9} firstColWidth="w-16" />
+                      ) : selectedIndices.length === 0 ? (
+                        <EmptyState
+                          compact
+                          icon={Filter}
+                          title="未选择品种"
+                          description="点击上方 IF / IH / IC / IM 选择要展示的品种。"
+                        />
+                      ) : (
+                        <EmptyState
+                          compact
+                          icon={Activity}
+                          title={spotError ? "行情暂不可用" : "暂无合约数据"}
+                          description={
+                            spotError
+                              ? "行情接口请求失败，请使用上方提示中的「重试」。"
+                              : "该品种今日行情尚未同步，或收盘数据尚未确认。"
+                          }
+                        />
+                      )}
                     </TableCell>
                   </TableRow>
                 ) : (
@@ -587,18 +614,19 @@ export function CffexClient() {
                       <TableCell className="text-right font-mono tabular-nums text-muted-foreground hidden sm:table-cell">
                         {c.days_to_expiry} 天
                       </TableCell>
+                      {/* 基差/升贴水是方向性数值: 只用 up/down 语义色, 不用 success/destructive(状态色)。 */}
                       <TableCell className="text-right font-mono tabular-nums">
-                        <span className={c.basis != null && c.basis > 0 ? "text-success" : c.basis != null && c.basis < 0 ? "text-destructive" : ""}>
+                        <span className={c.basis != null && c.basis !== 0 ? (c.basis > 0 ? "text-up" : "text-down") : ""}>
                           {c.basis != null ? c.basis.toFixed(2) : "--"}
                         </span>
                       </TableCell>
                       <TableCell className="text-right font-mono tabular-nums">
-                        <span className={c.premium_rate != null && c.premium_rate > 0 ? "text-success" : c.premium_rate != null && c.premium_rate < 0 ? "text-destructive" : ""}>
+                        <span className={c.premium_rate != null && c.premium_rate !== 0 ? (c.premium_rate > 0 ? "text-up" : "text-down") : ""}>
                           {c.premium_rate != null ? `${c.premium_rate.toFixed(2)}%` : "--"}
                         </span>
                       </TableCell>
                       <TableCell className="text-right font-mono tabular-nums font-semibold">
-                        <span className={c.ann_premium_rate != null && c.ann_premium_rate > 0 ? "text-success" : c.ann_premium_rate != null && c.ann_premium_rate < 0 ? "text-destructive" : ""}>
+                        <span className={c.ann_premium_rate != null && c.ann_premium_rate !== 0 ? (c.ann_premium_rate > 0 ? "text-up" : "text-down") : ""}>
                           {c.ann_premium_rate != null ? `${c.ann_premium_rate.toFixed(2)}%` : "--"}
                         </span>
                       </TableCell>
@@ -611,7 +639,7 @@ export function CffexClient() {
         </Card>
 
         {/* Section 3: Historical Chart */}
-        <Card className="border-border/50 bg-card/30 backdrop-blur-sm">
+        <Card className={cn("border-border/50 bg-card/30 backdrop-blur-sm", REVEAL_CLASS)} style={revealStyle(120)}>
           <CardHeader className="border-b border-border/40 pb-4">
             <div className="flex flex-col gap-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -642,16 +670,22 @@ export function CffexClient() {
           <CardContent className="pt-4 pb-2 sm:pt-0">
             {historyData ? (
               <EChart option={chartOption} style={{ height: 440, width: "100%" }} />
-            ) : (
-              <div className="flex items-center justify-center h-[440px] text-muted-foreground text-sm">
-                历史数据加载中...
+            ) : historyError ? (
+              <div className="flex h-[440px] items-center justify-center px-4">
+                <InlineErrorState
+                  title="历史数据加载失败"
+                  message={historyError}
+                  onRetry={() => setHistoryReloadKey((k) => k + 1)}
+                />
               </div>
+            ) : (
+              <ChartSkeleton height={440} />
             )}
           </CardContent>
         </Card>
 
         {/* Section 4: Statistics Table */}
-        <Card className="border-border/50 bg-card/30 backdrop-blur-sm">
+        <Card className={cn("border-border/50 bg-card/30 backdrop-blur-sm", REVEAL_CLASS)} style={revealStyle(180)}>
           <CardHeader className="border-b border-border/40 pb-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <CardTitle className="text-lg">历史升贴水统计分位</CardTitle>
@@ -698,16 +732,13 @@ export function CffexClient() {
                       </TableCell>
                       <TableCell className="text-right font-mono tabular-nums p-2 sm:p-4 whitespace-nowrap">
                         {(() => {
-                          const pct = currentPercentile(s.variety, []);
-                          // Need actual values array; use stats API data approximation
                           const cur = currentComposite[s.variety];
                           if (cur == null || s.count === 0) return "--";
-                          // Estimate percentile from mean and std
-                          const normalizedPct = (() => {
-                            if (s.std === 0) return 0.5;
-                            const z = (cur - s.mean) / s.std;
-                            return Math.max(0, Math.min(1, 0.5 + z / 6));
-                          })();
+                          // 分位由均值/标准差近似(统计接口不下发逐日序列): z 值映射到 [0,1]。
+                          const normalizedPct =
+                            s.std === 0
+                              ? 0.5
+                              : Math.max(0, Math.min(1, 0.5 + (cur - s.mean) / s.std / 6));
                           const isLowPct = normalizedPct < 0.5;
                           return (
                             <span className="inline-flex items-center gap-1.5">
@@ -746,17 +777,32 @@ export function CffexClient() {
                       </TableCell>
                     </TableRow>
                   ))}
-                {(statData === null) && (
-                  <TableRow>
-                    <TableCell colSpan={13} className="text-center text-muted-foreground py-12">
-                      统计数据加载中...
+                {statError && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={13} className="p-0">
+                      <InlineErrorState
+                        title="统计数据加载失败"
+                        message={statError}
+                        onRetry={() => setStatReloadKey((k) => k + 1)}
+                      />
+                    </TableCell>
+                  </TableRow>
+                )}
+                {statData === null && !statError && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={13} className="p-0">
+                      <TableSkeleton rows={4} columns={8} firstColWidth="w-16" />
                     </TableCell>
                   </TableRow>
                 )}
                 {statData?.statistics?.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={13} className="text-center text-muted-foreground py-12">
-                      暂无历史统计数据 (请先运行数据回填)
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={13} className="py-6">
+                      <EmptyState
+                        compact
+                        title="暂无历史统计数据"
+                        description="历史升贴水统计分位需要先运行数据回填。"
+                      />
                     </TableCell>
                   </TableRow>
                 )}

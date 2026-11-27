@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { getToken } from "@/lib/api";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/lib/utils";
 
 interface AssetRow {
@@ -85,10 +87,16 @@ export function UnifiedAssetsPanel({ className }: { className?: string }) {
             value={q}
             onChange={(event) => setQ(event.target.value)}
             placeholder="搜索代码 / 名称（如 600519、沪深300、红利）"
+            aria-label="搜索资产代码或名称"
             className="pl-8"
           />
         </div>
-        <select value={adjust} onChange={(event) => setAdjust(event.target.value)} className="h-9 rounded-md border border-border bg-background px-2 text-xs">
+        <select
+          value={adjust}
+          onChange={(event) => setAdjust(event.target.value)}
+          aria-label="复权口径"
+          className="h-9 rounded-md border border-border bg-background px-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
           {ADJUST_OPTIONS.map((item) => (
             <option key={item.value} value={item.value}>
               {item.label}
@@ -103,9 +111,10 @@ export function UnifiedAssetsPanel({ className }: { className?: string }) {
           <button
             key={item.value || "all"}
             type="button"
+            aria-pressed={type === item.value}
             onClick={() => { setType(item.value); setLimit(60); }}
             className={cn(
-              "rounded-full border px-3 py-1 text-xs transition-colors",
+              "rounded-full border px-3 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
               type === item.value ? "border-foreground bg-foreground text-background" : "border-border text-muted-foreground hover:bg-muted",
             )}
           >
@@ -136,14 +145,25 @@ export function UnifiedAssetsPanel({ className }: { className?: string }) {
             </thead>
             <tbody>
               {loading ? (
-                <tr>
-                  <td colSpan={8} className="px-3 py-10 text-center text-xs text-muted-foreground">
-                    <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> 加载中…</span>
-                  </td>
-                </tr>
+                Array.from({ length: 6 }).map((_, rowIndex) => (
+                  <tr key={`sk-${rowIndex}`} className="border-b border-border/50">
+                    {Array.from({ length: 8 }).map((__, colIndex) => (
+                      <td key={colIndex} className="px-3 py-2.5">
+                        <Skeleton className={colIndex === 2 ? "h-4 w-32" : colIndex === 1 ? "h-4 w-14" : "h-4 w-16"} />
+                      </td>
+                    ))}
+                  </tr>
+                ))
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-3 py-10 text-center text-xs text-muted-foreground">没有匹配的资产</td>
+                  <td colSpan={8} className="px-3">
+                    <EmptyState
+                      compact
+                      icon={Search}
+                      title="没有匹配的资产"
+                      description="试试调整关键词或类型筛选。"
+                    />
+                  </td>
                 </tr>
               ) : (
                 rows.map((row) => (
@@ -159,7 +179,7 @@ export function UnifiedAssetsPanel({ className }: { className?: string }) {
                     </td>
                     <td className="px-3 py-2 text-xs">
                       {row.last_date ? (
-                        <span className="text-up">可取数</span>
+                        <span className="text-success">可取数</span>
                       ) : row.type === "stock" ? (
                         <span className="text-warning">待回填</span>
                       ) : (
@@ -176,7 +196,11 @@ export function UnifiedAssetsPanel({ className }: { className?: string }) {
 
       {rows.length < total ? (
         <div className="mt-3 text-center">
-          <button type="button" onClick={() => setLimit((value) => value + 100)} className="rounded-md border border-border px-4 py-1.5 text-xs text-muted-foreground hover:bg-muted">
+          <button
+            type="button"
+            onClick={() => setLimit((value) => value + 100)}
+            className="rounded-md border border-border px-4 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          >
             显示更多（{rows.length}/{total}）
           </button>
         </div>

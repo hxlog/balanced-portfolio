@@ -33,7 +33,8 @@ import { BacktestProgressDialog } from "@/components/BacktestProgressDialog";
 import { CreateAssetDialog } from "@/components/CreateAssetDialog";
 import { ChangeDiffDialog, type AssetDiff, type CoverageNotice, type DiffRow } from "@/components/ChangeDiffDialog";
 import { BasketBuilder } from "./BasketBuilder";
-import { ModeSwitch } from "./ModeSwitch";
+import { BuilderFormSkeleton, BuilderPageSkeleton } from "./BuilderSkeleton";
+import { PageModeHeader } from "./PageModeHeader";
 
 const QUADRANT_ORDER: Quadrant[] = ["overheat", "stagflation", "recovery", "recession"];
 const QUADRANT_COLOR: Record<Quadrant, string> = {
@@ -119,7 +120,7 @@ export default function BuilderClient({
   initialAssets?: Asset[];
 }) {
   return (
-    <Suspense fallback={<div className="p-12 text-center text-muted-foreground">加载中...</div>}>
+    <Suspense fallback={<BuilderPageSkeleton />}>
       <BuilderModeGate initialAssets={initialAssets} />
     </Suspense>
   );
@@ -538,8 +539,8 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
   if (!isWhitelisted) {
     return (
       <div className="p-6">
-        <div className="mb-8 flex justify-center">
-          <ModeSwitch mode="quadrant" />
+        <div className="mx-auto mb-8 w-full max-w-5xl">
+          <PageModeHeader mode="quadrant" basePath="/builder" />
         </div>
         <div className="max-w-md mx-auto p-12 text-center space-y-4">
           <Lock className="w-10 h-10 mx-auto text-muted-foreground" />
@@ -554,15 +555,28 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
   }
 
   if (loadingEdit) {
-    return <div className="p-12 text-center text-muted-foreground">正在加载组合配置...</div>;
+    // 局部表单骨架替代整页「正在加载组合配置...」，保持标题/步骤条壳可见。
+    return (
+      <div className="flex-1 bg-bg-subtle/30 pb-20 sm:pb-24">
+        <div className="border-b border-border bg-background px-4 py-3 sm:px-6 md:py-6">
+          <div className="mx-auto max-w-5xl">
+            <PageModeHeader mode="quadrant" basePath="/builder" />
+            <h1 className="mb-2 mt-5 text-center text-2xl font-semibold">
+              {isEditMode ? "编辑投资组合" : isCopyMode ? "复制投资组合" : "新增投资组合"}
+            </h1>
+          </div>
+        </div>
+        <BuilderFormSkeleton />
+      </div>
+    );
   }
 
   return (
     <div className="flex-1 bg-bg-subtle/30 pb-20 sm:pb-24">
       <div className="bg-background border-b border-border py-3 md:py-6 lg:py-8 xl:py-10 px-4 sm:px-6 top-14 sm:top-16 z-40">
         <div className="max-w-5xl mx-auto">
-          <div className="mb-5 flex justify-center">
-            <ModeSwitch mode="quadrant" />
+          <div className="mb-5">
+            <PageModeHeader mode="quadrant" basePath="/builder" />
           </div>
           <h1 className="text-2xl font-semibold mb-8 text-center">
             {isEditMode ? "编辑投资组合" : isCopyMode ? "复制投资组合" : "新增投资组合"}

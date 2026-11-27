@@ -71,6 +71,7 @@ export function BasketAssets({
   onIngest,
   ingestingKey,
   canManageAssets,
+  readOnly = false,
 }: {
   items: BasketItem[];
   onRemove: (key: string) => void;
@@ -80,6 +81,8 @@ export function BasketAssets({
   onIngest: (item: BasketItem) => void;
   ingestingKey: string | null;
   canManageAssets: boolean;
+  /** 示例篮子只读：不允许增删成分/切换复权口径，但仍可查看与运行只读计算。 */
+  readOnly?: boolean;
 }) {
   return (
     <Card>
@@ -91,11 +94,24 @@ export function BasketAssets({
           </CardDescription>
         </div>
         <div className="flex w-full gap-2 sm:w-auto">
-          <Button variant="outline" size="sm" className="flex-1 sm:flex-none" onClick={onOpenPool}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="flex-1 sm:flex-none"
+            onClick={onOpenPool}
+            disabled={readOnly}
+            title={readOnly ? "示例篮子只读，复制后即可编辑" : undefined}
+          >
             <Plus className="mr-1 h-4 w-4" />
             资产池
           </Button>
-          <Button size="sm" className="flex-1 sm:flex-none" onClick={onOpenStock}>
+          <Button
+            size="sm"
+            className="flex-1 sm:flex-none"
+            onClick={onOpenStock}
+            disabled={readOnly}
+            title={readOnly ? "示例篮子只读，复制后即可编辑" : undefined}
+          >
             <Search className="mr-1 h-4 w-4" />
             搜索股票
           </Button>
@@ -114,10 +130,15 @@ export function BasketAssets({
               </p>
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={onOpenPool}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onOpenPool}
+                disabled={readOnly}
+              >
                 资产池
               </Button>
-              <Button size="sm" onClick={onOpenStock}>
+              <Button size="sm" onClick={onOpenStock} disabled={readOnly}>
                 <Search className="mr-1 h-4 w-4" />
                 搜索股票
               </Button>
@@ -184,9 +205,10 @@ export function BasketAssets({
                         type="button"
                         onClick={() => onAdjustChange(item.key, option.value)}
                         aria-pressed={item.adjustView === option.value}
+                        disabled={readOnly}
                         title={`${option.label}（仅展示）`}
                         className={cn(
-                          "px-1.5 py-1 text-[10px] font-medium uppercase tracking-wide transition-colors",
+                          "px-1.5 py-1 text-[10px] font-medium uppercase tracking-wide transition-colors disabled:cursor-not-allowed disabled:opacity-50",
                           item.adjustView === option.value
                             ? "bg-background text-foreground shadow-sm"
                             : "text-muted-foreground hover:text-foreground",
@@ -218,7 +240,9 @@ export function BasketAssets({
                     type="button"
                     onClick={() => onRemove(item.key)}
                     aria-label={`移除 ${item.name}`}
-                    className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    disabled={readOnly}
+                    title={readOnly ? "示例篮子只读" : undefined}
+                    className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <X className="h-4 w-4" />
                   </button>
@@ -239,12 +263,19 @@ export function AssetPoolDialog({
   assets,
   selectedKeys,
   onPick,
+  loading = false,
+  error = null,
+  onRetry,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   assets: Asset[];
   selectedKeys: ReadonlySet<string>;
   onPick: (asset: Asset) => void;
+  /** 资产池（/api/assets）加载中 / 失败：在弹窗内给局部状态，避免误以为「资产池为空」。 */
+  loading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
 }) {
   const [q, setQ] = useState("");
   const [category, setCategory] = useState("all");
@@ -324,7 +355,28 @@ export function AssetPoolDialog({
         </div>
 
         <div className="min-h-0 flex-1 space-y-1 overflow-auto pr-1">
-          {filtered.map((asset) => {
+          {loading ? (
+            <div className="space-y-2 px-1 py-2" aria-busy="true">
+              {Array.from({ length: 6 }).map((_, index) => (
+                <div key={index} className="flex items-center gap-3 px-2 py-2">
+                  <div className="h-4 w-4 animate-pulse rounded bg-muted" />
+                  <div className="h-4 flex-1 animate-pulse rounded bg-muted" />
+                  <div className="hidden h-3 w-40 animate-pulse rounded bg-muted sm:block" />
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {!loading && error ? (
+            <div className="mx-1 flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+              <span className="min-w-0 break-words">资产池加载失败：{error}</span>
+              {onRetry ? (
+                <Button variant="outline" size="sm" className="h-7 text-xs" onClick={onRetry}>
+                  重试
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+          {!loading && !error ? filtered.map((asset) => {
             const key = basketKey(asset.symbol, asset.source);
             const picked = selectedKeys.has(key);
             const tone = rangeTone({
@@ -384,10 +436,12 @@ export function AssetPoolDialog({
                 </span>
               </button>
             );
-          })}
-          {filtered.length === 0 && (
+          }) : null}
+          {!loading && !error && filtered.length === 0 && (
             <p className="px-3 py-8 text-center text-sm text-muted-foreground">
-              没有匹配的资产
+              {assets.length === 0
+                ? "资产池暂无资产（可在 /admin/assets 维护或搜索个股接入）"
+                : "没有匹配的资产"}
             </p>
           )}
         </div>

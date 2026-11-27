@@ -1,5 +1,24 @@
-import type { HTMLAttributes, ReactNode } from "react";
+"use client";
+
+import {
+  useEffect,
+  useRef,
+  useState,
+  type HTMLAttributes,
+  type ReactNode,
+} from "react";
+import { HelpCircle } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import {
+  percentileLabel,
+  percentileTone,
+  sumTrackerFundScale,
+} from "@/lib/valuation-detail-format";
 import type {
   DetailTrackerFund,
   PercentileSummary,
@@ -37,24 +56,10 @@ export function Surface({
 }
 
 /**
- * 分位语气色（0~100 口径）：<30 便宜=success，30~70 中性=primary，>70 贵=destructive。
- * 与涨跌方向色 text-up/text-down 解耦。
+ * 分位语气色 / 标签：阈值与详情页共用 `@/lib/valuation-detail-format` 的唯一实现，
+ * 这里只 re-export（历史调用点较多，保留导出名），禁止再复制第二套阈值。
  */
-export function percentileTone(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return "text-muted-foreground";
-  if (value < 30) return "text-success";
-  if (value > 70) return "text-destructive";
-  return "text-primary";
-}
-
-export function percentileLabel(
-  value: number | null | undefined,
-): "低估" | "中性" | "高估" | null {
-  if (value == null || !Number.isFinite(value)) return null;
-  if (value < 30) return "低估";
-  if (value > 70) return "高估";
-  return "中性";
-}
+export { percentileLabel, percentileTone };
 
 const LEVEL_TONE: Record<ValuationLevel, string> = {
   低估: "border-success/25 bg-success/10 text-success",
@@ -274,13 +279,172 @@ export function ChartCard({
   );
 }
 
-/** 跟踪基金规模合计（元）；无有效规模时返回 null。 */
+/**
+ * 指标说明 `?`：hover/键盘 focus 显示公式/口径 tooltip。
+ * 页面内私有原语（不改 web/components/ui 共享组件）。
+ */
+export function InfoTip({
+  label,
+  children,
+  side = "top",
+  className,
+}: {
+  /** 屏幕阅读器用的说明对象，如「估值分」。 */
+  label: string;
+  children: ReactNode;
+  side?: "top" | "right" | "bottom" | "left";
+  className?: string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          aria-label={label + " 说明"}
+          className={cn(
+            "inline-flex size-4 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            className,
+          )}
+        >
+          <HelpCircle className="size-3.5" aria-hidden="true" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent
+        side={side}
+        sideOffset={6}
+        className="max-w-[300px] bg-popover text-[11px] leading-relaxed text-popover-foreground [&>svg]:fill-popover [&>svg]:bg-popover"
+      >
+        {children}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** 图表局部 skeleton（只占图表区域，不整页 loading）。 */
+export function ChartSkeleton({
+  height = 240,
+  label = "图表加载中",
+  className,
+}: {
+  height?: number;
+  label?: string;
+  className?: string;
+}) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className={cn("relative overflow-hidden rounded-lg", className)}
+      style={{ height }}
+    >
+      <span className="sr-only">{label}</span>
+      <div className="absolute inset-0 animate-pulse rounded-lg border border-border bg-muted/30" />
+    </div>
+  );
+}
+
+/** 数值/统计条局部 skeleton。 */
+export function ValueSkeleton({
+  lines = 1,
+  className,
+}: {
+  lines?: number;
+  className?: string;
+}) {
+  return (
+    <div role="status" aria-live="polite" className={cn("space-y-1.5", className)}>
+      <span className="sr-only">数值加载中</span>
+      {Array.from({ length: lines }).map((_, index) => (
+        <div
+          key={index}
+          className={cn(
+            "h-3 animate-pulse rounded bg-muted",
+            index === 0 ? "w-32" : "w-20",
+          )}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** 统一空态卡（成分/行业/基金等「数据建设中」场景共用，禁止显示空表格骨架）。 */
+export function DataEmptyState({
+  title,
+  description,
+  icon,
+  className,
+}: {
+  title: string;
+  description?: string;
+  icon?: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex flex-col items-center justify-center rounded-xl border border-dashed border-border px-6 py-10 text-center",
+        className,
+      )}
+    >
+      {icon ? <div className="mb-2 text-muted-foreground">{icon}</div> : null}
+      <p className="text-sm font-medium">{title}</p>
+      {description ? (
+        <p className="mt-1 max-w-md text-xs leading-relaxed text-muted-foreground">
+          {description}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * 150ms 交叉淡入容器：切换 key 时先把内容淡出到 0.35，再在下一帧淡入，
+ * 让「指标/指数本地切换」有明确的过渡反馈（不发起请求、不整页闪）。
+ */
+export function CrossFade({
+  fadeKey,
+  children,
+  className,
+  durationMs = 150,
+}: {
+  fadeKey: string;
+  children: ReactNode;
+  className?: string;
+  durationMs?: number;
+}) {
+  const [opacity, setOpacity] = useState(1);
+  const frameRef = useRef<number | null>(null);
+  const previousKey = useRef(fadeKey);
+
+  useEffect(() => {
+    if (previousKey.current === fadeKey) return;
+    previousKey.current = fadeKey;
+    setOpacity(0);
+    frameRef.current = window.requestAnimationFrame(() => {
+      frameRef.current = window.requestAnimationFrame(() => setOpacity(1));
+    });
+    return () => {
+      if (frameRef.current != null) window.cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    };
+  }, [fadeKey]);
+
+  return (
+    <div
+      className={cn("transition-opacity ease-out", className)}
+      style={{ opacity, transitionDuration: durationMs + "ms" }}
+    >
+      {children}
+    </div>
+  );
+}
+
+/**
+ * 跟踪基金规模合计（元）；无有效规模时返回 null。
+ *
+ * 口径与明细表 / Top10 条形图一致：`fund_scale ?? aum`（见 lib 的 trackerFundScale），
+ * 不再只累加 aum —— 否则「规模合计」与逐行规模相加对不上。
+ */
 export function sumAum(funds: readonly DetailTrackerFund[]): number | null {
-  let total: number | null = null;
-  for (const fund of funds) {
-    if (fund.aum != null && Number.isFinite(fund.aum)) {
-      total = (total ?? 0) + fund.aum;
-    }
-  }
-  return total;
+  return sumTrackerFundScale(funds);
 }

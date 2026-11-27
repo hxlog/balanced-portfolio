@@ -202,6 +202,10 @@ export interface BasketRecord {
   latest_result: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
+  /** ddl 78 起：示例篮子（匿名可读、登录可复制、仅管理员可编辑）。旧后端缺省。 */
+  is_demo?: boolean | null;
+  /** ddl 78 起：示例展示顺序（升序）。旧后端缺省。 */
+  display_order?: number | null;
 }
 
 export interface BasketBacktestResult {

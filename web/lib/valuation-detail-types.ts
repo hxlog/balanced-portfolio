@@ -58,6 +58,11 @@ export interface DetailTrackerFund {
   info_ratio_1y: number | null;
   risk_ret_3y_ann: number | null;
   risk_ret_5y_ann: number | null;
+  /**
+   * 该指数跟踪基金风险指标（TE/波动/回撤）的更新批次时间；后端字段缺失时为 null。
+   * 注意：后端不返回「单只基金风险指标净值截止日」，故不设 risk_as_of 死字段。
+   */
+  risk_updated_at: string | null;
 }
 
 /** 分位窗口统计（详情 `percentiles[]` 与 history `stats` 共用）。 */
@@ -120,6 +125,18 @@ export interface ValuationDetailData {
   percentiles: DetailPercentile[];
   /** 区间收益风险（1y/3y/5y/all），后端从行情计算。 */
   risk: Partial<Record<"1y" | "3y" | "5y" | "all", DetailRiskStats>>;
+  /** 跟踪基金快照的截至交易日（max(trade_date)）；无基金时为 null。 */
+  tracker_funds_as_of: string | null;
+  /** 跟踪基金 / 基金风险指标的计算更新时间（后端 updated_at）；缺失为 null。 */
+  tracker_funds_updated_at: string | null;
+  /** 指数点位历史（双轴主图用，bfq、原币）；后端未提供时为空数组。 */
+  price_series: ValuationPricePoint[];
+}
+
+/** 指数点位历史点（原币、不复权）。 */
+export interface ValuationPricePoint {
+  trade_date: string;
+  close: number;
 }
 
 /** 单个区间的收益风险统计（百分数点口径）。 */

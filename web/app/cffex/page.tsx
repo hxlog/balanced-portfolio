@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
 import { CffexClient } from "./CffexClient";
+import CffexLoading from "./loading";
 
 export const metadata: Metadata = {
   title: "期货看板 — 中金所股指期货",
@@ -16,14 +17,9 @@ export const metadata: Metadata = {
 };
 
 export default function CffexPage() {
+  // 页面壳 + 区块骨架流式输出；客户端数据到达后原地替换（尺寸对齐，无 layout shift）。
   return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen bg-background flex items-center justify-center">
-          <div className="text-muted-foreground text-sm">加载中...</div>
-        </div>
-      }
-    >
+    <Suspense fallback={<CffexLoading />}>
       <CffexClient />
     </Suspense>
   );

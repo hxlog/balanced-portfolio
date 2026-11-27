@@ -186,9 +186,28 @@ export async function saveBasket(input: BasketSaveInput): Promise<{ basket_id: n
   return unwrapData<{ basket_id: number }>(body);
 }
 
-export async function listBaskets<T = unknown>(): Promise<T[]> {
-  const body = await requestJson<unknown>("/api/baskets");
+/**
+ * 列表：后端支持 ?scope=demo|mine（旧后端忽略 scope）。
+ * 契约（ddl 78）：匿名仅示例；登录 = 示例 + 自己的；admin = 全部。
+ */
+export async function listBaskets<T = unknown>(
+  scope?: "demo" | "mine",
+): Promise<T[]> {
+  const body = await requestJson<unknown>(
+    "/api/baskets" + (scope ? `?scope=${scope}` : ""),
+  );
   return unwrapData<T[]>(body);
+}
+
+/** 管理员服务端重算示例篮子的 latest_result（同步接口，仅 require_super_admin 可调）。 */
+export async function recomputeBasket(
+  basketId: number,
+): Promise<{ basket_id: number; latest_result?: Record<string, unknown> | null }> {
+  const body = await requestJson<unknown>("/api/baskets/" + basketId + "/recompute", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  return unwrapData<{ basket_id: number; latest_result?: Record<string, unknown> | null }>(body);
 }
 
 export async function fetchBasket<T = unknown>(basketId: number): Promise<T> {

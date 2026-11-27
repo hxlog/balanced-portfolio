@@ -16,6 +16,9 @@ import {
 import { Trash2, ShieldCheck, Loader2 } from "lucide-react";
 import { api, AdminUser } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { TableSkeleton } from "@/components/ui/loading";
+import { Skeleton, SkeletonText } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/ui/empty-state";
 
 export default function AdminUsersPage() {
   const router = useRouter();
@@ -162,7 +165,19 @@ export default function AdminUsersPage() {
   };
 
   if (!ready || !isSuperAdmin) {
-    return <div className="p-12 text-center text-muted-foreground">加载中...</div>;
+    // 未登录/非超管时 useEffect 会重定向到 /dashboard；此处给出与页面同尺寸的骨架，避免文本 loading 闪烁。
+    return (
+      <div className="mx-auto w-full max-w-[1600px] space-y-6 p-6" aria-busy="true">
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-32" />
+          <SkeletonText lines={1} className="max-w-md" />
+        </div>
+        <Skeleton className="h-40 rounded-xl" />
+        <div className="overflow-hidden rounded-xl border border-border bg-card">
+          <TableSkeleton rows={6} columns={7} firstColWidth="w-40" />
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -180,7 +195,7 @@ export default function AdminUsersPage() {
         </div>
       )}
       {saveOk && (
-        <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-sm p-4 rounded-lg">
+        <div role="status" className="rounded-lg border border-success/30 bg-success/10 p-4 text-sm text-success">
           {saveOk}
         </div>
       )}
@@ -231,7 +246,7 @@ export default function AdminUsersPage() {
         </CardHeader>
         <CardContent className="overflow-x-auto pt-0 sm:pt-0">
           {loading ? (
-            <p className="text-sm text-muted-foreground">加载中...</p>
+            <TableSkeleton rows={6} columns={7} firstColWidth="w-40" />
           ) : (
             <Table className="min-w-[900px]">
               <TableHeader>
@@ -246,6 +261,17 @@ export default function AdminUsersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
+                {users.length === 0 && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={7} className="py-2">
+                      <EmptyState
+                        compact
+                        title="暂无白名单用户"
+                        description="使用上方「添加用户」创建第一个账号。"
+                      />
+                    </TableCell>
+                  </TableRow>
+                )}
                 {users.map((u) => (
                   <TableRow key={u.email}>
                     <TableCell className="pl-0 font-medium whitespace-nowrap">{u.email}</TableCell>

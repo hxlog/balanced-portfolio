@@ -2,6 +2,8 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Reveal } from "@/components/ui/reveal";
 import { HomeCryptoSection } from "@/components/HomeCryptoSection";
 import {
   ArrowRight,
@@ -89,7 +91,7 @@ export default async function Home() {
       </section>
 
       {/* Features */}
-      <section className="py-24 px-6 bg-bg-subtle/50">
+      <Reveal as="section" delay={0} className="py-24 px-6 bg-bg-subtle/50">
         <div className="container mx-auto max-w-[1600px]">
           <div className="grid md:grid-cols-3 gap-12">
             <div className="space-y-4">
@@ -122,10 +124,10 @@ export default async function Home() {
             </div>
           </div>
         </div>
-      </section>
+      </Reveal>
 
       {/* 新功能 */}
-      <section className="py-20 px-6">
+      <Reveal as="section" delay={50} className="py-20 px-6">
         <div className="container mx-auto max-w-[1600px]">
           <div className="mb-10 flex flex-wrap items-end justify-between gap-3">
             <div>
@@ -169,10 +171,10 @@ export default async function Home() {
             </Link>
           </div>
         </div>
-      </section>
+      </Reveal>
 
       {/* Methodology preview & Demo card */}
-      <section id="methodology" className="py-32 px-6">
+      <Reveal as="section" id="methodology" delay={60} className="py-32 px-6">
         <div className="container mx-auto max-w-[1600px]">
           <div className="grid lg:grid-cols-2 gap-16 items-center">
             <div className="space-y-8">
@@ -263,10 +265,10 @@ export default async function Home() {
             </div>
           </div>
         </div>
-      </section>
+      </Reveal>
 
       {/* CFFEX Futures Dashboard */}
-      <section className="py-24 px-6 bg-bg-subtle/50 border-t border-border">
+      <Reveal as="section" delay={70} className="py-24 px-6 bg-bg-subtle/50 border-t border-border">
         <div className="container mx-auto max-w-[1600px]">
           <div className="grid lg:grid-cols-2 gap-16 items-center">
             <div className="space-y-8">
@@ -413,20 +415,42 @@ export default async function Home() {
                 ))}
               </div>
 
-              {/* <Button asChild className="w-full" variant="secondary">
-                <Link href="/cffex">打开看板 &rarr;</Link>
-              </Button> */}
             </div>
           </div>
         </div>
-      </section>
+      </Reveal>
 
       {/* Crypto Dashboard (PPR 动态洞 — connection() 退静态预渲染, 共享 cacheTag "crypto") */}
       <Suspense
         fallback={
           <section className="py-24 px-6 border-t border-border">
             <div className="container mx-auto max-w-[1600px]">
-              <div className="border border-border rounded-xl bg-card p-8 h-48 animate-pulse" />
+              <div className="space-y-8 rounded-xl border border-border bg-card p-8">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                  <div className="space-y-2">
+                    <Skeleton className="h-7 w-40" />
+                    <Skeleton className="h-3.5 w-52" />
+                  </div>
+                  <Skeleton className="h-5 w-64 rounded-full" />
+                </div>
+                <div className="grid grid-cols-3 gap-4 md:grid-cols-6">
+                  {Array.from({ length: 6 }).map((_, index) => (
+                    <div key={index} className="space-y-2">
+                      <Skeleton className="h-3 w-16" />
+                      <Skeleton className="h-5 w-20" />
+                    </div>
+                  ))}
+                </div>
+                <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+                  {Array.from({ length: 4 }).map((_, index) => (
+                    <div key={index} className="space-y-2">
+                      <Skeleton className="h-3 w-20" />
+                      <Skeleton className="h-5 w-16" />
+                    </div>
+                  ))}
+                </div>
+                <Skeleton className="h-11 w-full" />
+              </div>
             </div>
           </section>
         }
@@ -435,7 +459,7 @@ export default async function Home() {
       </Suspense>
 
       {/* OTC Derivatives Pricing */}
-      <section className="py-24 px-6 border-t border-border">
+      <Reveal as="section" delay={80} className="py-24 px-6 border-t border-border">
         <div className="container mx-auto max-w-[1600px]">
           <div className="grid lg:grid-cols-2 gap-16 items-center">
             <div className="space-y-8">
@@ -534,10 +558,10 @@ export default async function Home() {
             </div>
           </div>
         </div>
-      </section>
+      </Reveal>
 
       {/* Target Audience */}
-      <section className="py-24 px-6 border-t border-border">
+      <Reveal as="section" delay={90} className="py-24 px-6 border-t border-border">
         <div className="container mx-auto max-w-4xl text-center">
           <h2 className="text-2xl font-medium mb-12">为专业投资者设计</h2>
           <div className="flex flex-col sm:flex-row justify-center gap-12 text-muted-foreground">
@@ -555,7 +579,7 @@ export default async function Home() {
             </div>
           </div>
         </div>
-      </section>
+      </Reveal>
     </div>
   );
 }

@@ -13,7 +13,10 @@ export default function AdminDataHealthPage() {
   return (
     <main className="mx-auto w-full max-w-[1600px] px-5 py-6">
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Link href="/admin/assets" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+        <Link
+          href="/admin/assets"
+          className="inline-flex items-center gap-1 rounded-sm text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
           <ArrowLeft className="size-4" /> 返回资产管理
         </Link>
         <h1 className="text-2xl font-semibold tracking-tight">数据健康</h1>

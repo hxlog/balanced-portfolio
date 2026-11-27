@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
 import { OtcPricingClient } from "./OtcPricingClient";
+import OtcDerivativesPricingLoading from "./loading";
 
 export const metadata: Metadata = {
   title: "场外衍生品定价 — 雪球/凤凰/气囊/障碍",
@@ -16,14 +17,9 @@ export const metadata: Metadata = {
 };
 
 export default function OtcDerivativesPricingPage() {
+  // 路由骨架与真实布局同尺寸：客户端 hydration / 数据到达时替换不产生 layout shift。
   return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen bg-background flex items-center justify-center">
-          <div className="text-muted-foreground text-sm">加载中...</div>
-        </div>
-      }
-    >
+    <Suspense fallback={<OtcDerivativesPricingLoading />}>
       <OtcPricingClient />
     </Suspense>
   );

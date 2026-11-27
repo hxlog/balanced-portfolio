@@ -411,7 +411,9 @@ export interface PortfolioInfo {
   slippage_rate?: number;
   stamp_duty_rate?: number;
   result_version?: number;
+  /** 仅单组合详情（/api/portfolios/{id}）与回测结果体返回；列表 /api/portfolios 不返回。 */
   result_updated_at?: string | null;
+  /** 同上：列表接口不返回，前端展示「最近更新」必须可选降级。 */
   data_as_of_date?: string | null;
   /** 回测参数与最近一次结果快照不一致(后端 params_stale), 提示需重算 */
   params_stale?: boolean;

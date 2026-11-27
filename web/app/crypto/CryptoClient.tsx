@@ -1,13 +1,19 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Activity, TrendingUp } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ChartSkeleton, TableSkeleton } from "@/components/ui/loading";
+import { EmptyState } from "@/components/ui/empty-state";
+import { InlineErrorState } from "@/components/ui/error-state";
+import { REVEAL_CLASS, revealStyle } from "@/components/ui/reveal";
 import { EChart } from "@/components/EChart";
 import { getChartTheme, withAlpha } from "@/lib/chart-theme";
+import { fmtCorr, fmtCryptoAsOf, fmtPrice } from "@/lib/crypto-format";
 import { cn } from "@/lib/utils";
 
 import type {
@@ -45,50 +51,18 @@ const LAG_OPTIONS = [
 const CHART1_DEFAULT_ACTIVE = new Set(["COMEX黄金", "纳斯达克100", "BTC 价格 (USD)"]);
 
 // ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function fmtPrice(v: number | null): string {
-  if (v == null) return "--";
-  if (v >= 1000) return `$${(v / 1000).toFixed(1)}k`;
-  return `$${v.toFixed(2)}`;
-}
-
-function fmtCorr(v: number | null): string {
-  if (v == null) return "--";
-  return v.toFixed(4);
-}
-
-function fmtTz(iso: string, tz: string, suffix: string): string {
-  try {
-    return (
-      new Intl.DateTimeFormat("zh-CN", {
-        timeZone: tz,
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      }).format(new Date(iso)) + suffix
-    );
-  } catch {
-    return new Date(iso).toLocaleString("zh-CN", { timeZone: tz }) + suffix;
-  }
-}
-
-// ---------------------------------------------------------------------------
 // CryptoClient
 // ---------------------------------------------------------------------------
 
-export function CryptoClient({ data: initialData }: { data: CorrelationResponse | null }) {
+export function CryptoClient({ data }: { data: CorrelationResponse | null }) {
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
+  const router = useRouter();
 
   // SSR 注入: page.tsx 经 getCachedCryptoCorrelation() (cacheTag "crypto") 预取后传入;
   // 后端读预计算表 (bp_crypto_corr_daily 等), 请求路径永不计算。无客户端 fetch。
-  const [data] = useState<CorrelationResponse | null>(initialData);
-  const error = !data ? "获取数据失败" : null;
+  // 直接用 props 而非 useState 快照: router.refresh() 重取后可原地更新（错误重试场景）。
+  const error = !data ? "预计算相关性数据暂不可用" : null;
   const [windowMonths, setWindowMonths] = useState("3M");
   const [corrMethod, setCorrMethod] = useState("pearson");
   const [lagHorizon, setLagHorizon] = useState("3M");
@@ -342,66 +316,60 @@ export function CryptoClient({ data: initialData }: { data: CorrelationResponse 
   const snap = data?.snapshot;
   const meta = data?.meta;
   // 标准化统一时间 (最近共同 NYSE 交易日 16:00 ET), 双 TZ 带时分;
-  // 优先用后端预算好的 as_of_et / as_of_cn (确定性), 缺失则用 Intl 从 as_of (tz-aware ISO) 格式化。
-  const asOfEt = meta?.as_of_et ?? (meta?.as_of ? fmtTz(meta.as_of, "America/New_York", " ET") : null);
-  const asOfCn = meta?.as_of_cn ?? (meta?.as_of ? fmtTz(meta.as_of, "Asia/Shanghai", " 北京时间") : null);
+  // 优先用后端预算好的 as_of_et / as_of_cn (确定性), 缺失则用 Intl 从 as_of 兜底（lib/crypto-format 与首页共用）。
+  const { et: asOfEt, cn: asOfCn } = fmtCryptoAsOf(meta);
   const methodLabel = METHODS.find((m) => m.value === corrMethod)?.label ?? corrMethod;
   const windowLabel = WINDOWS.find((w) => w.value === windowMonths)?.label ?? windowMonths;
 
   return (
-    <div className="min-h-screen bg-background text-foreground pb-24">
-      {/* Page Header */}
-      <div className="border-b border-border/40 bg-card/30 backdrop-blur-sm">
-        <div className="container mx-auto max-w-[1600px] px-4 sm:px-6 py-6 sm:py-8">
-          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-            <div>
-              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mb-2">加密货币看板</h1>
-              <p className="text-muted-foreground text-sm">
-                比特币相关性分析 — 对数日收益率滚动相关系数与美元指数远期相关性
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              {/* 两个时间戳拼起来比 375px 的行宽还长, 故本枚刻意允许折行:
-                  Badge 基类是 whitespace-nowrap(避免 CJK 标签在窄列里被逐字拆断),
-                  这里空间不够且无第二列可让, 折行才是正确形态。 */}
-              {asOfEt && asOfCn && <Badge variant="outline" className="text-muted-foreground text-xs whitespace-normal">数据截至: {asOfEt} / {asOfCn}</Badge>}
-              {meta?.is_synced === false && meta?.effective_td && (
-                <Badge variant="outline" className="text-amber-700/80 dark:text-amber-400/80 text-xs border-amber-500/30">
-                  数据待齐 · 展示至 {meta.effective_td}
-                </Badge>
-              )}
-            </div>
+    <div className="space-y-6">
+      {/* 工具条：数据截至 + 窗口/方法切换。
+          H1 与页面说明统一由 app/crypto/page.tsx 提供，本组件不再渲染第二枚 H1。 */}
+      <div className="flex flex-col gap-3 rounded-xl border border-border/60 bg-card/40 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* 两个时间戳拼起来比 375px 的行宽还长, 故本枚刻意允许折行:
+              Badge 基类是 whitespace-nowrap(避免 CJK 标签在窄列里被逐字拆断)。 */}
+          {asOfEt && asOfCn && (
+            <Badge variant="outline" className="whitespace-normal text-xs font-normal text-muted-foreground">
+              数据截至: {asOfEt} / {asOfCn}
+            </Badge>
+          )}
+          {meta?.is_synced === false && meta?.effective_td && (
+            <Badge variant="outline" className="border-warning/40 bg-warning/10 text-xs font-normal text-warning">
+              数据待齐 · 展示至 {meta.effective_td}
+            </Badge>
+          )}
+        </div>
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground whitespace-nowrap">滚动窗口:</span>
+            <Tabs value={windowMonths} onValueChange={setWindowMonths}>
+              <TabsList className="h-8">
+                {WINDOWS.map((w) => (<TabsTrigger key={w.value} value={w.value} className="text-xs px-3 h-7">{w.label}</TabsTrigger>))}
+              </TabsList>
+            </Tabs>
           </div>
-          <div className="flex flex-col sm:flex-row gap-4 mt-4">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground whitespace-nowrap">滚动窗口:</span>
-              <Tabs value={windowMonths} onValueChange={setWindowMonths}>
-                <TabsList className="h-8">
-                  {WINDOWS.map((w) => (<TabsTrigger key={w.value} value={w.value} className="text-xs px-3 h-7">{w.label}</TabsTrigger>))}
-                </TabsList>
-              </Tabs>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground whitespace-nowrap">相关方法:</span>
-              <Tabs value={corrMethod} onValueChange={setCorrMethod}>
-                <TabsList className="h-8">
-                  {METHODS.map((m) => (<TabsTrigger key={m.value} value={m.value} className="text-xs px-3 h-7">{m.label}</TabsTrigger>))}
-                </TabsList>
-              </Tabs>
-            </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground whitespace-nowrap">相关方法:</span>
+            <Tabs value={corrMethod} onValueChange={setCorrMethod}>
+              <TabsList className="h-8">
+                {METHODS.map((m) => (<TabsTrigger key={m.value} value={m.value} className="text-xs px-3 h-7">{m.label}</TabsTrigger>))}
+              </TabsList>
+            </Tabs>
           </div>
         </div>
       </div>
 
-      <div className="container mx-auto max-w-[1600px] px-4 sm:px-6 py-6 sm:py-8 space-y-8">
-        {error && (
-          <div className="bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-3 text-sm text-destructive">
-            数据加载异常: {error}
-          </div>
-        )}
+      {error && (
+        <InlineErrorState
+          title="数据加载失败"
+          message={`${error}。可以重试，若持续失败说明预计算表正在重算。`}
+          onRetry={() => router.refresh()}
+        />
+      )}
 
-        {/* Snapshot Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      {/* Snapshot Cards */}
+        <div className={cn("grid grid-cols-2 md:grid-cols-5 gap-4", REVEAL_CLASS)} style={revealStyle(0)}>
           {[
             { label: "BTC/USD", value: fmtPrice(snap?.btc ?? null) },
             { label: "DXY 美元指数", value: snap?.dxy?.toFixed(2) ?? "--" },
@@ -421,7 +389,7 @@ export function CryptoClient({ data: initialData }: { data: CorrelationResponse 
         </div>
 
         {/* Correlation Summary Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className={cn("grid grid-cols-2 md:grid-cols-4 gap-4", REVEAL_CLASS)} style={revealStyle(50)}>
           {currentRolling && Object.entries(currentRolling).map(([key, pair]) => (
             <Card key={key} className="bg-card/50 border-border/50 transition-all hover:bg-card/80">
               <CardContent className="p-4">
@@ -450,10 +418,16 @@ export function CryptoClient({ data: initialData }: { data: CorrelationResponse 
           <CardContent className="pt-4 pb-2 sm:pt-0">
             {data ? (
               <EChart option={chart1Option} style={{ height: 440, width: "100%" }} />
-            ) : (
-              <div className="flex items-center justify-center h-[440px] text-muted-foreground text-sm">
-                {error ? "数据加载失败" : "数据加载中..."}
+            ) : error ? (
+              <div className="flex h-[440px] items-center justify-center px-4">
+                <InlineErrorState
+                  title="相关性图表不可用"
+                  message={error}
+                  onRetry={() => router.refresh()}
+                />
               </div>
+            ) : (
+              <ChartSkeleton height={440} />
             )}
           </CardContent>
         </Card>
@@ -504,10 +478,14 @@ export function CryptoClient({ data: initialData }: { data: CorrelationResponse 
                   </tbody>
                 </table>
               </div>
+            ) : data ? (
+              <EmptyState
+                compact
+                title="暂无相关性数据"
+                description={`${windowLabel} · ${methodLabel} 窗口内没有可用的滚动相关系数。`}
+              />
             ) : (
-              <div className="flex h-24 items-center justify-center text-sm text-muted-foreground">
-                {error ? "数据加载失败" : "数据加载中..."}
-              </div>
+              <TableSkeleton rows={4} columns={5} firstColWidth="w-24" />
             )}
           </CardContent>
         </Card>
@@ -540,14 +518,19 @@ export function CryptoClient({ data: initialData }: { data: CorrelationResponse 
           <CardContent className="pt-4 pb-2 sm:pt-0">
             {data ? (
               <EChart option={chart2Option} style={{ height: 440, width: "100%" }} />
-            ) : (
-              <div className="flex items-center justify-center h-[440px] text-muted-foreground text-sm">
-                {error ? "数据加载失败" : "数据加载中..."}
+            ) : error ? (
+              <div className="flex h-[440px] items-center justify-center px-4">
+                <InlineErrorState
+                  title="远期走势图不可用"
+                  message={error}
+                  onRetry={() => router.refresh()}
+                />
               </div>
+            ) : (
+              <ChartSkeleton height={440} />
             )}
           </CardContent>
         </Card>
-      </div>
     </div>
   );
 }

@@ -26,7 +26,7 @@ export function BackToTop({ threshold = 400 }: { threshold?: number }) {
       onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
       aria-label="回到顶部"
       title="回到顶部"
-      className="fixed bottom-6 right-6 z-50 flex h-10 w-10 items-center justify-center rounded-full border border-border bg-background/80 backdrop-blur text-muted-foreground shadow-sm transition-all hover:bg-accent hover:text-foreground hover:scale-105"
+      className="fixed bottom-6 right-6 z-50 flex h-10 w-10 items-center justify-center rounded-full border border-border bg-background/80 backdrop-blur text-muted-foreground shadow-sm transition-all hover:bg-accent hover:text-foreground hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-reduce:transition-none motion-reduce:hover:scale-100"
     >
       <ArrowUp className="h-4 w-4" />
     </button>

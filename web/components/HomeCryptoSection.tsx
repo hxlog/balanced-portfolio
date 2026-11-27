@@ -4,7 +4,6 @@ import { ArrowRight } from "lucide-react";
 import { getCachedCryptoCorrelation } from "@/lib/cached-data";
 import type { CryptoCorrelationResponse } from "@/lib/api";
 import {
-  AMBER_BADGE_CLASS,
   CRYPTO_PAIR_ORDER,
   type CryptoPriceField,
   fmtAssetPrice,
@@ -110,7 +109,7 @@ export async function HomeCryptoSection() {
               <h2 className="text-2xl font-semibold tracking-tight">
                 加密货币看板
               </h2>
-              <p className="text-sm text-muted-foreground mt-1">数据加载中…</p>
+              <p className="text-sm text-muted-foreground mt-1">数据暂不可用，稍后自动恢复</p>
             </div>
             <Link
               href="/crypto"
@@ -155,9 +154,7 @@ export async function HomeCryptoSection() {
                 </span>
               )}
               {meta?.is_synced === false && meta?.effective_td && (
-                <span
-                  className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs ${AMBER_BADGE_CLASS}`}
-                >
+                <span className="inline-flex items-center rounded-full border border-warning/40 bg-warning/10 px-2.5 py-0.5 text-xs text-warning">
                   数据待齐 · 展示至 {meta.effective_td}
                 </span>
               )}

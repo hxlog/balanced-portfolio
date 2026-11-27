@@ -77,8 +77,8 @@ export function QuadrantGrid() {
 type CalloutType = "info" | "warning" | "tip";
 const CALLOUT_STYLE: Record<CalloutType, { bar: string; title: string }> = {
   info: { bar: "bg-primary", title: "说明" },
-  warning: { bar: "bg-amber-500", title: "注意" },
-  tip: { bar: "bg-emerald-500", title: "提示" },
+  warning: { bar: "bg-warning", title: "注意" },
+  tip: { bar: "bg-success", title: "提示" },
 };
 
 export function Callout({
@@ -125,7 +125,7 @@ export function DocsLayout({
 }) {
   return (
     <div className="mx-auto max-w-screen">
-      <div className="relative flex items-start gap-16 mx-auto px-4 sm:px-6 py-8 sm:py-12 max-w-6xl">
+      <div className="relative flex items-start gap-16 mx-auto px-4 sm:px-6 py-8 sm:py-12 max-w-6xl animate-in fade-in-0 duration-200 motion-reduce:animate-none">
         <div className="min-w-0 flex-1 mx-auto">{children}</div>
         {toc.length > 0 && <DocsToc items={toc} />}
       </div>

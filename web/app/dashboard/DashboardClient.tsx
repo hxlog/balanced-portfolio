@@ -1,11 +1,11 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
-import { motion, AnimatePresence } from "motion/react";
+import { motion } from "motion/react";
 import {
   Trash2,
   Pencil,
@@ -92,8 +92,10 @@ import { formatDateCN, formatRangeCN } from "@/lib/asset-range";
 import { annualColumns, annualLabel } from "@/lib/annual-columns";
 import { getChartTheme, withAlpha, type ChartTheme } from "@/lib/chart-theme";
 import { selectSortablePortfolios } from "@/lib/portfolio-order";
+import { formatPortfolioUpdatedDate } from "@/lib/portfolio-format";
 import { useQueryClient } from "@tanstack/react-query";
 import { fetchResult, invalidatePortfolio, qk, useAssets } from "@/lib/queries";
+import { DashboardContentSkeleton } from "./DashboardSkeleton";
 
 const ZERO_EPS = 0.0005; // 隐藏 < 0.05% 的权重噪声
 const HOLDINGS_DISPLAY_MIN = 0.05; // 勾选「不显示低于5%」时的合并阈值
@@ -178,11 +180,7 @@ export default function DashboardClient({
   initialDemo?: BacktestResult | null;
 }) {
   return (
-    <Suspense
-      fallback={
-        <div className="p-12 text-center text-muted-foreground">加载中...</div>
-      }
-    >
+    <Suspense fallback={<DashboardContentSkeleton />}>
       <DashboardInner initialDemo={initialDemo} />
     </Suspense>
   );
@@ -193,9 +191,9 @@ function DashboardInner({
 }: {
   initialDemo?: BacktestResult | null;
 }) {
-  const params = useSearchParams();
+  const searchParams = useSearchParams();
   const router = useRouter();
-  const idParam = params.get("id");
+  const idParam = searchParams.get("id");
   const { isWhitelisted, userId } = useAuth();
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
@@ -208,6 +206,9 @@ function DashboardInner({
   const [portfolios, setPortfolios] = useState<PortfolioInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [switching, setSwitching] = useState(false);
+  // 异步切换（方法/基准/组合）走 transition：旧结果保持可见、输入不被阻塞，
+  // 图表实例不卸载（hover/缩放保持），新数据到达后原地更新。
+  const [, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [runningStatus, setRunningStatus] = useState<PortfolioStatus | null>(
     null,
@@ -224,6 +225,16 @@ function DashboardInner({
   const reloadResult = () => {
     invalidatePortfolio(queryClient, pidNum);
     setReloadToken((t) => t + 1);
+  };
+
+  /**
+   * 切换组合：只覆盖 id，保留 URL 上的其它参数（mode 之外的习惯参数、分享链接里的锚点等），
+   * 避免「点一下组合就丢参数」的缺陷。
+   */
+  const selectPortfolio = (value: string) => {
+    const next = new URLSearchParams(searchParams.toString());
+    next.set("id", value);
+    router.push("/dashboard?" + next.toString());
   };
 
   const cacheKey = (m: string, b: string) => `${m}::${b}`;
@@ -309,31 +320,42 @@ function DashboardInner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, idParam, portfolios, loading]);
 
+  /**
+   * 切换方法/基准。
+   * - 命中缓存：transition 内同步替换，零请求；
+   * - 未命中：保留当前视图与图表实例，后台取数后原地更新；失败只 toast 提示，
+   *   不再把整页替换成错误页（否则用户当前正在看的结果会丢失）。
+   */
   const switchTo = (m: string, b: string) => {
     if (m === method && b === benchmark) return;
+    if (switching) return;
     const k = cacheKey(m, b);
     if (cache[k]) {
-      setMethod(m);
-      setBenchmark(b);
+      startTransition(() => {
+        setMethod(m);
+        setBenchmark(b);
+      });
       return;
     }
     setSwitching(true);
     fetcher(m, b)
       .then((res) => {
-        setCache((c) => ({ ...c, [k]: res }));
-        setMethod(m);
-        setBenchmark(b);
+        startTransition(() => {
+          setCache((c) => ({ ...c, [k]: res }));
+          setMethod(m);
+          setBenchmark(b);
+        });
       })
-      .catch((e) => setError(String(e)))
+      .catch((e) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        toast.error("切换失败：" + msg);
+      })
       .finally(() => setSwitching(false));
   };
 
-  if (loading)
-    return (
-      <div className="p-12 text-center text-muted-foreground">
-        正在加载回测结果...
-      </div>
-    );
+  // 局部 loading：渲染与真实页面同布局的卡片骨架（TOC + KPI/图表/表格分开的 skeleton），
+  // 不再整页只显示一行「正在加载回测结果...」。
+  if (loading) return <DashboardContentSkeleton />;
   if (runningStatus)
     return (
       <RunningPortfolioView
@@ -367,7 +389,8 @@ function DashboardInner({
       </div>
     );
   const data = method && benchmark ? cache[cacheKey(method, benchmark)] : null;
-  if (!data) return null;
+  // 理论不可达（loading 已覆盖）；用骨架兜底，避免白屏。
+  if (!data) return <DashboardContentSkeleton />;
 
   return (
     <DashboardView
@@ -384,6 +407,7 @@ function DashboardInner({
       onSwitchBenchmark={(b) => switchTo(method!, b)}
       onReload={reloadResult}
       onReloadPortfolios={reloadPortfolios}
+      onSelectPortfolio={selectPortfolio}
     />
   );
 }
@@ -402,6 +426,7 @@ function DashboardView({
   onSwitchBenchmark,
   onReload,
   onReloadPortfolios,
+  onSelectPortfolio,
 }: {
   data: BacktestResult;
   portfolios: PortfolioInfo[];
@@ -416,6 +441,7 @@ function DashboardView({
   onSwitchBenchmark: (b: string) => void;
   onReload: () => void;
   onReloadPortfolios: () => void;
+  onSelectPortfolio: (value: string) => void;
 }) {
   const { userId, isWhitelisted, isSuperAdmin } = useAuth();
   const {
@@ -913,6 +939,9 @@ function DashboardView({
   const demoPortfolios = portfolios.filter((p) => p.is_demo);
   const otherPortfolios = portfolios.filter((p) => !p.is_demo);
   const selectValue = idParam ?? String(portfolio.portfolio_id);
+  // 列表接口 /api/portfolios 不返回 result_updated_at / data_as_of_date：
+  // 仅当字段存在时显示最近更新日期，缺失时整段不渲染（不阻塞下拉渲染）。
+  const updatedLabel = formatPortfolioUpdatedDate(portfolio);
   const allPortfolios = [...demoPortfolios, ...otherPortfolios];
   // 与 ReorderDialog 的可排集合同口径(demo 仅管理员可排, 非 demo 仅 owner 可排):
   // 入口只在「至少 2 个可排项」时出现, 免得管理员看着一堆别人的组合点进去却只有 1 项可拖。
@@ -983,65 +1012,99 @@ function DashboardView({
               )}
             </div>
 
-            <div className="px-4 sm:px-5 py-3 border-t border-border bg-muted/20 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 min-w-0 w-full lg:w-auto">
-                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide shrink-0">
-                  组合
-                </span>
-                <Select
-                  value={selectValue}
-                  onValueChange={(v) => router.push(`/dashboard?id=${v}`)}
-                >
-                  <SelectTrigger
-                    size="sm"
-                    className="w-full sm:w-[min(100%,20rem)] bg-background"
-                  >
-                    <SelectValue placeholder="选择组合" />
-                  </SelectTrigger>
-                  <SelectContent
-                    align="start"
-                    className="max-w-[min(24rem,90vw)]"
-                  >
-                    {demoPortfolios.length > 0 && (
-                      <SelectGroup>
-                        <SelectLabel>示例组合</SelectLabel>
-                        {demoPortfolios.map((p) => (
-                          <SelectItem
-                            key={p.portfolio_id}
-                            value={String(p.portfolio_id)}
-                          >
-                            {p.name}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    )}
-                    {otherPortfolios.length > 0 && (
-                      <SelectGroup>
-                        <SelectLabel>其他组合</SelectLabel>
-                        {otherPortfolios.map((p) => (
-                          <SelectItem
-                            key={p.portfolio_id}
-                            value={String(p.portfolio_id)}
-                          >
-                            {p.name} #{p.portfolio_id}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    )}
-                  </SelectContent>
-                </Select>
-                {/* 排序入口只在「至少 2 个可排项」时出现(见 sortableCount):
-                    普通用户只排自己创建的非 demo 组合, demo 连显示都不显示。 */}
-                {isWhitelisted && sortableCount > 1 && (
-                  <ReorderDialog
-                    portfolios={portfolios}
-                    onSaved={onReloadPortfolios}
-                  />
-                )}
-              </div>
+            {/* 组合工具条：三列网格让「组合下拉」在整行真正居中（320–360px 宽），
+                左侧放排序入口、右侧放操作按钮，两者都不挤占中心；并展示最近更新日期。 */}
+            <div className="border-t border-border bg-muted/20 px-4 py-3 sm:px-5">
+              <div className="flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:items-center">
+                <div className="hidden lg:flex lg:justify-start">
+                  {isWhitelisted && sortableCount > 1 && (
+                    <ReorderDialog
+                      portfolios={portfolios}
+                      onSaved={onReloadPortfolios}
+                    />
+                  )}
+                </div>
 
-              {isWhitelisted && (
-                <div className="flex flex-wrap items-center gap-1.5 w-full lg:w-auto lg:shrink-0">
+                <div className="flex min-w-0 flex-col items-center gap-1.5">
+                  <div className="flex w-full flex-col items-center gap-2 sm:flex-row sm:justify-center sm:gap-3">
+                    <span className="shrink-0 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      组合
+                    </span>
+                    <Select value={selectValue} onValueChange={onSelectPortfolio}>
+                      <SelectTrigger
+                        size="sm"
+                        className="w-full bg-background sm:w-[22rem]"
+                        aria-label="选择组合"
+                      >
+                        <SelectValue placeholder="选择组合" />
+                      </SelectTrigger>
+                      <SelectContent
+                        align="center"
+                        sideOffset={6}
+                        className="w-[min(22rem,calc(100vw-2rem))]"
+                      >
+                        {demoPortfolios.length > 0 && (
+                          <SelectGroup>
+                            <SelectLabel>示例组合</SelectLabel>
+                            {demoPortfolios.map((p) => (
+                              <SelectItem
+                                key={p.portfolio_id}
+                                value={String(p.portfolio_id)}
+                              >
+                                <span className="flex w-full items-center justify-between gap-3">
+                                  <span className="truncate">{p.name}</span>
+                                  {formatPortfolioUpdatedDate(p) ? (
+                                    <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+                                      {formatPortfolioUpdatedDate(p)}
+                                    </span>
+                                  ) : null}
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        )}
+                        {otherPortfolios.length > 0 && (
+                          <SelectGroup>
+                            <SelectLabel>其他组合</SelectLabel>
+                            {otherPortfolios.map((p) => (
+                              <SelectItem
+                                key={p.portfolio_id}
+                                value={String(p.portfolio_id)}
+                              >
+                                <span className="flex w-full items-center justify-between gap-3">
+                                  <span className="truncate">
+                                    {p.name} #{p.portfolio_id}
+                                  </span>
+                                  {formatPortfolioUpdatedDate(p) ? (
+                                    <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+                                      {formatPortfolioUpdatedDate(p)}
+                                    </span>
+                                  ) : null}
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        )}
+                      </SelectContent>
+                    </Select>
+                    {updatedLabel ? (
+                      <span className="shrink-0 text-[11px] text-muted-foreground">
+                        最近更新 {updatedLabel}
+                      </span>
+                    ) : null}
+                  </div>
+                  {/* 移动端排序入口：居中列内换行展示，桌面端已固定到左列。 */}
+                  {isWhitelisted && sortableCount > 1 && (
+                    <div className="lg:hidden">
+                      <ReorderDialog
+                        portfolios={portfolios}
+                        onSaved={onReloadPortfolios}
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center justify-center gap-1.5 lg:justify-end">
                   {canEdit && (
                     <Button variant="outline" size="sm" asChild>
                       <a href={`/builder?id=${portfolio.portfolio_id}`}>
@@ -1089,7 +1152,7 @@ function DashboardView({
                     />
                   )}
                 </div>
-              )}
+              </div>
             </div>
           </div>
 
@@ -1111,7 +1174,11 @@ function DashboardView({
           <PortfolioParamsCard portfolio={portfolio} currentMethod={current} />
 
           {/* 优化方法选择框 */}
-          <div className="bg-card border border-border rounded-xl p-2 flex flex-wrap items-center gap-1.5 sm:gap-2">
+          <div
+            role="group"
+            aria-label="优化方法"
+            className="bg-card border border-border rounded-xl p-2 flex flex-wrap items-center gap-1.5 sm:gap-2"
+          >
             <span className="text-sm text-muted-foreground px-2 shrink-0">
               优化方法
             </span>
@@ -1120,9 +1187,12 @@ function DashboardView({
               return (
                 <button
                   key={m}
+                  type="button"
                   onClick={() => onSwitchMethod(m)}
                   disabled={switching}
-                  className={`relative text-xs sm:text-sm px-2 sm:px-3 py-1.5 rounded-lg border transition-colors disabled:opacity-60 ${
+                  aria-pressed={active}
+                  aria-busy={switching || undefined}
+                  className={`relative text-xs sm:text-sm px-2 sm:px-3 py-1.5 rounded-lg border transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
                     active
                       ? "border-primary text-primary"
                       : "border-border text-muted-foreground hover:text-foreground"
@@ -1154,21 +1224,22 @@ function DashboardView({
               );
             })}
             {switching && (
-              <span className="text-xs text-muted-foreground animate-pulse ml-1">
-                计算切换中...
+              <span
+                role="status"
+                aria-live="polite"
+                className="text-xs text-muted-foreground animate-pulse ml-1"
+              >
+                正在切换…
               </span>
             )}
           </div>
 
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={current}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.25, ease: "easeOut" }}
-              className="space-y-6"
-            >
+          {/* 切换方法/基准不再用 key 重建整棵内容树：卡片与 ECharts 实例保持挂载
+              （hover/缩放/图例状态不丢），仅轻微淡化并在数据到达后原地更新。 */}
+          <div
+            className={`space-y-6 transition-opacity duration-200 ${switching ? "opacity-70" : "opacity-100"}`}
+            aria-busy={switching || undefined}
+          >
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 min-w-0">
                 {/* Quadrant matrix */}
                 <Card
@@ -1419,7 +1490,9 @@ function DashboardView({
                           className="h-6 w-6"
                         />
                         <select
-                          className="text-xs bg-transparent border border-border rounded px-2 py-1 text-muted-foreground focus:outline-none"
+                          aria-label="切换对比基准"
+                          title="切换对比基准（会按新基准重新取数）"
+                          className="text-xs bg-transparent border border-border rounded px-2 py-1 text-muted-foreground focus:outline-none disabled:opacity-60"
                           value={benchmark}
                           onChange={(e) => onSwitchBenchmark(e.target.value)}
                           disabled={switching}
@@ -1430,12 +1503,18 @@ function DashboardView({
                             </option>
                           ))}
                         </select>
-                        <div className="flex gap-1">
+                        <div
+                          role="group"
+                          aria-label="净值区间"
+                          className="flex gap-1"
+                        >
                           {(["1y", "3y", "all"] as const).map((r) => (
                             <button
                               key={r}
+                              type="button"
                               onClick={() => setRange(r)}
-                              className={`text-xs px-2 py-1 rounded border ${range === r ? "border-primary text-primary" : "border-border text-muted-foreground"}`}
+                              aria-pressed={range === r}
+                              className={`text-xs px-2 py-1 rounded border transition-colors ${range === r ? "border-primary text-primary" : "border-border text-muted-foreground hover:text-foreground"}`}
                             >
                               {r === "1y"
                                 ? "近1年"
@@ -1973,8 +2052,7 @@ function DashboardView({
                 lookbackDays={portfolio.lookback_days || 156}
                 theme={theme}
               />
-            </motion.div>
-          </AnimatePresence>
+            </div>
         </div>
       </div>
     </div>

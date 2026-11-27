@@ -26,12 +26,20 @@ const NAV_LINKS = [
   { href: "/methodology", label: "方法论" },
 ] as const;
 
-function navLinkClass(pathname: string, href: string) {
-  const active =
+function isActiveLink(pathname: string, href: string) {
+  return (
     pathname === href
     || (href === "/dashboard" && pathname.startsWith("/dashboard"))
-    || (href === "/otc-derivatives-pricing" && (pathname === "/otc-derivatives-pricing" || pathname === "/otc-pricing"));
-  return active
+    || (href === "/otc-derivatives-pricing" && (pathname === "/otc-derivatives-pricing" || pathname === "/otc-pricing"))
+  );
+}
+
+// 焦点环与 hover 共用同一套语义色；键盘用户可清晰看到当前聚焦的导航项。
+const NAV_FOCUS_CLASS =
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+
+function navLinkClass(pathname: string, href: string) {
+  return isActiveLink(pathname, href)
     ? "bg-accent text-foreground"
     : "text-muted-foreground hover:text-foreground hover:bg-accent/60";
 }
@@ -90,7 +98,8 @@ export function Navbar() {
                   <SheetClose asChild key={href}>
                     <Link
                       href={href}
-                      className={`rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${navLinkClass(pathname, href)}`}
+                      aria-current={isActiveLink(pathname, href) ? "page" : undefined}
+                      className={`rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${NAV_FOCUS_CLASS} ${navLinkClass(pathname, href)}`}
                     >
                       {label}
                     </Link>
@@ -100,7 +109,7 @@ export function Navbar() {
             </SheetContent>
           </Sheet>
 
-          <Link href="/" className="font-bold tracking-tight text-base sm:text-lg flex items-center gap-2 shrink-0">
+          <Link href="/" className={`font-bold tracking-tight text-base sm:text-lg flex items-center gap-2 shrink-0 rounded-md ${NAV_FOCUS_CLASS}`}>
             <div className="w-6 h-6 rounded bg-primary text-primary-foreground flex items-center justify-center text-xs shrink-0">BP</div>
             <span className="hidden sm:inline whitespace-nowrap">Balanced Portfolio</span>
           </Link>
@@ -110,7 +119,8 @@ export function Navbar() {
               <Link
                 key={href}
                 href={href}
-                className={`whitespace-nowrap shrink-0 rounded-md px-3 py-1.5 transition-colors ${navLinkClass(pathname, href)}`}
+                aria-current={isActiveLink(pathname, href) ? "page" : undefined}
+                className={`whitespace-nowrap shrink-0 rounded-md px-3 py-1.5 transition-colors ${NAV_FOCUS_CLASS} ${navLinkClass(pathname, href)}`}
               >
                 {label}
               </Link>

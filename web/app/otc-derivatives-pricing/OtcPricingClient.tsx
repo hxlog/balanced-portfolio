@@ -16,6 +16,9 @@ import {
 import { useAuth } from "@/lib/auth";
 import { EChart } from "@/components/EChart";
 import { MiniTradingCalendar } from "@/components/MiniTradingCalendar";
+import { ChartSkeleton, TableSkeleton } from "@/components/ui/loading";
+import { EmptyState } from "@/components/ui/empty-state";
+import { REVEAL_CLASS, revealStyle } from "@/components/ui/reveal";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,7 +39,7 @@ import {
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
-import { cn } from "@/components/ui/utils";
+import { cn } from "@/lib/utils";
 import { getChartTheme } from "@/lib/chart-theme";
 
 const INPUT_BG = "bg-background";
@@ -108,8 +111,9 @@ function fmtMoney2(x: number | null | undefined): string {
 
 function statusBadgeClass(status: string | null): string {
   switch (status) {
+    // 敲出/敲入是状态事件而非方向性涨跌, 用状态语义色: 敲出=destructive(设计规范), 敲入=warning。
     case "knocked_out": return "bg-destructive/10 text-destructive border-destructive/20";
-    case "knocked_in": return "bg-up/10 text-up border-up/20";
+    case "knocked_in": return "bg-warning/10 text-warning border-warning/20";
     case "expired": return "bg-muted text-muted-foreground border-border";
     default: return "bg-primary/10 text-primary border-primary/20";
   }
@@ -326,6 +330,7 @@ export function OtcPricingClient() {
 
   // -------------------- 簿记 --------------------
   const [deals, setDeals] = useState<OtcDeal[]>([]);
+  const [dealsLoading, setDealsLoading] = useState(true);
   const [dealName, setDealName] = useState("");
   const [dealFilterProduct, setDealFilterProduct] = useState<string>("all");
   const [dealFilterSymbol, setDealFilterSymbol] = useState("");
@@ -382,7 +387,11 @@ export function OtcPricingClient() {
   };
 
   const loadDeals = useCallback(() => {
-    api.otcListDeals().then((r) => setDeals(r.deals)).catch(() => {});
+    setDealsLoading(true);
+    api.otcListDeals()
+      .then((r) => setDeals(r.deals))
+      .catch(() => {})
+      .finally(() => setDealsLoading(false));
   }, []);
   useEffect(() => { if (ready) loadDeals(); }, [ready, loadDeals]);
 
@@ -838,8 +847,10 @@ export function OtcPricingClient() {
             {OTC_PRODUCTS.map((p) => (
               <button
                 key={p.value}
+                type="button"
+                aria-pressed={product === p.value}
                 onClick={() => switchProduct(p.value)}
-                className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
+                className={`rounded-full border px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
                   product === p.value
                     ? "bg-primary text-primary-foreground border-primary"
                     : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30"
@@ -1007,7 +1018,7 @@ export function OtcPricingClient() {
                 {obsDates.map((d) => (
                   <span key={d.effective ?? d.requested}
                     className={`text-[11px] font-mono px-1.5 py-0.5 rounded border ${
-                      d.rolled ? "border-amber-500/40 text-amber-600 dark:text-amber-400" : "border-border text-muted-foreground"
+                      d.rolled ? "border-warning/40 bg-warning/10 text-warning" : "border-border text-muted-foreground"
                     }`}
                     title={d.rolled ? `原 ${d.requested} 递延` : undefined}>
                     {d.effective}{d.rolled ? " ↦" : ""}
@@ -1033,7 +1044,7 @@ export function OtcPricingClient() {
 
       {/* 定价结果 */}
       {result && (
-        <Card>
+        <Card className={REVEAL_CLASS} style={revealStyle(0)}>
           <CardHeader className="border-b border-border/60 pb-4">
             <CardTitle className="text-base flex items-center gap-2">
               <LineChart className="w-4 h-4 text-primary" /> 定价结果
@@ -1096,7 +1107,7 @@ export function OtcPricingClient() {
 
       {/* 收益-波动示意图 */}
       {result && pathOption && (
-        <Card>
+        <Card className={REVEAL_CLASS} style={revealStyle(60)}>
           <CardHeader className="border-b border-border/60 pb-4">
             <CardTitle className="text-base flex items-center gap-2">
               <Activity className="w-4 h-4 text-primary" /> 收益-波动示意图
@@ -1148,11 +1159,22 @@ export function OtcPricingClient() {
         </CardHeader>
         <CardContent className="p-0 pt-0 sm:pt-0">
           {deals.length === 0 ? (
-            <div className="p-8 text-center text-sm text-muted-foreground">
-              {isWhitelisted ? "暂无簿记, 定价后点击「存为簿记」保存。" : "暂无示例簿记。登录后可簿记自己的场外期权。"}
-            </div>
+            dealsLoading ? (
+              <TableSkeleton rows={4} columns={9} firstColWidth="w-24" />
+            ) : (
+              <EmptyState
+                compact
+                icon={Bookmark}
+                title={isWhitelisted ? "暂无簿记" : "暂无示例簿记"}
+                description={
+                  isWhitelisted
+                    ? "定价后点击「存为簿记」即可保存条款并跟踪每日估值。"
+                    : "登录后可簿记自己的场外期权；匿名访问可浏览示例簿记结果。"
+                }
+              />
+            )
           ) : filteredDeals.length === 0 ? (
-            <div className="p-8 text-center text-sm text-muted-foreground">无匹配簿记</div>
+            <EmptyState compact title="无匹配簿记" description="调整品种或名称筛选后再试。" />
           ) : (
             <div className="overflow-x-auto">
               <Table>
@@ -1160,23 +1182,23 @@ export function OtcPricingClient() {
                   <TableRow>
                     <TableHead>名称</TableHead>
                     <TableHead>
-                      <button type="button" className="inline-flex items-center" onClick={() => toggleDealSort("product")}>
+                      <button type="button" className="inline-flex items-center rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => toggleDealSort("product")}>
                         品种 <SortIcon k="product" />
                       </button>
                     </TableHead>
                     <TableHead>
-                      <button type="button" className="inline-flex items-center" onClick={() => toggleDealSort("symbol")}>
+                      <button type="button" className="inline-flex items-center rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => toggleDealSort("symbol")}>
                         标的 <SortIcon k="symbol" />
                       </button>
                     </TableHead>
                     <TableHead className="text-right">
-                      <button type="button" className="inline-flex items-center ml-auto" onClick={() => toggleDealSort("notional")}>
+                      <button type="button" className="inline-flex items-center ml-auto rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => toggleDealSort("notional")}>
                         名义本金 <SortIcon k="notional" />
                       </button>
                     </TableHead>
                     <TableHead className="text-right">最新估值</TableHead>
                     <TableHead className="text-right">
-                      <button type="button" className="inline-flex items-center ml-auto" onClick={() => toggleDealSort("pnl")}>
+                      <button type="button" className="inline-flex items-center ml-auto rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => toggleDealSort("pnl")}>
                         盈亏(PnL) <SortIcon k="pnl" />
                       </button>
                     </TableHead>
@@ -1194,7 +1216,9 @@ export function OtcPricingClient() {
                       <TableRow key={d.deal_id}>
                         <TableCell className="font-medium">
                           <div className="flex items-center gap-1.5">
-                            {d.is_example && <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />}
+                            {d.is_example && (
+                              <Star className="w-3.5 h-3.5 text-warning fill-warning" aria-label="示例簿记" />
+                            )}
                             {d.name}
                           </div>
                         </TableCell>
@@ -1227,18 +1251,19 @@ export function OtcPricingClient() {
                             <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => canPrice ? loadDealIntoForm(d) : viewExampleResult(d)}>
                               {canPrice ? "载入" : "查看"}
                             </Button>
-                            <Button variant="ghost" size="icon" className="h-7 w-7" title="重估"
+                            <Button variant="ghost" size="icon" className="h-7 w-7" title="重估" aria-label="重估该簿记"
                               onClick={() => repriceDeal(d)} disabled={repricingId === d.deal_id}>
                               {repricingId === d.deal_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
                             </Button>
                             {isSuperAdmin && (
                               <Button variant="ghost" size="icon" className="h-7 w-7" title={d.is_example ? "取消示例" : "设为示例"}
+                                aria-label={d.is_example ? "取消示例" : "设为示例"}
                                 onClick={() => toggleExample(d)}>
-                                <Star className={`w-3.5 h-3.5 ${d.is_example ? "text-amber-500 fill-amber-500" : ""}`} />
+                                <Star className={`w-3.5 h-3.5 ${d.is_example ? "text-warning fill-warning" : ""}`} />
                               </Button>
                             )}
                             {canEdit && (
-                              <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" title="删除"
+                              <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" title="删除" aria-label="删除该簿记"
                                 onClick={() => deleteDeal(d)}>
                                 <Trash2 className="w-3.5 h-3.5" />
                               </Button>
@@ -1264,8 +1289,8 @@ export function OtcPricingClient() {
           <div className="flex flex-col sm:flex-row sm:flex-wrap items-start sm:items-center gap-2 pt-2">
             <div className="flex flex-wrap items-center gap-1">
               {OTC_VOL_WINDOWS.map((w) => (
-                <button key={w} onClick={() => setVolWindow(w)}
-                  className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${
+                <button key={w} type="button" aria-pressed={volWindow === w} onClick={() => setVolWindow(w)}
+                  className={`rounded-full border px-2.5 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
                     volWindow === w ? "bg-primary text-primary-foreground border-primary"
                       : "border-border text-muted-foreground hover:text-foreground"
                   }`}>
@@ -1275,8 +1300,8 @@ export function OtcPricingClient() {
             </div>
             <div className="flex flex-wrap items-center gap-1">
               {([3, 5] as const).map((y) => (
-                <button key={y} type="button" onClick={() => setVolRangeYears(y)}
-                  className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${
+                <button key={y} type="button" aria-pressed={volRangeYears === y} onClick={() => setVolRangeYears(y)}
+                  className={`rounded-full border px-2.5 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
                     volRangeYears === y ? "bg-primary text-primary-foreground border-primary"
                       : "border-border text-muted-foreground hover:text-foreground"
                   }`}>
@@ -1289,9 +1314,9 @@ export function OtcPricingClient() {
               {OTC_VOL_QUICK.map((q) => {
                 const on = volSymbols.includes(q.symbol);
                 return (
-                  <button key={q.symbol} type="button"
+                  <button key={q.symbol} type="button" aria-pressed={on}
                     onClick={() => setVolSymbols((prev) => on ? prev.filter((s) => s !== q.symbol) : [...prev, q.symbol])}
-                    className={`px-2 py-1 rounded text-xs border transition-colors ${
+                    className={`rounded border px-2 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
                       on ? "bg-primary/10 border-primary/40 text-primary" : "border-border text-muted-foreground hover:text-foreground"
                     }`}>
                     {q.label}
@@ -1323,31 +1348,21 @@ export function OtcPricingClient() {
                 </Command>
               </PopoverContent>
             </Popover>
-            {/* {volSymbols.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 w-full">
-                {volSymbols.map((sym) => {
-                  const u = indexUnderlyings.find((x) => x.symbol === sym);
-                  return (
-                    <button key={sym} type="button" onClick={() => setVolSymbols((p) => p.filter((s) => s !== sym))}
-                      className="px-2 py-1 rounded-full text-xs bg-primary/10 border border-primary/30 text-primary">
-                      {u?.name ?? sym} ×
-                    </button>
-                  );
-                })}
-              </div>
-            )} */}
           </div>
         </CardHeader>
         <CardContent className="p-3 sm:p-5 pt-0 sm:pt-0">
           {volLoading ? (
-            <div className="h-[320px] flex items-center justify-center text-sm text-muted-foreground">
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" /> 计算中…
-            </div>
+            <ChartSkeleton height={360} />
           ) : volOption ? (
             <EChart option={volOption} style={{ height: 360, width: "100%" }} />
           ) : (
-            <div className="h-[320px] flex items-center justify-center text-sm text-muted-foreground">
-              选择一个或多个指数以查看 {volWindow} 日滚动年化波动率
+            <div className="flex h-[360px] items-center justify-center px-4">
+              <EmptyState
+                compact
+                icon={LineChart}
+                title="尚未选择指数"
+                description={`选择一个或多个指数以查看 ${volWindow} 日滚动年化波动率。`}
+              />
             </div>
           )}
         </CardContent>

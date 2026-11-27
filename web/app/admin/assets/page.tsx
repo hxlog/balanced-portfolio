@@ -19,6 +19,9 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, AdminAsset, DataSource, ADJUST_LABEL, ASSET_ADJUST_OPTIONS } from "@/lib/api";
+import { TableSkeleton } from "@/components/ui/loading";
+import { Skeleton, SkeletonText } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/ui/empty-state";
 import {
   ASSET_CREATE_DEFAULTS, buildExtraParams, parseProbeFailure, validateAssetInput,
   type ProbeFailure,
@@ -247,8 +250,30 @@ export default function AdminAssetsPage() {
     });
   };
 
-  if (!ready) return <div className="p-12 text-center text-muted-foreground">加载中...</div>;
-  if (!canManageAssets) return <div className="p-12 text-center text-destructive">需要资产编辑权限</div>;
+  if (!ready) {
+    return (
+      <div className="mx-auto w-full max-w-[1600px] space-y-6 p-6" aria-busy="true">
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-32" />
+          <SkeletonText lines={1} className="max-w-md" />
+        </div>
+        <Skeleton className="h-56 rounded-xl" />
+        <div className="overflow-hidden rounded-xl border border-border bg-card">
+          <TableSkeleton rows={8} columns={8} firstColWidth="w-40" />
+        </div>
+      </div>
+    );
+  }
+  if (!canManageAssets) {
+    return (
+      <div className="mx-auto w-full max-w-[1600px] px-6 py-16">
+        <EmptyState
+          title="需要资产编辑权限"
+          description="当前账号没有资产管理权限。请联系超级管理员授权，或返回 Dashboard 继续使用组合功能。"
+        />
+      </div>
+    );
+  }
 
   const updateForm = (patch: Partial<typeof form>) => {
     setForm((f) => ({ ...f, ...patch }));
@@ -722,6 +747,7 @@ export default function AdminAssetsPage() {
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
                 placeholder="搜索名称 / Symbol"
+                aria-label="搜索投资品名称或代码"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="pl-8"
@@ -758,6 +784,7 @@ export default function AdminAssetsPage() {
               type="number"
               min={0}
               placeholder="最小行数"
+              aria-label="最小清洗行数筛选"
               value={minRows}
               onChange={(e) => setMinRows(e.target.value)}
               className="w-[110px] font-mono"
@@ -767,7 +794,7 @@ export default function AdminAssetsPage() {
         </CardHeader>
         <CardContent className="overflow-x-auto pt-0 sm:pt-0">
           {loading ? (
-            <div className="py-12 text-center text-muted-foreground">加载中...</div>
+            <TableSkeleton rows={10} columns={8} firstColWidth="w-40" />
           ) : (
             <Table className="min-w-[1080px]">
               <TableHeader>
@@ -783,23 +810,31 @@ export default function AdminAssetsPage() {
                   <TableHead className="min-w-[140px] max-w-[200px]">名称</TableHead>
                   <TableHead>代码 / 源</TableHead>
                   <TableHead className="whitespace-nowrap px-2">状态</TableHead>
-                  <TableHead className="whitespace-nowrap px-2 text-xs">
+                  <TableHead
+                    className="whitespace-nowrap px-2 text-xs"
+                    aria-sort={rowsSortDesc === null ? "none" : rowsSortDesc ? "descending" : "ascending"}
+                  >
                     <button
                       type="button"
-                      className="inline-flex items-center gap-1 hover:text-foreground"
+                      className="inline-flex items-center gap-1 rounded-sm hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       onClick={() => setRowsSortDesc((v) => (v === null ? true : v ? false : null))}
                       title="按行数排序"
+                      aria-label={`按行数排序（当前：${rowsSortDesc === null ? "未排序" : rowsSortDesc ? "降序" : "升序"}）`}
                     >
                       行数
                       <ArrowUpDown className={`w-3 h-3 ${rowsSortDesc === null ? "opacity-40" : "opacity-100"}`} />
                     </button>
                   </TableHead>
-                  <TableHead className="whitespace-nowrap px-2 text-xs">
+                  <TableHead
+                    className="whitespace-nowrap px-2 text-xs"
+                    aria-sort={lagSortDesc === null ? "none" : lagSortDesc ? "descending" : "ascending"}
+                  >
                     <button
                       type="button"
-                      className="inline-flex items-center gap-1 hover:text-foreground"
+                      className="inline-flex items-center gap-1 rounded-sm hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       onClick={() => setLagSortDesc((v) => (v === null ? true : v ? false : null))}
                       title="按滞后交易日数排序"
+                      aria-label={`按滞后交易日数排序（当前：${lagSortDesc === null ? "未排序" : lagSortDesc ? "降序" : "升序"}）`}
                     >
                       新鲜度
                       <ArrowUpDown className={`w-3 h-3 ${lagSortDesc === null ? "opacity-40" : "opacity-100"}`} />
@@ -934,6 +969,18 @@ export default function AdminAssetsPage() {
                     </TableRow>
                   );
                 })}
+                {filteredAssets.length === 0 && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={8} className="py-2">
+                      <EmptyState
+                        compact
+                        icon={Search}
+                        title="没有匹配的投资品"
+                        description="调整搜索关键词或筛选条件后再试。"
+                      />
+                    </TableCell>
+                  </TableRow>
+                )}
               </TableBody>
             </Table>
           )}

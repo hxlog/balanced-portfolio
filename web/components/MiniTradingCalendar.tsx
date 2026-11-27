@@ -109,7 +109,7 @@ export function MiniTradingCalendar({
             value={String(anchor.getFullYear())}
             onValueChange={(v) => setAnchor(new Date(Number(v), anchor.getMonth(), 1))}
           >
-            <SelectTrigger className="h-6 w-[5rem] text-xs px-1.5">
+            <SelectTrigger className="h-6 w-[5rem] text-xs px-1.5" aria-label="选择年份">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -120,11 +120,23 @@ export function MiniTradingCalendar({
               ))}
             </SelectContent>
           </Select>
-          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setAnchor(new Date(anchor.getFullYear(), anchor.getMonth() - 1, 1))}>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            aria-label="上一个月"
+            onClick={() => setAnchor(new Date(anchor.getFullYear(), anchor.getMonth() - 1, 1))}
+          >
             <ChevronLeft className="w-4 h-4" />
           </Button>
           <span className="text-xs text-muted-foreground w-14 text-center tabular-nums">{label.replace(/^\d+年/, "")}</span>
-          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setAnchor(new Date(anchor.getFullYear(), anchor.getMonth() + 1, 1))}>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            aria-label="下一个月"
+            onClick={() => setAnchor(new Date(anchor.getFullYear(), anchor.getMonth() + 1, 1))}
+          >
             <ChevronRight className="w-4 h-4" />
           </Button>
         </div>
@@ -147,7 +159,7 @@ export function MiniTradingCalendar({
           const isMaturity = maturityDate === ds;
           const inLife = lifeRange && ds >= lifeRange.lo && ds <= lifeRange.hi && trading;
           let cls = "text-muted-foreground/40";
-          if (isHoliday) cls = "text-amber-700 dark:text-amber-400 bg-amber-500/10";
+          if (isHoliday) cls = "text-warning bg-warning/10";
           else if (trading) cls = "text-foreground";
           return (
             <div
@@ -161,15 +173,15 @@ export function MiniTradingCalendar({
               className={`relative text-[11px] leading-6 rounded tabular-nums ${cls} ${
                 isToday ? "ring-1 ring-primary" : ""
               } ${inLife && !isStart && !isMaturity ? "bg-primary/8" : trading && !isHoliday ? "hover:bg-muted/50" : ""} ${
-                isStart ? "font-semibold text-emerald-600 dark:text-emerald-400" : ""
-              } ${isMaturity ? "font-semibold text-orange-600 dark:text-orange-400" : ""}`}
+                isStart ? "font-semibold text-success" : ""
+              } ${isMaturity ? "font-semibold text-primary" : ""}`}
             >
               {day}
               {isStart && (
-                <span className="absolute -top-0.5 left-1/2 -translate-x-1/2 text-[8px] leading-none text-emerald-600 dark:text-emerald-400 font-bold">起</span>
+                <span className="absolute -top-0.5 left-1/2 -translate-x-1/2 text-[8px] leading-none text-success font-bold">起</span>
               )}
               {isMaturity && (
-                <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 text-[8px] leading-none text-orange-600 dark:text-orange-400 font-bold">到</span>
+                <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 text-[8px] leading-none text-primary font-bold">到</span>
               )}
             </div>
           );
@@ -177,11 +189,16 @@ export function MiniTradingCalendar({
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-foreground/70" />交易日</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-amber-500/25" />节假日</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-warning/25" />节假日</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-primary/25" />存续期</span>
-        <span className="flex items-center gap-1"><span className="text-emerald-600 dark:text-emerald-400 font-bold">起</span>期初</span>
-        <span className="flex items-center gap-1"><span className="text-orange-600 dark:text-orange-400 font-bold">到</span>到期</span>
-        {loading && <span className="ml-auto">加载中…</span>}
+        <span className="flex items-center gap-1"><span className="text-success font-bold">起</span>期初</span>
+        <span className="flex items-center gap-1"><span className="text-primary font-bold">到</span>到期</span>
+        {loading && (
+          <span className="ml-auto inline-flex items-center gap-1" aria-live="polite">
+            <span className="h-2.5 w-2.5 animate-spin rounded-full border border-muted-foreground/40 border-t-muted-foreground motion-reduce:animate-none" />
+            <span className="sr-only">交易日历加载中</span>
+          </span>
+        )}
       </div>
     </div>
   );
