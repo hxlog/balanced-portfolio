@@ -33,3 +33,6 @@ def main(as_of: date | None = None) -> int:
     logger.info("估值抓取完成: %s", json.dumps(summary, ensure_ascii=False, default=str))
     print(json.dumps(summary, ensure_ascii=False, default=str))
     return 0 if not (summary.get("errors") and summary.get("indices", 0) == 0) else 1
+
+if __name__ == "__main__":
+    raise SystemExit(main())
