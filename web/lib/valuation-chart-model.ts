@@ -512,13 +512,16 @@ export function buildValuationPriceOption(
       : [];
   return {
     animation: false,
-    grid: { left: 8, right: 14, top: 34, bottom: 24, containLabel: true },
+    // 2026-11-27 第二轮反馈：图例原先停在右上角，与右轴「指数点位」标题/刻度重叠；
+    // 改到左上角（右轴留白仍充足），图例点击可显隐估值线/点位线（selectedMode multiple）。
+    grid: { left: 8, right: 24, top: 40, bottom: 24, containLabel: true },
     legend: {
       top: 2,
-      right: 4,
+      left: 8,
       icon: "roundRect",
       itemWidth: 10,
       itemHeight: 3,
+      selectedMode: "multiple",
       textStyle: { color: theme.subtext, fontSize: 10 },
       data: hasPrice ? [metricLabel, "指数点位"] : [metricLabel],
     },
@@ -617,4 +620,69 @@ export function buildValuationPriceOption(
         : []),
     ],
   };
+}
+
+/** 成分股权重气泡/饼图用到的字段（与 DetailConstituent 结构兼容）。 */
+export interface ConstituentWeightItem {
+  stock_code: string;
+  name: string;
+  weight: number | null;
+}
+
+export interface ConstituentPieSlice {
+  name: string;
+  code: string | null;
+  /** 权重（百分数点，0~100）。 */
+  value: number;
+  /** true = 「其他（其余 N 只）」聚合片，不可下钻。 */
+  rest: boolean;
+}
+
+/** 成分饼图默认只展开前 10 大权重股，其余聚合成「其他」。 */
+export const CONSTITUENT_PIE_TOP = 10;
+
+/**
+ * 成分股权重饼图切片（纯计算，可单测）。
+ *
+ * - `hideNonTop10=true`（默认）：前 10 大 + 「其他（其余 N 只）」聚合片，
+ *   其他片的权重 = 其余已披露成分权重之和（不按 100 − CR10 反推，避免把未披露权重算进来）；
+ * - `hideNonTop10=false`：按权重降序展示全部已披露成分；
+ * - 权重缺失/<=0 的成分剔除（不补 0、不造数）。
+ */
+export function constituentPieSlices(
+  constituents: readonly ConstituentWeightItem[],
+  hideNonTop10: boolean,
+): ConstituentPieSlice[] {
+  const valid = constituents
+    .filter(
+      (item): item is ConstituentWeightItem & { weight: number } =>
+        item.weight != null && Number.isFinite(item.weight) && item.weight > 0,
+    )
+    .slice()
+    .sort((a, b) => b.weight - a.weight);
+  if (valid.length === 0) return [];
+  const slices = 
+    hideNonTop10 && valid.length > CONSTITUENT_PIE_TOP
+      ? valid.slice(0, CONSTITUENT_PIE_TOP)
+      : valid;
+  const result: ConstituentPieSlice[] = slices.map((item) => ({
+    name: item.name,
+    code: item.stock_code,
+    value: item.weight,
+    rest: false,
+  }));
+  if (hideNonTop10 && valid.length > CONSTITUENT_PIE_TOP) {
+    const restWeight = valid
+      .slice(CONSTITUENT_PIE_TOP)
+      .reduce((sum, item) => sum + item.weight, 0);
+    if (restWeight > 0) {
+      result.push({
+        name: "其他（其余 " + (valid.length - CONSTITUENT_PIE_TOP) + " 只）",
+        code: null,
+        value: restWeight,
+        rest: true,
+      });
+    }
+  }
+  return result;
 }

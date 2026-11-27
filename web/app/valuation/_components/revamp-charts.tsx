@@ -218,18 +218,14 @@ export function PeBandChart({
  *
  * 口径（标题旁 ? tooltip 与每格 hover 均可查看）：该行业下所有跟踪指数的
  * PE-TTM 所选窗口分位均值；样本数 = 参与计算的指数数量；分位越低越便宜。
- * 点击方格筛选下方指数列表（保持现网交互）。
+ * 2026-11-27 第二轮反馈：热力块只做展示，不再点击筛选（筛选走列表上方的行业下拉）。
  */
 export function IndustryHeatmap({
   rows,
-  onSelect,
   windowLabel = "5 年",
-  asOf = null,
 }: {
   rows: IndexQuoteRow[];
-  onSelect: (industry: string) => void;
   windowLabel?: string;
-  asOf?: string | null;
 }) {
   const groups = new Map<string, { values: number[]; names: string[] }>();
   for (const row of rows) {
@@ -269,19 +265,18 @@ export function IndustryHeatmap({
     <div>
       <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4">
         {cells.slice(0, 16).map((cell) => (
-          <button
+          <div
             key={cell.industry}
-            type="button"
-            onClick={() => onSelect(cell.industry)}
             title={
               cell.industry +
               " · PE " + windowLabel + "分位均值 " + cell.pe.toFixed(1) + "%" +
               " · 样本 " + cell.count + " 只" +
-              (cell.representatives ? " · 代表 " + cell.representatives : "") +
-              (asOf ? " · 数据截至 " + asOf : "")
+              (cell.representatives ? " · 代表 " + cell.representatives : "")
             }
             className={cn(
-              "rounded-lg border border-transparent px-2 py-2 text-left transition-transform hover:scale-[1.02]",
+              // 非交互展示块：hover 只统一成站内卡片的边框强调（沿用 border token），
+              // 不做缩放，也不改变语义色背景。
+              "rounded-lg border border-transparent px-2 py-2 text-left transition-colors hover:border-foreground/20",
               colorFor(cell.pe),
             )}
           >
@@ -290,11 +285,11 @@ export function IndustryHeatmap({
               <span className="text-base font-semibold tabular-nums">{cell.pe.toFixed(0)}%</span>
               <span className="text-[9px] opacity-70 tabular-nums">{cell.count} 只</span>
             </div>
-          </button>
+          </div>
         ))}
       </div>
       <p className="mt-1.5 text-[10px] text-muted-foreground">
-        样本数为参与计算的指数数量 · 窗口 {windowLabel} · 数据截至 {asOf ?? "—"}
+        样本数为参与计算的指数数量 · 窗口 {windowLabel}
       </p>
     </div>
   );

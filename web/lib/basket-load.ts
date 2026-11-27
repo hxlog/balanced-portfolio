@@ -9,10 +9,8 @@
 
 import type { Asset } from "./api";
 import {
-  STOCK_BACKTEST_ADJUST,
   basketItemFromAsset,
   basketKey,
-  type BasketAdjust,
   type BasketItem,
   type BasketRecord,
 } from "./basket-types";
@@ -39,15 +37,11 @@ export function basketItemFromRecordAsset(
 ): BasketItem {
   const hit = findPoolAsset(pool, ref);
   if (hit) return basketItemFromAsset(hit);
-  const adjustView: BasketAdjust = ref.source.startsWith("stock_")
-    ? STOCK_BACKTEST_ADJUST
-    : "bfq";
   return {
     key: basketKey(ref.symbol, ref.source),
     symbol: ref.symbol,
     source: ref.source,
     name: ref.symbol,
-    adjustView,
     inPool: false,
     hasData: false,
   };

@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { getChartTheme } from "./chart-theme";
 import {
+  CONSTITUENT_PIE_TOP,
   DIVIDEND_QUADRANTS,
   alignPriceToDates,
   buildMviOverlayOption,
   buildValuationPriceOption,
   buildMviTrendOption,
+  constituentPieSlices,
   dividendPoints,
   dividendQuadrant,
   isoWeekKey,
@@ -320,5 +322,46 @@ describe("估值 × 点位双轴图", () => {
       showBandArea: false,
     });
     expect((withPrice.series as unknown[])).toHaveLength(2);
+  });
+});
+
+describe("成分股权重饼图切片", () => {
+  const items = Array.from({ length: 15 }, (_, index) => ({
+    stock_code: String(index + 1).padStart(6, "0"),
+    name: "成分" + (index + 1),
+    weight: 20 - index,
+  }));
+
+  it("默认只展示前 10 大 + 其他聚合片，其他 = 其余已披露权重之和", () => {
+    const slices = constituentPieSlices(items, true);
+    expect(CONSTITUENT_PIE_TOP).toBe(10);
+    expect(slices).toHaveLength(11);
+    expect(slices.slice(0, 10).map((slice) => slice.value)).toEqual([20, 19, 18, 17, 16, 15, 14, 13, 12, 11]);
+    const rest = slices[10];
+    expect(rest.rest).toBe(true);
+    expect(rest.code).toBeNull();
+    expect(rest.name).toContain("其余 5 只");
+    expect(rest.value).toBeCloseTo(10 + 9 + 8 + 7 + 6);
+  });
+
+  it("关闭隐藏时展示全部已披露成分（按权重降序）", () => {
+    const slices = constituentPieSlices(items, false);
+    expect(slices).toHaveLength(items.length);
+    expect(slices.every((slice) => !slice.rest)).toBe(true);
+    expect(slices[0].value).toBe(20);
+    expect(slices.at(-1)!.value).toBe(6);
+  });
+
+  it("权重缺失/<=0 剔除，不足 10 只时不生成其他片", () => {
+    const partial = [
+      { stock_code: "000001", name: "A", weight: 5 },
+      { stock_code: "000002", name: "B", weight: null },
+      { stock_code: "000003", name: "C", weight: 0 },
+      { stock_code: "000004", name: "D", weight: 3 },
+    ];
+    const slices = constituentPieSlices(partial, true);
+    expect(slices.map((slice) => slice.name)).toEqual(["A", "D"]);
+    expect(slices.every((slice) => !slice.rest)).toBe(true);
+    expect(constituentPieSlices([], true)).toEqual([]);
   });
 });

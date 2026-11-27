@@ -31,6 +31,7 @@ export function ModeSwitch({
   mode,
   basePath = "/builder",
   onSelect,
+  hrefFor,
   className,
   ariaLabel = "组合构建模式",
 }: {
@@ -39,6 +40,8 @@ export function ModeSwitch({
   basePath?: string;
   /** 局部 shell：由调用方接管切换（应同步更新 URL），不传则走 Link 软导航。 */
   onSelect?: (next: BuilderMode) => void;
+  /** 每个模式的目标 href（默认 basePath + modeHref）；跨页面语义不同时由调用方覆盖。 */
+  hrefFor?: (next: BuilderMode) => string;
   className?: string;
   ariaLabel?: string;
 }) {
@@ -82,7 +85,7 @@ export function ModeSwitch({
         return (
           <Link
             key={value}
-            href={modeHref(basePath, query, value)}
+            href={hrefFor ? hrefFor(value) : modeHref(basePath, query, value)}
             prefetch
             scroll={false}
             role="tab"

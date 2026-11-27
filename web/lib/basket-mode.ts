@@ -42,3 +42,24 @@ export function modeHref(
 export function isModeUrl(currentQuery: string, mode: PageMode): boolean {
   return modeFromQuery(currentQuery) === mode;
 }
+
+/**
+ * 模式切换的目标页面。
+ *
+ * /builder 的四象限模式对游客会渲染「需要登录」门禁（仅白名单可建组合），而 /dashboard
+ * 的四象限回测看板游客可读。因此从 /builder 的篮子页点「四象限组合」必须回 /dashboard：
+ * 历史缺陷是落到 /builder 的登录提示，用户以为「切回 dashboard 却被要求登录」。
+ */
+export function modeSwitchPath(fromPath: string, next: PageMode): string {
+  if (next === "quadrant" && fromPath === "/builder") return "/dashboard";
+  return fromPath;
+}
+
+/** 结合目标页面与当前 query 生成模式切换 href（供 Link 的新标签/中键打开）。 */
+export function modeSwitchHref(
+  fromPath: string,
+  currentQuery: string,
+  next: PageMode,
+): string {
+  return modeHref(modeSwitchPath(fromPath, next), currentQuery, next);
+}

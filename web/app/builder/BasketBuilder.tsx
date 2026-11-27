@@ -50,6 +50,11 @@ import {
   isDemoBasket,
 } from "@/lib/basket-demo";
 import {
+  backtestFromLatestResult,
+  latestResultFromBacktest,
+} from "@/lib/basket-latest-result";
+import { modeSwitchHref } from "@/lib/basket-mode";
+import {
   basketFormFromRecord,
   basketItemsFromRecord,
 } from "@/lib/basket-load";
@@ -65,7 +70,6 @@ import {
   basketItemFromStock,
   basketKey,
   basketMethodLabel,
-  type BasketAdjust,
   type BasketBacktestInput,
   type BasketBacktestResult,
   type BasketItem,
@@ -110,6 +114,13 @@ function canSaveAfterProbeError(error: unknown): boolean {
  * 局部 loading / 错误态与正常内容共用同一壳，避免整页 loading 与布局跳动。
  */
 function BasketModeShell({ children }: { children: ReactNode }) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const query = searchParams.toString();
+  const basketHref = modeSwitchHref("/builder", query, "basket");
+  // 四象限模式的目标必须是游客可读的 /dashboard：/builder 的四象限页对游客渲染
+  // 「需要登录」门禁，历史上切回后误落该提示（需求：模式切换误报修复）。
+  const quadrantHref = modeSwitchHref("/builder", query, "quadrant");
   return (
     <div className="flex-1 bg-bg-subtle/30 pb-16">
       <div className="border-b border-border bg-background px-4 py-4 sm:px-6">
@@ -117,10 +128,14 @@ function BasketModeShell({ children }: { children: ReactNode }) {
           <PageModeHeader
             mode="basket"
             basePath="/builder"
+            hrefFor={(next) => (next === "basket" ? basketHref : quadrantHref)}
+            onSelect={(next) => {
+              if (next === "quadrant") router.push(quadrantHref);
+            }}
             ariaLabel="组合构建模式"
             trailing={
               <span className="hidden text-xs text-muted-foreground xl:inline">
-                单层风险平价 · 股票回测口径 后复权
+                单层风险平价 · 回测口径 后复权 hfq
               </span>
             }
           />
@@ -269,6 +284,8 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
    * 必须再映射一次，否则 mappedBasketIdRef 已置位会永久阻止名称回填。
    */
   const mappedBasketRef = useRef<{ basketId: number; poolReady: boolean } | null>(null);
+  /** 已用 latest_result 还原回测结果的 basket_id（每个篮子只还原一次，避免覆盖新回测）。 */
+  const restoredBasketRef = useRef<number | null>(null);
   const backtestController = useRef<AbortController | null>(null);
 
   useEffect(
@@ -301,6 +318,7 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
   // 名称/类别映射在下一个 effect 里等双方就绪后一次性完成。
   useEffect(() => {
     mappedBasketRef.current = null;
+    restoredBasketRef.current = null;
     setLoadedBasket(null);
     setItems([]);
     setBasketMapped(false);
@@ -407,16 +425,11 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
       };
       if (method === "risk_budget") params.risk_budget = budgetValues;
       const latestResult = backtest
-        ? {
-            method: backtest.method,
-            effective_start: backtest.effective_start,
-            annualized_return: backtest.annualized_return,
-            annualized_vol: backtest.annualized_vol,
-            max_drawdown: backtest.max_drawdown,
-            sharpe: backtest.sharpe,
-            rebalance_count: backtest.rebalance_count,
-            n_obs: backtest.n_obs,
-          }
+        ? latestResultFromBacktest(backtest, {
+            lookback_days: lookbackDays,
+            rebalance_band: band,
+            risk_free: riskFree,
+          })
         : null;
       const definition = {
         name: saveName.trim(),
@@ -431,13 +444,20 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
         } else {
           await updateBasket(loadedBasket.basket_id, {
             ...definition,
-            latest_result: latestResult,
+            // 没有回测结果时不提交该字段（避免把已有 latest_result 清空成 null）。
+            ...(latestResult ? { latest_result: latestResult } : {}),
           });
         }
         toast.success("篮子已更新");
         setSaveOpen(false);
       } else {
-        const created = await saveBasket({ ...definition, latest_result: latestResult });
+        const created = await saveBasket(definition);
+        // POST 创建时后端忽略客户端 latest_result（防伪造）：创建成功后再 PATCH 回测结果。
+        if (latestResult) {
+          await updateBasket(created.basket_id, {
+            latest_result: latestResult,
+          }).catch(() => undefined);
+        }
         toast.success("篮子已保存，可在 /dashboard 查看");
         setSaveOpen(false);
         router.replace("/builder?mode=basket&basket=" + created.basket_id, { scroll: false });
@@ -556,6 +576,24 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
   const backtestDirty =
     backtest != null && backtestSig !== currentBacktestSig;
 
+  /**
+   * 打开已保存篮子：用详情里的 latest_result 直接还原净值曲线 + 扣费后 7 项指标，
+   * 不必重新跑回测。示例篮子由管理员 recompute 生成；自有篮子在回测成功后自动 PATCH。
+   * latest_result 缺 nav（列表裁剪摘要 / 旧记录）时不还原，保持「未回测」状态。
+   */
+  useEffect(() => {
+    if (!loadedBasket || !basketMapped) return;
+    if (restoredBasketRef.current === loadedBasket.basket_id) return;
+    restoredBasketRef.current = loadedBasket.basket_id;
+    const restored = backtestFromLatestResult(loadedBasket.latest_result);
+    if (!restored) return;
+    setBacktest(restored);
+    setBacktestError(null);
+    if (backtestPayload) setBacktestSig(JSON.stringify(backtestPayload));
+    // backtestPayload 只参与「当前参数 vs 结果参数」的过期标记；恢复本身不触发请求。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backtestPayload, basketMapped, loadedBasket]);
+
   // 自动重算：输入稳定 300ms 后请求；请求序列用 AbortController 取消旧响应。
   useEffect(() => {
     if (!optimizePayload) {
@@ -635,15 +673,6 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
     setItems((previous) => previous.filter((item) => item.key !== key));
   };
 
-  const changeAdjust = (key: string, adjust: BasketAdjust) => {
-    if (readOnly) return;
-    setItems((previous) =>
-      previous.map((item) =>
-        item.key === key ? { ...item, adjustView: adjust } : item,
-      ),
-    );
-  };
-
   const setBudget = (key: string, value: string) => {
     setRiskBudgetRaw((previous) => ({ ...previous, [key]: value }));
   };
@@ -662,6 +691,26 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
       if (controller.signal.aborted) return;
       setBacktest(result);
       setBacktestSig(JSON.stringify(backtestPayload));
+      // 自有篮子：回测成功后把完整结果（含 nav）PATCH 到 latest_result，
+      // 下次打开直接用该结果还原，不必重跑回测。示例篮子只能走服务端 recompute，跳过。
+      if (loadedBasket && !isDemoBasket(loadedBasket) && access?.canEdit) {
+        const latestResult = latestResultFromBacktest(result, {
+          lookback_days: backtestPayload.lookback_days,
+          rebalance_band: backtestPayload.rebalance_band,
+          risk_free: backtestPayload.risk_free,
+        });
+        void updateBasket(loadedBasket.basket_id, {
+          latest_result: latestResult,
+        })
+          .then(() => {
+            toast.success("回测结果已保存", {
+              description: "再次打开该篮子会直接显示本次净值与扣费后指标",
+            });
+          })
+          .catch((error) => {
+            toast.error("回测结果保存失败：" + basketErrorMessage(error));
+          });
+      }
     } catch (error) {
       if (controller.signal.aborted) return;
       const message = basketErrorMessage(error);
@@ -858,7 +907,6 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
           <BasketAssets
             items={items}
             onRemove={removeItem}
-            onAdjustChange={changeAdjust}
             onOpenPool={() => setPoolOpen(true)}
             onOpenStock={() => setStockOpen(true)}
             onIngest={ingestStock}
@@ -1096,7 +1144,6 @@ export function BasketBuilder({ initialAssets = [] }: { initialAssets?: Asset[] 
             nameByKey={nameByKey}
             assetCount={items.length}
             methodShort={basketMethodLabel(method)}
-            diagnostics={optimizeResult?.diagnostics ?? null}
             optimizeLoading={optimizeLoading}
             optimizeError={optimizeError}
             optimizeDirty={optimizeDirty}

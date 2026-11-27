@@ -28,7 +28,6 @@ import {
 } from "@/lib/basket-format";
 import type {
   BasketBacktestResult,
-  BasketDiagnostics,
   BasketRebalanceEvent,
   BasketWeight,
 } from "@/lib/basket-types";
@@ -55,7 +54,6 @@ export function BasketResults({
   nameByKey,
   assetCount,
   methodShort,
-  diagnostics,
   optimizeLoading,
   optimizeError,
   optimizeDirty,
@@ -70,7 +68,6 @@ export function BasketResults({
   nameByKey: ReadonlyMap<string, string>;
   assetCount: number;
   methodShort: string;
-  diagnostics: BasketDiagnostics | null;
   optimizeLoading: boolean;
   optimizeError: string | null;
   optimizeDirty: boolean;
@@ -249,7 +246,14 @@ export function BasketResults({
   );
 
   const showWeightsSkeleton = optimizeLoading && rows.length === 0;
-  const showDiagSkeleton = optimizeLoading && diagnostics == null;
+  const showDiagSkeleton = backtestLoading && backtest == null;
+  const fees = backtest?.fees ?? null;
+  const feeSummary = fees
+    ? `佣金 ${formatPct(fees.fee_rate, 2)} · 滑点 ${formatPct(
+        fees.slippage_rate,
+        2,
+      )} · 卖出印花税 ${formatPct(fees.stamp_duty_rate, 2)}`
+    : "佣金 0.03% · 滑点 0.10% · 卖出印花税 0.10%";
 
   return (
     <div className="space-y-6">
@@ -343,19 +347,25 @@ export function BasketResults({
       <div>
         <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
           <div>
-            <h2 className="text-base font-semibold">组合诊断</h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-base font-semibold">组合诊断</h2>
+              <Badge
+                variant="outline"
+                className="border-primary/40 bg-primary/5 font-normal text-primary"
+              >
+                扣费后
+              </Badge>
+            </div>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              {diagnostics
-                ? `回看 ${diagnostics.lookback} 个交易日 · 样本 ${diagnostics.n_obs} 日 · 起始 ${
-                    formatDateCN(diagnostics.effective_start) ?? "—"
-                  }`
-                : "选择资产后基于滚动窗口自动计算"}
+              {backtest
+                ? `最近一次回测 · ${backtest.n_obs} 个交易日 · ${feeSummary}`
+                : "运行回测后生成（净值与指标均为扣费后口径）"}
             </p>
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
           {showDiagSkeleton
-            ? Array.from({ length: 4 }).map((_, index) => (
+            ? Array.from({ length: 7 }).map((_, index) => (
                 <Card key={index}>
                   <CardContent className="space-y-2 p-4">
                     <Pulse className="h-3 w-16" />
@@ -368,46 +378,52 @@ export function BasketResults({
                 <>
                   <DiagnosticCard
                     label="年化收益"
-                    value={
-                      diagnostics
-                        ? formatSignedPct(diagnostics.annualized_return)
-                        : "—"
-                    }
-                    caption={
-                      diagnostics ? `回看 ${diagnostics.lookback} 日` : "等待计算"
-                    }
+                    value={backtest ? formatSignedPct(backtest.annualized_return) : "—"}
+                    caption={backtest ? "扣费后 · 年化" : "等待回测"}
                     tone={
-                      diagnostics
-                        ? diagnostics.annualized_return > 0
+                      backtest
+                        ? backtest.annualized_return > 0
                           ? "up"
-                          : diagnostics.annualized_return < 0
+                          : backtest.annualized_return < 0
                             ? "down"
                             : "neutral"
                         : "neutral"
                     }
                   />
                   <DiagnosticCard
-                    label="年化波动"
-                    value={diagnostics ? formatPct(diagnostics.volatility) : "—"}
-                    caption={diagnostics ? `${diagnostics.n_obs} 个样本` : "等待计算"}
+                    label="最大回撤"
+                    value={backtest ? formatPct(backtest.max_drawdown) : "—"}
+                    caption={backtest ? "扣费后 · 区间峰值回撤" : "等待回测"}
+                    tone={
+                      backtest && backtest.max_drawdown < 0 ? "down" : "neutral"
+                    }
                   />
                   <DiagnosticCard
-                    label="夏普比率"
-                    value={diagnostics ? formatRatio(diagnostics.sharpe) : "—"}
-                    caption="年化风险调整收益"
+                    label="年化换手"
+                    value={backtest ? formatPct(backtest.turnover) : "—"}
+                    caption={backtest ? "双边 · 扣费后净值口径" : "等待回测"}
                   />
                   <DiagnosticCard
-                    label="有效资产"
+                    label="交易日数量"
+                    value={backtest ? `${backtest.n_obs} 日` : "—"}
+                    caption={backtest ? "回测区间交易日" : "等待回测"}
+                  />
+                  <DiagnosticCard
+                    label="Sharpe"
+                    value={backtest ? formatRatio(backtest.sharpe) : "—"}
+                    caption={backtest ? "扣费后 · 年化风险调整" : "等待回测"}
+                  />
+                  <DiagnosticCard
+                    label="Sortino"
                     value={
-                      diagnostics
-                        ? `${diagnostics.active_assets} / ${assetCount}`
-                        : "—"
+                      backtest ? formatRatio(backtest.sortino ?? null) : "—"
                     }
-                    caption={
-                      diagnostics
-                        ? `起始 ${formatDateCN(diagnostics.effective_start) ?? "—"}`
-                        : "等待计算"
-                    }
+                    caption={backtest ? "扣费后 · 下行风险调整" : "等待回测"}
+                  />
+                  <DiagnosticCard
+                    label="Calmar"
+                    value={backtest ? formatRatio(backtest.calmar ?? null) : "—"}
+                    caption={backtest ? "扣费后 · 年化收益/最大回撤" : "等待回测"}
                   />
                 </>
               )}
@@ -423,8 +439,11 @@ export function BasketResults({
                 {backtest
                   ? `偏离带 ${formatPct(bandPct / 100, 1)} · ${backtest.rebalance_count} 次调仓 · 有效起点 ${
                       formatDateCN(backtest.effective_start) ?? "—"
-                    }`
-                  : `任一资产偏离目标超过 ${formatPct(bandPct / 100, 1)} 时整体再平衡`}
+                    } · 扣费后（${feeSummary}）`
+                  : `任一资产偏离目标超过 ${formatPct(
+                      bandPct / 100,
+                      1,
+                    )} 时整体再平衡 · 扣费后（${feeSummary}）`}
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
@@ -461,11 +480,11 @@ export function BasketResults({
                 onEvents={clickEvents}
               />
               <p className="mt-1 text-[11px] text-muted-foreground">
-                实线=篮子净值（{methodShort}） · 虚线=等权净值 · <span className="text-warning">◆ 调仓点</span>（点击查看权重变化）
+                实线=篮子净值（{methodShort}，扣费后） · 虚线=等权净值 · <span className="text-warning">◆ 调仓点</span>（点击查看权重变化）
               </p>
               <div className="mt-4 grid grid-cols-2 gap-3 border-t border-border pt-4 sm:grid-cols-4">
                 <MiniStat
-                  label="年化收益"
+                  label="年化收益（扣费后）"
                   value={formatSignedPct(backtest.annualized_return)}
                   tone={
                     backtest.annualized_return > 0
@@ -481,10 +500,10 @@ export function BasketResults({
                   tone={backtest.max_drawdown < 0 ? "down" : "neutral"}
                 />
                 <MiniStat
-                  label="年化换手"
+                  label="年化换手（扣费后）"
                   value={formatPct(backtest.turnover)}
                 />
-                <MiniStat label="样本" value={`${backtest.n_obs} 日`} />
+                <MiniStat label="交易日数量" value={`${backtest.n_obs} 日`} />
               </div>
             </>
           )}

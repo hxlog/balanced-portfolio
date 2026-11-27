@@ -9,12 +9,16 @@ import {
   percentileLabel,
   percentileTone,
   percentileUnavailableText,
+  sortTrackerFunds,
   sumTrackerFundScale,
   trackerFundScale,
   trackingErrorClass,
   trackingErrorTone,
 } from "./valuation-detail-format";
-import type { PercentileSummary } from "./valuation-detail-types";
+import type {
+  DetailTrackerFund,
+  PercentileSummary,
+} from "./valuation-detail-types";
 
 function summary(overrides: Partial<PercentileSummary> = {}): PercentileSummary {
   return {
@@ -123,5 +127,66 @@ describe("跟踪基金规模口径", () => {
     );
     expect(sumTrackerFundScale([])).toBeNull();
     expect(sumTrackerFundScale([{ fund_scale: null, aum: null }])).toBeNull();
+  });
+});
+
+describe("跟踪基金前端排序", () => {
+  function fund(overrides: Partial<DetailTrackerFund> & { fund_code: string }): DetailTrackerFund {
+    const base: Omit<DetailTrackerFund, "fund_code" | "name"> = {
+      company_name: null,
+      risk_grade: null,
+      aum: null,
+      trade_date: null,
+      manager: null,
+      fund_type: null,
+      management_fee: null,
+      custody_fee: null,
+      established_date: null,
+      fund_scale: null,
+      ret_1m: null,
+      ret_3m: null,
+      ret_6m: null,
+      ret_12m: null,
+      ret_2y: null,
+      ret_3y: null,
+      ret_5y: null,
+      ytd: null,
+      ann_vol_1y: null,
+      max_dd_1y: null,
+      tracking_error_1y: null,
+      info_ratio_1y: null,
+      risk_ret_3y_ann: null,
+      risk_ret_5y_ann: null,
+      risk_updated_at: null,
+    };
+    return { ...base, ...overrides, name: overrides.name ?? overrides.fund_code };
+  }
+
+  it("规模升降序切换，null 恒垫底", () => {
+    const rows = [
+      fund({ fund_code: "A", fund_scale: 3e9 }),
+      fund({ fund_code: "B", aum: 1e9 }),
+      fund({ fund_code: "C" }),
+      fund({ fund_code: "D", fund_scale: 2e8 }),
+    ];
+    expect(sortTrackerFunds(rows, "scale", "desc").map((item) => item.fund_code)).toEqual(["A", "B", "D", "C"]);
+    expect(sortTrackerFunds(rows, "scale", "asc").map((item) => item.fund_code)).toEqual(["D", "B", "A", "C"]);
+  });
+
+  it("费率/TE/波动/近1年收益均可排序，null 垫底", () => {
+    const rows = [
+      fund({ fund_code: "A", management_fee: 0.5, tracking_error_1y: 4.8, ann_vol_1y: 22, ret_12m: 12 }),
+      fund({ fund_code: "B", management_fee: 0.15, tracking_error_1y: 2.1, ann_vol_1y: 18, ret_12m: -5 }),
+      fund({ fund_code: "C" }),
+    ];
+    expect(sortTrackerFunds(rows, "management_fee", "asc").map((item) => item.fund_code)).toEqual(["B", "A", "C"]);
+    expect(sortTrackerFunds(rows, "tracking_error_1y", "desc").map((item) => item.fund_code)).toEqual(["A", "B", "C"]);
+    expect(sortTrackerFunds(rows, "ann_vol_1y", "asc").map((item) => item.fund_code)).toEqual(["B", "A", "C"]);
+    expect(sortTrackerFunds(rows, "ret_12m", "desc").map((item) => item.fund_code)).toEqual(["A", "B", "C"]);
+  });
+
+  it("全 null 时保持原顺序（稳定）", () => {
+    const rows = [fund({ fund_code: "A" }), fund({ fund_code: "B" })];
+    expect(sortTrackerFunds(rows, "ret_12m", "asc").map((item) => item.fund_code)).toEqual(["A", "B"]);
   });
 });

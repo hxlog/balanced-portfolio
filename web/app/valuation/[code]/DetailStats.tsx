@@ -43,6 +43,8 @@ interface BenchmarkStats {
   skew: number | null;
   kurtosis: number | null;
   histogram: Array<{ bin: number; count: number }>;
+  /** 基准同窗口/公共 bins 的日收益分布（后端新增；缺失时只画本指数单系列）。 */
+  benchmark_histogram?: Array<{ bin: number; count: number }>;
 }
 
 function fmt(value: number | null | undefined, digits = 2, suffix = "") {
@@ -75,10 +77,27 @@ export function DetailStats({ indexCode }: { indexCode: string }) {
 
   const option = useMemo(() => {
     const bins = stats?.histogram ?? [];
+    // 后端用「同窗口 + 公共 bins」返回基准直方图，这里按 bin 对齐成第二条 series；
+    // 基准缺失时退回单系列（不伪造基准分布）。
+    const benchmarkBins = stats?.benchmark_histogram ?? [];
+    const benchmarkByBin = new Map(benchmarkBins.map((item) => [item.bin, item.count]));
+    const hasBenchmark = benchmarkBins.length > 0;
+    const indexName = "本指数";
+    const benchmarkName = stats?.benchmark_name || "基准";
     return {
       animation: false,
-      grid: { left: 8, right: 10, top: 18, bottom: 22, containLabel: true },
+      grid: { left: 8, right: 10, top: 30, bottom: 22, containLabel: true },
       tooltip: { trigger: "axis" },
+      legend: hasBenchmark
+        ? {
+            top: 0,
+            left: 4,
+            itemWidth: 10,
+            itemHeight: 6,
+            textStyle: { fontSize: 10, color: "#94a3b8" },
+            data: [indexName, benchmarkName],
+          }
+        : undefined,
       xAxis: {
         type: "category",
         data: bins.map((item) => item.bin.toFixed(1)),
@@ -92,11 +111,23 @@ export function DetailStats({ indexCode }: { indexCode: string }) {
       },
       series: [
         {
+          name: indexName,
           type: "bar",
           data: bins.map((item) => item.count),
-          barWidth: "82%",
+          barWidth: hasBenchmark ? "42%" : "82%",
           itemStyle: { color: "#6366f1", borderRadius: [2, 2, 0, 0] },
         },
+        ...(hasBenchmark
+          ? [
+              {
+                name: benchmarkName,
+                type: "bar",
+                data: bins.map((item) => benchmarkByBin.get(item.bin) ?? 0),
+                barWidth: "42%",
+                itemStyle: { color: "#f59e0b", borderRadius: [2, 2, 0, 0] },
+              },
+            ]
+          : []),
       ],
     };
   }, [stats]);
@@ -107,7 +138,8 @@ export function DetailStats({ indexCode }: { indexCode: string }) {
         <div>
           <h2 className="text-sm font-medium">描述统计 · 日收益率分布</h2>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
-            基准可切换 · 近 1 年日收益 · 样本 {stats?.n_obs ?? "—"} 日
+            基准可切换 · 近 1 年日收益 · 指数与基准同区间/公共 bins 对比 · 样本{" "}
+            {stats?.n_obs ?? "—"} 日
             {loading ? " · 加载中…" : ""}
           </p>
         </div>

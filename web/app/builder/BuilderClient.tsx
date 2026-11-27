@@ -535,6 +535,23 @@ function BuilderInner({ initialAssets = [] }: { initialAssets?: Asset[] }) {
   }, [diffOpen, selected, startDate, lookback, assets]);
 
   // 不因登录态接口慢而阻断页面渲染：未登录时按钮操作会提示登录。
+  // 但「需要登录」门禁必须等 auth 恢复完成（ready）再判断：否则刷新时
+  // isWhitelisted 初值 false 会短暂误报登录提示——从 basket 模式切回四象限时，
+  // 用户看到的就是这个误报。等待期间用同壳 + 表单骨架，避免整页空白/闪跳。
+  if (!ready) {
+    return (
+      <div className="flex-1 bg-bg-subtle/30 pb-20 sm:pb-24">
+        <div className="border-b border-border bg-background px-4 py-3 sm:px-6 md:py-6">
+          <div className="mx-auto max-w-5xl">
+            <PageModeHeader mode="quadrant" basePath="/builder" />
+          </div>
+        </div>
+        <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6" aria-busy="true">
+          <BuilderFormSkeleton />
+        </div>
+      </div>
+    );
+  }
 
   if (!isWhitelisted) {
     return (

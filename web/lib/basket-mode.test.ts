@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { isModeUrl, modeFromQuery, modeHref } from "./basket-mode";
+import {
+  isModeUrl,
+  modeFromQuery,
+  modeHref,
+  modeSwitchHref,
+  modeSwitchPath,
+} from "./basket-mode";
 
 describe("modeFromQuery", () => {
   it("parses mode=basket and defaults everything else to quadrant", () => {
@@ -32,6 +38,27 @@ describe("modeHref", () => {
   it("keeps copy/edit params across mode switches", () => {
     const href = modeHref("/builder", "copy=5", "basket");
     expect(href).toBe("/builder?copy=5&mode=basket");
+  });
+});
+
+describe("modeSwitchPath / modeSwitchHref", () => {
+  it("returns to the guest-readable /dashboard when leaving the /builder basket page", () => {
+    // 历史缺陷：/builder 的四象限页对游客显示「需要登录」，切回四象限必须回 /dashboard。
+    expect(modeSwitchPath("/builder", "quadrant")).toBe("/dashboard");
+    expect(modeSwitchHref("/builder", "mode=basket&basket=4", "quadrant")).toBe(
+      "/dashboard",
+    );
+  });
+
+  it("keeps /builder when switching to basket and keeps /dashboard otherwise", () => {
+    expect(modeSwitchPath("/builder", "basket")).toBe("/builder");
+    expect(modeSwitchHref("/builder", "mode=basket", "basket")).toBe(
+      "/builder?mode=basket",
+    );
+    expect(modeSwitchPath("/dashboard", "quadrant")).toBe("/dashboard");
+    expect(modeSwitchHref("/dashboard", "mode=basket&id=3", "quadrant")).toBe(
+      "/dashboard?id=3",
+    );
   });
 });
 

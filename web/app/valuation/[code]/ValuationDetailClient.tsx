@@ -17,7 +17,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useTheme } from "next-themes";
-import { AlertTriangle, ArrowLeft, RotateCcw } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, RotateCcw } from "lucide-react";
 import { EChart } from "@/components/EChart";
 import { getChartTheme } from "@/lib/chart-theme";
 import { cn } from "@/lib/utils";
@@ -33,9 +33,12 @@ import {
   formatUpdatedAtCompact,
   hasUsablePercentile,
   percentileUnavailableText,
+  sortTrackerFunds,
   trackerFundScale,
   trackingErrorClass,
   trackingErrorTone,
+  type SortDirection,
+  type TrackerFundSortKey,
 } from "@/lib/valuation-detail-format";
 import type {
   DetailPercentile,
@@ -50,7 +53,11 @@ import type {
   PercentileWindow,
   ValuationMetric,
 } from "@/lib/valuation-types";
-import { buildValuationPriceOption } from "@/lib/valuation-chart-model";
+import {
+  buildValuationPriceOption,
+  constituentPieSlices,
+  type ConstituentPieSlice,
+} from "@/lib/valuation-chart-model";
 import { formatValue, METRIC_LABEL, type BandMode, PeBandChart } from "../_components/revamp-charts";
 import {
   ChartSkeleton,
@@ -187,6 +194,80 @@ function buildFundAumOption(bars: readonly FundBar[], theme: ReturnType<typeof g
   };
 }
 
+
+/** 成分股权重饼图（前 10 大 + 其他 / 全部已披露），沿用主题 palette 与现网图表风格。 */
+function buildConstituentPieOption(
+  slices: readonly ConstituentPieSlice[],
+  theme: ReturnType<typeof getChartTheme>,
+) {
+  return {
+    animation: false,
+    tooltip: {
+      trigger: "item",
+      backgroundColor: theme.tooltipBg,
+      borderColor: theme.tooltipBorder,
+      textStyle: { color: theme.text, fontSize: 11 },
+      formatter: (params: { name?: string; value?: number; percent?: number }) => {
+        const name = params.name ?? "";
+        const value = Number(params.value ?? 0);
+        const percent = typeof params.percent === "number" ? params.percent.toFixed(1) : null;
+        return name + " · " + value.toFixed(2) + "%" + (percent ? "（占已披露 " + percent + "%）" : "");
+      },
+    },
+    series: [
+      {
+        type: "pie",
+        radius: ["42%", "68%"],
+        center: ["50%", "50%"],
+        avoidLabelOverlap: true,
+        label: { show: false },
+        labelLine: { show: false },
+        itemStyle: { borderColor: theme.tooltipBg, borderWidth: 1 },
+        emphasis: { scale: true, scaleSize: 4 },
+        data: slices.map((slice, index) => ({
+          name: slice.name,
+          value: Number(slice.value.toFixed(4)),
+          itemStyle: {
+            color: slice.rest ? theme.subtext : theme.palette[index % theme.palette.length],
+          },
+        })),
+      },
+    ],
+  };
+}
+
+/** 跟踪基金表可排序表头（升/降序切换；null 值排序时恒垫底，逻辑在 sortTrackerFunds）。 */
+function FundSortHeader({
+  label,
+  columnKey,
+  sort,
+  onSort,
+}: {
+  label: string;
+  columnKey: TrackerFundSortKey;
+  sort: { key: TrackerFundSortKey; dir: SortDirection } | null;
+  onSort: (key: TrackerFundSortKey) => void;
+}) {
+  const active = sort?.key === columnKey;
+  return (
+    <th className="py-1.5 text-right font-medium">
+      <button
+        type="button"
+        onClick={() => onSort(columnKey)}
+        className="inline-flex items-center gap-1 transition-colors hover:text-foreground"
+        aria-label={"按" + label + "排序"}
+      >
+        {label}
+        {active ? (
+          sort!.dir === "asc" ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />
+        ) : (
+          <ArrowUpDown className="size-3 opacity-40" />
+        )}
+      </button>
+    </th>
+  );
+}
+
 export function ValuationDetailClient({
   code,
   detail,
@@ -203,6 +284,13 @@ export function ValuationDetailClient({
   const [mode, setMode] = useState<BandMode>("pct");
   const [sigma, setSigma] = useState(1);
   const [showBandArea, setShowBandArea] = useState(true);
+  /** 成分饼图：默认隐藏非前 10 大权重股（其余聚合成「其他」）。 */
+  const [hideNonTop10, setHideNonTop10] = useState(true);
+  /** 跟踪基金表前端排序；null = 后端返回顺序（按规模降序）。 */
+  const [fundSort, setFundSort] = useState<{
+    key: TrackerFundSortKey;
+    dir: SortDirection;
+  } | null>(null);
 
   // 历史序列缓存：{ key: `${code}:${metric}:${window}`, data }。渲染前必须校验 key 与当前
   // 指标/窗口一致，否则切换瞬间会把旧指标的序列当成新指标画（错标/错轴/闪错）。
@@ -310,6 +398,12 @@ export function ValuationDetailClient({
   const totalAum = detail ? sumAum(funds) : null;
   const constituents = detail?.constituents ?? [];
   const cr10 = constituents.slice(0, 10).reduce((sum, item) => sum + (item.weight ?? 0), 0);
+  const disclosedWeight = constituents.reduce((sum, item) => sum + (item.weight ?? 0), 0);
+  const pieSlices = useMemo(
+    () => constituentPieSlices(constituents, hideNonTop10),
+    [constituents, hideNonTop10],
+  );
+  const pieOption = useMemo(() => buildConstituentPieOption(pieSlices, theme), [pieSlices, theme]);
   const trackerMeta = detail
     ? formatTrackerMeta({
         totalAum,
@@ -332,6 +426,17 @@ export function ValuationDetailClient({
     [funds],
   );
   const fundOption = useMemo(() => buildFundAumOption(fundBars, theme), [fundBars, theme]);
+  const sortedFunds = useMemo(
+    () => (fundSort ? sortTrackerFunds(funds, fundSort.key, fundSort.dir) : funds),
+    [funds, fundSort],
+  );
+  const toggleFundSort = (key: TrackerFundSortKey) => {
+    setFundSort((current) =>
+      current?.key === key
+        ? { key, dir: current.dir === "asc" ? "desc" : "asc" }
+        : { key, dir: "desc" },
+    );
+  };
 
   const priceOption = useMemo(() => {
     if (!detail || detail.price_series.length === 0 || series.length === 0) return null;
@@ -377,7 +482,7 @@ export function ValuationDetailClient({
 
   if (!detail) {
     return (
-      <div className="mx-auto flex min-h-[60vh] w-full max-w-3xl flex-col items-center justify-center gap-3 px-4 text-center">
+      <div className="mx-auto mt-10 flex min-h-[50vh] w-full max-w-3xl flex-col items-center justify-center gap-3 text-center">
         <AlertTriangle className="size-8 text-warning" />
         <h1 className="text-lg font-semibold">未能加载指数 {code} 的估值数据</h1>
         <p className="text-sm text-muted-foreground">
@@ -393,17 +498,8 @@ export function ValuationDetailClient({
   const riskRows = (["1y", "3y", "5y", "all"] as const).filter((key) => detail.risk[key]);
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto w-full max-w-[1600px] px-4 pb-16 pt-6 sm:px-6 sm:pt-8 lg:px-8">
-        <Link
-          href="/valuation"
-          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="size-3.5" />
-          指数估值
-        </Link>
-
-        {/* 头部 */}
+    <>
+      {/* 头部 */}
         <header className="mt-2 flex flex-wrap items-end justify-between gap-4 border-b border-border pb-3">
           <div>
             <div className="flex flex-wrap items-baseline gap-3">
@@ -598,7 +694,6 @@ export function ValuationDetailClient({
                       ? "虚线为 P20 / P50 / P80（机会/中位/危险）"
                       : "虚线为均值 ±" + sigma + "σ"}
                     ；样本 {stats?.sample_size ?? 0} 点
-                    {detail.price_series.length > 0 ? " · 右轴为指数点位" : ""}
                   </p>
                 </div>
                 <div className="text-right">
@@ -727,13 +822,34 @@ export function ValuationDetailClient({
               />
               {constituents.length > 0 ? (
                 <>
-                  <div className="mt-1 flex flex-wrap gap-4 text-[11px] text-muted-foreground">
-                    <span>CR10 集中度 {cr10.toFixed(1)}%</span>
-                    <span>
-                      权重合计 {constituents.reduce((sum, item) => sum + (item.weight ?? 0), 0).toFixed(1)}%
-                    </span>
+                  <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                    <div className="flex flex-wrap gap-4">
+                      <span>CR10 集中度 {cr10.toFixed(1)}%</span>
+                      <span>权重合计 {disclosedWeight.toFixed(1)}%</span>
+                    </div>
+                    {/* 2026-11-27 第二轮反馈：默认隐藏非前 10 大权重股（其余 = 其他权重聚合片）。 */}
+                    <button
+                      type="button"
+                      onClick={() => setHideNonTop10((value) => !value)}
+                      aria-pressed={hideNonTop10}
+                      className={cn(
+                        "h-7 rounded-md border px-2 text-[11px] transition-colors",
+                        hideNonTop10
+                          ? "border-foreground bg-foreground text-background"
+                          : "border-border text-muted-foreground hover:bg-muted",
+                      )}
+                    >
+                      隐藏非前10大权重股
+                    </button>
                   </div>
-                  <div className="mt-2 max-h-[360px] overflow-auto">
+                  <div className="mt-2 grid grid-cols-1 gap-3 lg:grid-cols-[260px_minmax(0,1fr)]">
+                    <div className="rounded-lg border border-border/60 px-2 pb-1 pt-2">
+                      <div className="px-1 text-[10px] text-muted-foreground">
+                        {hideNonTop10 ? "前 10 大权重 + 其他（%）" : "全部已披露成分权重（%）"}
+                      </div>
+                      <EChart option={pieOption} style={{ height: 220, width: "100%" }} />
+                    </div>
+                    <div className="max-h-[360px] overflow-auto">
                     <table className="w-full min-w-[640px] border-collapse text-sm">
                       <thead className="sticky top-0 z-10">
                         <tr className="border-b border-border bg-card text-[11px] text-muted-foreground">
@@ -762,6 +878,7 @@ export function ValuationDetailClient({
                         ))}
                       </tbody>
                     </table>
+                    </div>
                   </div>
                 </>
               ) : (
@@ -878,7 +995,9 @@ export function ValuationDetailClient({
             <div className="min-w-0">
               <h2 className="text-sm font-medium">跟踪基金</h2>
               <p className="mt-0.5 text-[11px] text-muted-foreground">
-                {funds.length > 0 ? "按最新规模排序 · Top10 规模条形图 + 明细表" : "暂无跟踪基金数据"}
+                {funds.length > 0
+                  ? "默认按最新规模排序 · 表头可升/降序排序（空值恒垫底）· Top10 规模条形图 + 明细表"
+                  : "暂无跟踪基金数据"}
               </p>
             </div>
             <div className="flex shrink-0 flex-col items-end gap-1.5">
@@ -908,24 +1027,24 @@ export function ValuationDetailClient({
                   <thead>
                     <tr className="border-b border-border text-muted-foreground">
                       <th className="py-1.5 text-left font-medium">基金</th>
-                      <th className="py-1.5 text-right font-medium">规模</th>
-                      <th className="py-1.5 text-right font-medium">管理费</th>
-                      <th className="py-1.5 text-right font-medium">托管费</th>
-                      <th className="py-1.5 text-right font-medium">年化波动</th>
+                      <FundSortHeader label="规模" columnKey="scale" sort={fundSort} onSort={toggleFundSort} />
+                      <FundSortHeader label="管理费" columnKey="management_fee" sort={fundSort} onSort={toggleFundSort} />
+                      <FundSortHeader label="托管费" columnKey="custody_fee" sort={fundSort} onSort={toggleFundSort} />
+                      <FundSortHeader label="年化波动" columnKey="ann_vol_1y" sort={fundSort} onSort={toggleFundSort} />
                       <th className="py-1.5 text-right font-medium">最大回撤</th>
-                      <th className="py-1.5 text-right font-medium">跟踪误差</th>
+                      <FundSortHeader label="跟踪误差" columnKey="tracking_error_1y" sort={fundSort} onSort={toggleFundSort} />
                       <th className="py-1.5 text-right font-medium">信息比率</th>
                       <th className="py-1.5 text-right font-medium">近1月</th>
                       <th className="py-1.5 text-right font-medium">近3月</th>
                       <th className="py-1.5 text-right font-medium">近6月</th>
-                      <th className="py-1.5 text-right font-medium">近1年</th>
+                      <FundSortHeader label="近1年" columnKey="ret_12m" sort={fundSort} onSort={toggleFundSort} />
                       <th className="py-1.5 text-right font-medium">近3年</th>
                       <th className="py-1.5 text-right font-medium">近5年</th>
                       <th className="py-1.5 text-right font-medium">今年以来</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {funds.slice(0, 8).map((fund) => {
+                    {sortedFunds.slice(0, 8).map((fund) => {
                       const scale = trackerFundScale(fund);
                       const te = fund.tracking_error_1y;
                       const teTone = trackingErrorTone(te);
@@ -1029,7 +1148,6 @@ export function ValuationDetailClient({
           {detail.tracker_funds_updated_at ? formatUpdatedAtCompact(detail.tracker_funds_updated_at) : "—"}。
           收益风险未扣无风险利率，仅供横向比较。
         </p>
-      </div>
-    </div>
+    </>
   );
 }

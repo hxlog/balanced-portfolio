@@ -15,6 +15,7 @@ import type {
   ValuationHistoryData,
 } from "@/lib/valuation-detail-types";
 import { ValuationDetailClient } from "./ValuationDetailClient";
+import { ValuationDetailShell } from "./ValuationDetailShell";
 import { ValuationDetailSkeleton } from "./ValuationDetailSkeleton";
 
 interface ValuationDetailPageProps {
@@ -110,8 +111,12 @@ export default async function ValuationDetailPage({
   const { code } = await params;
 
   return (
-    <Suspense fallback={<ValuationDetailSkeleton />}>
-      <ValuationDetailData code={code} />
-    </Suspense>
+    // 静态壳（容器 + 返回链接）先渲染；数据区域在 Suspense 内流式渲染，
+    // fallback 只替换内容骨架，不整页 loading（2026-11-27 第二轮反馈 B5）。
+    <ValuationDetailShell>
+      <Suspense fallback={<ValuationDetailSkeleton />}>
+        <ValuationDetailData code={code} />
+      </Suspense>
+    </ValuationDetailShell>
   );
 }

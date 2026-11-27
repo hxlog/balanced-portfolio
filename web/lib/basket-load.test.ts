@@ -78,7 +78,6 @@ describe("findPoolAsset / basketItemFromRecordAsset", () => {
     expect(item.name).toBe("MISSING");
     expect(item.inPool).toBe(false);
     expect(item.hasData).toBe(false);
-    expect(item.adjustView).toBe("bfq");
   });
 
   it("defaults stock sources to hfq display adjust", () => {
@@ -87,7 +86,8 @@ describe("findPoolAsset / basketItemFromRecordAsset", () => {
       POOL,
     );
     expect(item.name).toBe("招商银行");
-    expect(item.adjustView).toBe("hfq");
+    expect(item.source).toBe("stock_sina");
+    expect(item.category).toBe("stock");
   });
 });
 

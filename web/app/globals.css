@@ -109,7 +109,15 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border;
+  }
+  /* 2026-11-27 第二轮反馈（A2）：原先 `*` 上的 `outline-ring/50` 把所有元素
+     （含行业热力格子这类非交互块）的 focus outline 染成 sky 蓝，点击/hover 时
+     出现「蓝框」。这里只对真正可聚焦的交互元素统一 focus-visible 环（沿用 --ring
+     token），普通容器不再有蓝色 outline。 */
+  :where(a, button, [role="button"], [tabindex]):focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
   }
   html {
     overflow-x: clip;

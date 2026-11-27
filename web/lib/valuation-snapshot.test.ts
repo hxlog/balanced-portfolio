@@ -321,8 +321,9 @@ describe("deriveProxyCards", () => {
   it("指标选择器常量符合产品定义", () => {
     expect(BAND_INDEX_OPTIONS.map((item) => item.code)).toEqual(["000300", "000510", "000016", "000985"]);
     expect(DEFAULT_BAND_INDEX).toBe("000300");
-    expect(MVI_OVERLAY_INDEX_OPTIONS.map((item) => item.code)).toEqual(["000985", "000300", "000510", "000016"]);
-    expect(DEFAULT_MVI_OVERLAY_INDEX).toBe("000985");
+    // 默认 000300：000985 无可用点位历史，默认打开会命中「数据建设中」。
+    expect(MVI_OVERLAY_INDEX_OPTIONS.map((item) => item.code)).toEqual(["000300", "000510", "000016", "000985"]);
+    expect(DEFAULT_MVI_OVERLAY_INDEX).toBe("000300");
   });
 });
 

@@ -103,7 +103,9 @@ export function MviOverlayModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl">
+      {/* 宽度：DialogContent 基础类在 sm 断点有 sm:max-w-lg，会覆盖 max-w-5xl；
+          这里用 sm:max-w-6xl + 90vw 让 PC 端自适应加宽（移动端仍 100%-2rem）。 */}
+      <DialogContent className="w-[90vw] sm:max-w-6xl">
         <DialogHeader>
           <DialogTitle>MVI × 指数 · 双轴图</DialogTitle>
           <DialogDescription>

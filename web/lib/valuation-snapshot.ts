@@ -39,12 +39,17 @@ export const BAND_INDEX_OPTIONS = [
 
 export const DEFAULT_BAND_INDEX = BAND_INDEX_OPTIONS[0].code;
 
-/** MVI 展开图（双轴）的指数选择器（4 只，默认中证全指）。 */
+/**
+ * MVI 展开图（双轴）的指数选择器（4 只，默认沪深300）。
+ *
+ * 000985 中证全指暂无可用点位历史（估值 fallback 接入晚、免费源仅滚动 20 日），
+ * 默认打开 000985 会命中「点位数据建设中」，故默认 000300；000985 保留在列表末尾。
+ */
 export const MVI_OVERLAY_INDEX_OPTIONS = [
-  { code: "000985", name: "中证全指" },
   { code: "000300", name: "沪深300" },
   { code: "000510", name: "中证A500" },
   { code: "000016", name: "上证50" },
+  { code: "000985", name: "中证全指" },
 ] as const;
 
 export const DEFAULT_MVI_OVERLAY_INDEX = MVI_OVERLAY_INDEX_OPTIONS[0].code;

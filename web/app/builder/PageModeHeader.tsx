@@ -23,6 +23,7 @@ export function PageModeHeader({
   mode,
   basePath = "/builder",
   onSelect,
+  hrefFor,
   trailing,
   className,
   ariaLabel,
@@ -31,6 +32,8 @@ export function PageModeHeader({
   basePath?: string;
   /** 局部 shell：由调用方接管切换；不传则 Link 软导航。 */
   onSelect?: (next: BuilderMode) => void;
+  /** 每个模式的目标 href（如 /builder 篮子页的四象限 pill 指向 /dashboard）。 */
+  hrefFor?: (next: BuilderMode) => string;
   /** 右侧附加操作（如「新建篮子」）；绝对定位在右侧，保证 pill 真正居中。 */
   trailing?: ReactNode;
   className?: string;
@@ -43,6 +46,7 @@ export function PageModeHeader({
           mode={mode}
           basePath={basePath}
           onSelect={onSelect}
+          hrefFor={hrefFor}
           ariaLabel={ariaLabel}
         />
         {trailing ? (

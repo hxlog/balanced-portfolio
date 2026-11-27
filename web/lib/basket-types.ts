@@ -62,12 +62,8 @@ export function basketMethodLabel(method: string): string {
   return BASKET_METHOD_LABELS[method] ?? method;
 }
 
-export const BASKET_ADJUST_OPTIONS = [
-  { value: "bfq", label: "不复权" },
-  { value: "hfq", label: "后复权" },
-] as const;  // qfq（前复权）已停用
-
-export type BasketAdjust = (typeof BASKET_ADJUST_OPTIONS)[number]["value"];
+/** 资产行固定的回测口径标注（后端清洗价唯一口径，前端不再提供 bfq/hfq 切换）。 */
+export const BASKET_ADJUST_LABEL = "后复权 hfq";
 
 export const BASKET_CATEGORY_FILTERS = [
   { value: "index", label: "指数" },
@@ -208,6 +204,14 @@ export interface BasketRecord {
   display_order?: number | null;
 }
 
+/** 交易成本参数（佣金/滑点双边、印花税卖出单边）与区间累计成本。 */
+export interface BasketFees {
+  fee_rate: number;
+  slippage_rate: number;
+  stamp_duty_rate: number;
+  total_cost?: number;
+}
+
 export interface BasketBacktestResult {
   method: string;
   effective_start: string;
@@ -221,6 +225,12 @@ export interface BasketBacktestResult {
   annualized_vol: number;
   max_drawdown: number;
   sharpe: number;
+  /** 扣费后诊断指标（旧后端缺省）：Sortino / Calmar / 交易成本。 */
+  sortino?: number | null;
+  calmar?: number | null;
+  trading_days?: number;
+  fees?: BasketFees | null;
+  total_cost?: number;
   turnover: number;
   turnover_total: number;
   rebalance_count: number;
@@ -241,8 +251,6 @@ export interface BasketItem {
   assetClass?: string;
   industry?: string;
   market?: string;
-  /** 仅影响本页展示口径；请求体从不携带该字段。 */
-  adjustView: BasketAdjust;
   /** 是否已在资产池（`/api/assets`）中；未接入的股票无法回测。 */
   inPool: boolean;
   /** 资产池内是否已有清洗行情；未接入/待拉取时给出提示。 */
@@ -251,14 +259,6 @@ export interface BasketItem {
 
 export function basketKey(symbol: string, source: string): string {
   return `${symbol}@${source}`;
-}
-
-export function defaultAdjustForAsset(
-  asset: Pick<Asset, "source" | "adjust">,
-): BasketAdjust {
-  const raw = asset.adjust;
-  if (raw === "bfq" || raw === "hfq") return raw;  // qfq 已停用，旧配置回退默认口径
-  return asset.source.startsWith("stock_") ? STOCK_BACKTEST_ADJUST : "bfq";
 }
 
 export function basketItemFromAsset(asset: Asset): BasketItem {
@@ -270,7 +270,6 @@ export function basketItemFromAsset(asset: Asset): BasketItem {
     category: asset.category,
     vendor: asset.vendor,
     assetClass: asset.asset_class,
-    adjustView: defaultAdjustForAsset(asset),
     inPool: true,
     hasData: Boolean(asset.last_clean_date),
   };
@@ -290,7 +289,6 @@ export function basketItemFromStock(
     assetClass: "stock",
     industry: stock.industry_l1 ?? undefined,
     market: stock.market ?? undefined,
-    adjustView: STOCK_BACKTEST_ADJUST,
     inPool: Boolean(poolHit),
     hasData: Boolean(poolHit?.last_clean_date),
   };

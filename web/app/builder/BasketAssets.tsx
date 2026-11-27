@@ -44,12 +44,11 @@ import {
 } from "@/lib/asset-range";
 import { basketErrorMessage, listStockIndustries, searchStocks } from "@/lib/basket-api";
 import {
-  BASKET_ADJUST_OPTIONS,
+  BASKET_ADJUST_LABEL,
   BASKET_CATEGORY_FILTERS,
   BASKET_MAX_ASSETS,
   STOCK_SOURCE,
   basketKey,
-  type BasketAdjust,
   type BasketItem,
   type StockIndustry,
   type StockSearchItem,
@@ -60,12 +59,9 @@ const CATEGORY_LABEL: Record<string, string> = Object.fromEntries(
   BASKET_CATEGORY_FILTERS.map((c) => [c.value, c.label]),
 );
 
-const STOCK_ADJUST_HINT = "仅切换本页展示口径，不影响回测；股票回测固定后复权（hfq）";
-
 export function BasketAssets({
   items,
   onRemove,
-  onAdjustChange,
   onOpenPool,
   onOpenStock,
   onIngest,
@@ -75,7 +71,6 @@ export function BasketAssets({
 }: {
   items: BasketItem[];
   onRemove: (key: string) => void;
-  onAdjustChange: (key: string, adjust: BasketAdjust) => void;
   onOpenPool: () => void;
   onOpenStock: () => void;
   onIngest: (item: BasketItem) => void;
@@ -90,7 +85,7 @@ export function BasketAssets({
         <div>
           <CardTitle className="text-base">篮子成分</CardTitle>
           <CardDescription>
-            {items.length} / {BASKET_MAX_ASSETS} 项 · 点击资产行右侧的「不复权 / 后复权」仅切换展示口径
+            {items.length} / {BASKET_MAX_ASSETS} 项 · 回测统一使用后复权 hfq（分红再投，价格连续）
           </CardDescription>
         </div>
         <div className="flex w-full gap-2 sm:w-auto">
@@ -126,7 +121,7 @@ export function BasketAssets({
             <div>
               <p className="text-sm font-medium">先放入几个资产</p>
               <p className="mt-1 text-xs text-muted-foreground">
-                从现有资产池选择，或搜索全 A 股；股票选中即按后复权口径加入。
+                从现有资产池选择，或搜索全 A 股；股票选中即按后复权 hfq 口径加入。
               </p>
             </div>
             <div className="flex gap-2">
@@ -194,30 +189,13 @@ export function BasketAssets({
                     </div>
                   </div>
 
-                  <div
-                    className="inline-flex shrink-0 overflow-hidden rounded-md border border-border bg-muted/40"
-                    title={STOCK_ADJUST_HINT}
-                    aria-label="展示复权口径"
+                  <Badge
+                    variant="outline"
+                    className="shrink-0 border-border px-1.5 font-normal text-muted-foreground"
+                    title="清洗行情唯一回测口径：后复权（分红再投，价格连续）"
                   >
-                    {BASKET_ADJUST_OPTIONS.map((option) => (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => onAdjustChange(item.key, option.value)}
-                        aria-pressed={item.adjustView === option.value}
-                        disabled={readOnly}
-                        title={`${option.label}（仅展示）`}
-                        className={cn(
-                          "px-1.5 py-1 text-[10px] font-medium uppercase tracking-wide transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-                          item.adjustView === option.value
-                            ? "bg-background text-foreground shadow-sm"
-                            : "text-muted-foreground hover:text-foreground",
-                        )}
-                      >
-                        {option.value}
-                      </button>
-                    ))}
-                  </div>
+                    {BASKET_ADJUST_LABEL}
+                  </Badge>
 
                   {!item.inPool && canManageAssets && (
                     <Button
@@ -423,7 +401,7 @@ export function AssetPoolDialog({
                   <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
                     <span className="font-mono">{asset.symbol}</span>
                     {asset.vendor && <span>{asset.vendor}</span>}
-                    {asset.source.startsWith("stock_") && <span>后复权</span>}
+                    {asset.source.startsWith("stock_") && <span>后复权 hfq</span>}
                   </div>
                 </div>
                 <span
@@ -556,7 +534,7 @@ export function StockSearchDialog({
         <DialogHeader className="shrink-0">
           <DialogTitle>搜索 A 股</DialogTitle>
           <DialogDescription>
-            全 A 股主数据 · 选中即加入篮子 · 回测口径 = 后复权（保持历史价格连续）
+            全 A 股主数据 · 选中即加入篮子 · 回测口径 = 后复权 hfq（保持历史价格连续）
           </DialogDescription>
         </DialogHeader>
 
@@ -655,9 +633,9 @@ export function StockSearchDialog({
                   </div>
                   <span
                     className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline"
-                    title="后复权：以上市首日为基准复权，分红再投，回测默认口径"
+                    title="后复权 hfq：以上市首日为基准复权，分红再投，回测唯一口径"
                   >
-                    后复权
+                    后复权 hfq
                   </span>
                 </button>
               );
@@ -670,7 +648,7 @@ export function StockSearchDialog({
                 输入股票代码或名称，或按行业筛选
               </p>
               <p className="text-xs text-muted-foreground">
-                股票行情由新浪主源、腾讯备源接入，回测使用后复权。
+                股票行情由新浪主源、腾讯备源接入，回测使用后复权 hfq。
               </p>
             </div>
           )}
@@ -695,7 +673,7 @@ export function StockSearchDialog({
           <span className="text-xs text-muted-foreground">
             {enabled && total > 0
               ? `共 ${total} 条${total > rows.length ? `，显示前 ${rows.length} 条` : ""}`
-              : "回测口径 = 后复权（历史价格连续，回测默认）"}
+              : "回测口径 = 后复权 hfq（历史价格连续）"}
           </span>
           <Button variant="ghost" onClick={close}>
             完成
@@ -711,7 +689,7 @@ export function notifyStockAdded(
   stock: StockSearchItem,
   inPool: boolean,
 ): void {
-  toast.success(`${stock.name} 已加入篮子 · 回测口径 = 后复权`, {
+  toast.success(`${stock.name} 已加入篮子 · 回测口径 = 后复权 hfq`, {
     id: "basket-stock-add",
     description: inPool
       ? undefined

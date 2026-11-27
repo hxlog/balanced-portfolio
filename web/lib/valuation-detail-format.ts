@@ -154,3 +154,44 @@ export function formatTrackerMeta(args: {
     `更新于 ${formatUpdatedAtCompact(args.updatedAt)}`,
   ].join(" · ");
 }
+
+/** 跟踪基金表可排序的指标：规模/费率/跟踪误差/年化波动/近 1 年收益。 */
+export type TrackerFundSortKey =
+  | "scale"
+  | "management_fee"
+  | "custody_fee"
+  | "ann_vol_1y"
+  | "tracking_error_1y"
+  | "ret_12m";
+
+export type SortDirection = "asc" | "desc";
+
+/** 跟踪基金排序取值（规模走统一口径 trackerFundScale；缺失返回 null）。 */
+export function trackerFundSortValue(
+  fund: DetailTrackerFund,
+  key: TrackerFundSortKey,
+): number | null {
+  if (key === "scale") return trackerFundScale(fund);
+  const value = fund[key];
+  return value != null && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * 跟踪基金前端纯排序：升/降序切换，**null 恒垫底**（不参与方向翻转）。
+ * 非数值字段（名称）不参与，由调用方只在可排序列挂按钮。
+ */
+export function sortTrackerFunds(
+  funds: readonly DetailTrackerFund[],
+  key: TrackerFundSortKey,
+  direction: SortDirection,
+): DetailTrackerFund[] {
+  const sign = direction === "asc" ? 1 : -1;
+  return funds.slice().sort((a, b) => {
+    const left = trackerFundSortValue(a, key);
+    const right = trackerFundSortValue(b, key);
+    if (left == null && right == null) return 0;
+    if (left == null) return 1;
+    if (right == null) return -1;
+    return sign * (left - right);
+  });
+}

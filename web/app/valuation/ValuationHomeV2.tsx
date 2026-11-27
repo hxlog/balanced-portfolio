@@ -437,13 +437,6 @@ export function ValuationHomeV2({
   // 无数据且当前指标补拉尚未失败 = 仍在加载/补拉（含批量在途与失败后的自动补拉），
   // 一律显示骨架；只有补拉也失败才进入可重试错误态，避免失败瞬间闪错。
   const bandPending = loadingKey === currentKey || (!history && !singleFailed);
-  const listAsOf = rows.length
-    ? rows
-        .map((row) => row.trade_date)
-        .filter(Boolean)
-        .sort()
-        .at(-1) ?? null
-    : null;
   const windowLabel = V2_WINDOWS.find((item) => item.value === window)?.label ?? window;
 
   const toggleColumn = useCallback((key: ColumnKey) => {
@@ -466,12 +459,15 @@ export function ValuationHomeV2({
 
   return (
     <div className="mx-auto w-full max-w-[1600px] px-4 pb-16 sm:px-6 lg:px-8">
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="text-xs text-muted-foreground">
-          指标切换本地完成、不整页刷新；数据截至 {listAsOf ?? "—"}
-          {listLoading ? " · 列表更新中…" : ""}
-          {listError ? " · " + listError : ""}
-        </div>
+      <div className="mt-4 flex flex-wrap items-center justify-end gap-3">
+        {/* 2026-11-27 第二轮反馈：删除「指标切换本地完成、数据截至 …」整段说明文案。
+            局部加载/失败状态仍需可见，改为紧凑提示放在同一行左侧。 */}
+        {listLoading || listError ? (
+          <div className="mr-auto text-xs text-muted-foreground">
+            {listLoading ? "列表更新中…" : ""}
+            {listError ? " · " + listError : ""}
+          </div>
+        ) : null}
         <div className="flex flex-wrap items-center gap-1.5">
           {V2_WINDOWS.map((item) => (
             <button
@@ -521,7 +517,7 @@ export function ValuationHomeV2({
       {/* 主图 + 行业热力 */}
       <section className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
         <ChartCard
-          title={bandOption.name + " · Valuation Band"}
+          title="Valuation Band"
           desc={METRIC_LABEL[metric] + " · " + windowLabel}
           className="xl:col-span-2"
           aside={
@@ -668,18 +664,10 @@ export function ValuationHomeV2({
               <p className="mt-1">
                 该行业下所有跟踪指数的 PE-TTM {windowLabel}分位均值；样本数 = 参与计算的指数数量；分位越低越便宜。
               </p>
-              <p className="mt-1">
-                点击方格可筛选下方列表 · 数据截至 {listAsOf ?? "—"} · 窗口 {windowLabel}
-              </p>
             </InfoTip>
           }
         >
-          <IndustryHeatmap
-            rows={rows}
-            onSelect={(value) => setIndustry(value)}
-            windowLabel={windowLabel}
-            asOf={listAsOf}
-          />
+          <IndustryHeatmap rows={rows} windowLabel={windowLabel} />
         </ChartCard>
       </section>
 
@@ -693,6 +681,7 @@ export function ValuationHomeV2({
               : "股息率 × PB（对数轴），气泡=跟踪基金规模；左上（低 PB + 高股息）最具吸引力"
           }
           className="xl:col-span-2"
+          bodyClassName="flex flex-1 items-center justify-center py-3"
           aside={
             <div className="inline-flex overflow-hidden rounded-md border border-border text-[11px]">
               <button

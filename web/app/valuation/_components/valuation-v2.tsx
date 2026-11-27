@@ -82,7 +82,8 @@ function scatterBaseOption(
   const maxSize = Math.max(1, ...points.map((p) => p.size));
   return {
     animation: false,
-    grid: { left: 10, right: 18, top: 34, bottom: 36, containLabel: true },
+    // 2026-11-27 第二轮反馈：左留白给旋转的纵轴标题（原 left:10 + nameGap:38 会被裁切）。
+    grid: { left: 20, right: 18, top: 34, bottom: 36, containLabel: true },
     tooltip: {
       confine: true,
       backgroundColor: theme.tooltipBg,
@@ -112,7 +113,7 @@ function scatterBaseOption(
       type: "value",
       name: yName,
       nameLocation: "middle",
-      nameGap: 38,
+      nameGap: 30,
       nameTextStyle: { color: theme.subtext, fontSize: 10 },
       axisLabel: { color: theme.subtext, fontSize: 9, formatter: (v: number) => v.toFixed(2) },
       splitLine: { lineStyle: { color: theme.splitLine } },
@@ -400,6 +401,10 @@ export function DividendValueChart({
       nameLocation: "middle",
       nameGap: 30,
       scale: true,
+      // 2026-11-27 第二轮反馈：绝对模式的股息率 Y 轴按数据自适应，不沿用相对模式
+      // 的 0~100 固定刻度（ECharts setOption 是 merge，缺省 min/max 会保留上一次的值）。
+      min: "dataMin",
+      max: "dataMax",
       nameTextStyle: { color: theme.subtext, fontSize: 10 },
       axisLabel: { color: theme.subtext, fontSize: 9, formatter: (value: number) => value.toFixed(1) },
       splitLine: { lineStyle: { color: theme.splitLine } },
@@ -524,7 +529,10 @@ export function RoePeMatrix({ rows }: { rows: IndexQuoteRow[] }) {
       }),
     [points],
   );
-  if (points.length < 3) return <EmptyChart text="ROE 或 PE 数据不足，暂无法绘制矩阵" />;
+  // 数据不足时明确空态（后端快照需同时带 ROE 与 PE；不得用其它字段推导/造数）。
+  if (points.length < 3) {
+    return <EmptyChart text="ROE 或 PE 数据不足（需快照同时提供 ROE 与 PE），暂无法绘制矩阵" />;
+  }
   const option = scatterBaseOption(points, "PE（倍，log 轴）", "ROE（%）", theme);
   (option.xAxis as Record<string, unknown>).type = "log";
   (option.xAxis as Record<string, unknown>).min = "dataMin";
@@ -738,6 +746,7 @@ export function ChartCard({
   aside,
   children,
   className,
+  bodyClassName,
 }: {
   title: string;
   desc?: string;
@@ -745,9 +754,11 @@ export function ChartCard({
   aside?: ReactNode;
   children: ReactNode;
   className?: string;
+  /** 图表本体容器的附加 class（如 flex 居中 + 上下 padding，避免 ECharts 贴边）。 */
+  bodyClassName?: string;
 }) {
   return (
-    <section className={cn("rounded-xl border border-border bg-card p-4", className)}>
+    <section className={cn("flex flex-col rounded-xl border border-border bg-card p-4", className)}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="flex items-center gap-1 text-sm font-medium">
@@ -758,7 +769,7 @@ export function ChartCard({
         </div>
         {aside}
       </div>
-      <div className="mt-2">{children}</div>
+      <div className={cn("mt-2", bodyClassName)}>{children}</div>
     </section>
   );
 }
