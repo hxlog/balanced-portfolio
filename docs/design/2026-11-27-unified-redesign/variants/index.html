@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>全站改版 · 原型变体选择（2026-11-27）</title>
+<style>
+:root{--bg:#f6f8fb;--card:#fff;--bd:#e4e9f0;--tx:#0f172a;--tx2:#5b6b82;--tx3:#8a99ad;--sky:#0284c7;--up:#dc2626;--down:#16a34a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.6 Geist,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:1360px;margin:0 auto;padding:40px 24px 80px}
+h1{font-size:26px;letter-spacing:-.02em;margin:0 0 8px}
+.sub{color:var(--tx2);margin:0 0 22px}
+.meta{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:26px}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border:1px solid var(--bd);border-radius:999px;background:#fff;color:var(--tx2);font-size:12px}
+.pill b{color:var(--tx)}
+grid{display:grid}
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+@media(max-width:1100px){.cards{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:16px;overflow:hidden;display:flex;flex-direction:column;transition:box-shadow .2s,transform .2s}
+.card:hover{box-shadow:0 12px 40px -24px rgba(15,23,42,.35);transform:translateY(-2px)}
+.shot{aspect-ratio:16/10;background:linear-gradient(135deg,#e0f2fe,#f5f3ff 45%,#fce7f3);position:relative;overflow:hidden}
+.shot img{width:100%;height:100%;object-fit:cover;display:block}
+.shot .tag{position:absolute;left:12px;top:12px;background:rgba(15,23,42,.72);color:#fff;font-size:11px;padding:4px 9px;border-radius:999px;letter-spacing:.02em}
+.body{padding:16px 18px 18px;display:flex;flex-direction:column;gap:10px;flex:1}
+.body h2{font-size:16px;margin:0}
+.body p{margin:0;color:var(--tx2);font-size:12.5px;line-height:1.65}
+.row{display:flex;gap:8px;margin-top:auto}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:34px;padding:0 13px;border-radius:9px;border:1px solid var(--bd);background:#fff;color:var(--tx2);font-size:12.5px;text-decoration:none}
+.btn.pri{background:var(--sky);border-color:var(--sky);color:#fff}
+.kv{display:flex;gap:12px;flex-wrap:wrap;color:var(--tx3);font-size:11.5px}
+.kv b{color:var(--tx);font-weight:600}
+.note{margin-top:28px;background:#fff;border:1px solid var(--bd);border-radius:14px;padding:18px 20px;color:var(--tx2);font-size:12.5px}
+.note h3{font-size:13px;color:var(--tx);margin:0 0 8px}
+code{background:#f2f6fa;padding:1px 6px;border-radius:5px;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#0369a1}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>全站改版 · 原型变体选择</h1>
+  <p class="sub">三个视觉方向、同一套内容与交互。点开每个变体可切换 A 估值首页 / B HSI 详情 / C Dashboard，右上角可切明暗、右下角可演示“局部 loading”。选定后按 docs/design/2026-11-27-unified-redesign/implementation-plan.md 开工。</p>
+  <div class="meta">
+    <span class="pill">用户已选结构 <b>D1 + stockA + basketA + cryptoB</b></span>
+    <span class="pill">质感参考 <b>prologue.dev / ui</b></span>
+    <span class="pill">规则 <b>红涨绿跌 · 局部 loading · 双主题</b></span>
+    <span class="pill">数据快照 <b>2026-11-27</b></span>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <div class="shot"><span class="tag">推荐主方案</span><img src="v1-prologue-refined/screenshot-desktop.png" alt="V1 截图" onerror="this.style.display='none'"></div>
+      <div class="body">
+        <h2>V1 · Prologue Refined</h2>
+        <p>在 d1/stockA/basketA/cryptoB 的紧凑数据工作台上，注入 prologue 的 glass 顶栏、柔和品牌渐变、spotlight 卡片、pill 导航与 reveal-rise 动效。专业、克制、数据密度高。</p>
+        <div class="kv"><span>圆角 <b>14/20px</b></span><span>动效 <b>150-250ms</b></span><span>风格 <b>Prologue 精修</b></span></div>
+        <div class="row"><a class="btn pri" href="v1-prologue-refined/index.html">打开预览</a><a class="btn" href="v1-prologue-refined/README.md">设计说明</a></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="shot"><span class="tag">高密度 · 黑白</span><img src="v2-vercel-mono/screenshot-desktop.png" alt="V2 截图" onerror="this.style.display='none'"></div>
+      <div class="body">
+        <h2>V2 · Vercel Mono Grid</h2>
+        <p>黑白高对比 + 1px 细网格，11px 大写标签、全 mono 数字、近零动效。仪表盘感最强，适合重度数据用户。</p>
+        <div class="kv"><span>圆角 <b>6-8px</b></span><span>动效 <b>≈0</b></span><span>风格 <b>Vercel</b></span></div>
+        <div class="row"><a class="btn pri" href="v2-vercel-mono/index.html">打开预览</a><a class="btn" href="v2-vercel-mono/README.md">设计说明</a></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="shot"><span class="tag">留白 · 松弛</span><img src="v3-openai-airy/screenshot-desktop.png" alt="V3 截图" onerror="this.style.display='none'"></div>
+      <div class="body">
+        <h2>V3 · OpenAI Airy</h2>
+        <p>近白背景、大留白、15-16px 正文、低对比灰阶，sky 只用于按钮/选中；图表极简、动效柔和。阅读舒适度最高。</p>
+        <div class="kv"><span>圆角 <b>16-20px</b></span><span>动效 <b>180-240ms</b></span><span>风格 <b>OpenAI</b></span></div>
+        <div class="row"><a class="btn pri" href="v3-openai-airy/index.html">打开预览</a><a class="btn" href="v3-openai-airy/README.md">设计说明</a></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    <h3>怎么选</h3>
+    1) 先看每张截图/打开预览，重点看 <code>/valuation</code> 的信息密度与图表质感、<code>/valuation/HSI</code> 的跟踪基金呈现、<code>/dashboard</code> 的模式切换与局部 loading；
+    2) 可直接回复「选 V1/V2/V3」或「V1 的结构 + V2 的图表风格」等混合；
+    3) 选择后我会把选定变体落到真实的 Next.js 组件与 token，并按 implementation-plan 的 P0→P3 并行实施。
+  </div>
+</div>
+</body>
+</html>

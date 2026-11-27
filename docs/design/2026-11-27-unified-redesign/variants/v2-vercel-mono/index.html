@@ -1,0 +1,2952 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Balanced Portfolio · V2 Vercel Mono Grid · 全站改版原型</title>
+<meta name="description" content="V2 Vercel Mono Grid —— 黑白高对比、1px 细网格、Geist Mono 数字、局部 loading。全站 UI/UX 重构静态高保真原型（A 指数估值 / B 恒生指数 / C Dashboard）。">
+<style>
+/* ============================================================
+   V2 · VERCEL MONO GRID
+   黑白高对比 · 1px 细网格 · 11px 大写标签 · mono tabular 数字
+   彩色仅保留：涨跌红绿 / 极少量 sky 说明色 / 单点 warning
+   ============================================================ */
+:root{
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --mono:"Cascadia Mono","SFMono-Regular",Consolas,"Liberation Mono",Menlo,ui-monospace,monospace;
+  --r-btn:6px; --r-pop:6px; --dur:.12s; --ease:cubic-bezier(.16,1,.3,1);
+
+  /* dark（默认） */
+  --bg:#000000;
+  --surface:#0a0a0a;
+  --surface-2:#101010;
+  --surface-3:#171717;
+  --line:#232323;
+  --line-2:#2e2e2e;
+  --line-3:#454545;
+  --text:#ededed;
+  --text-2:#a3a3a3;
+  --text-3:#7c7c7c;
+  --text-4:#4d4d4d;
+  --accent:#38bdf8;
+  --accent-ink:#7dd3fc;
+  --accent-wash:rgba(56,189,248,.10);
+  --up:#f87171;
+  --down:#4ade80;
+  --warn:#fbbf24;
+  --band:rgba(255,255,255,.05);
+  --area:rgba(255,255,255,.06);
+  --sheen:rgba(255,255,255,.05);
+  --hover:#141414;
+  --shadow:0 20px 64px rgba(0,0,0,.65);
+  --heat-lo:#4ade80; --heat-mid:#fbbf24; --heat-hi:#f87171;
+  --heat-lo-bg:rgba(74,222,128,.10); --heat-mid-bg:rgba(250,204,21,.09); --heat-hi-bg:rgba(248,113,113,.11);
+  --tag-up-bg:rgba(248,113,113,.08);
+  --tag-down-bg:rgba(74,222,128,.08);
+  color-scheme:dark;
+}
+html[data-theme="light"]{
+  --bg:#fafafa;
+  --surface:#ffffff;
+  --surface-2:#f5f5f5;
+  --surface-3:#ececec;
+  --line:#e4e4e7;
+  --line-2:#d4d4d8;
+  --line-3:#a1a1aa;
+  --text:#09090b;
+  --text-2:#52525b;
+  --text-3:#6f6f78;
+  --text-4:#a1a1aa;
+  --accent:#0284c7;
+  --accent-ink:#0369a1;
+  --accent-wash:rgba(2,132,199,.08);
+  --up:#dc2626;
+  --down:#16a34a;
+  --warn:#b45309;
+  --band:rgba(0,0,0,.05);
+  --area:rgba(0,0,0,.055);
+  --sheen:rgba(0,0,0,.05);
+  --hover:#f4f4f5;
+  --shadow:0 20px 64px rgba(9,9,11,.14);
+  --heat-lo:#15803d; --heat-mid:#a16207; --heat-hi:#b91c1c;
+  --heat-lo-bg:rgba(21,128,61,.07); --heat-mid-bg:rgba(161,98,7,.07); --heat-hi-bg:rgba(185,28,28,.07);
+  --tag-up-bg:rgba(220,38,38,.06);
+  --tag-down-bg:rgba(22,163,74,.06);
+  color-scheme:light;
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html{background:var(--bg)}
+body{
+  background:var(--bg);color:var(--text);
+  font:12.5px/1.5 var(--sans);
+  font-feature-settings:"tnum" 1,"kern" 1;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+}
+body.no-scroll{overflow:hidden}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+a{color:inherit;text-decoration:none}
+ul,ol{list-style:none}
+img,svg{display:block}
+::selection{background:var(--accent);color:#000}
+:focus-visible{outline:1px solid var(--accent);outline-offset:2px}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--line-2);border:2px solid var(--bg)}
+::-webkit-scrollbar-thumb:hover{background:var(--line-3)}
+
+.num,.mono,.mono *{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.015em}
+.mut{color:var(--text-3)}
+.up{color:var(--up)}
+.down{color:var(--down)}
+.hide{display:none!important}
+[hidden]{display:none!important}
+
+/* ---------- top bar：细线 nav，无 glass / 无 glow ---------- */
+.topbar{position:sticky;top:0;z-index:90;background:var(--bg);border-bottom:1px solid var(--line)}
+.tb{max-width:1480px;margin:0 auto;height:48px;display:flex;align-items:center;gap:26px;padding:0 20px}
+.logo{display:flex;align-items:center;gap:9px;flex:0 0 auto}
+.logo-mark{width:21px;height:21px;border:1px solid var(--text);display:grid;place-items:center;font:600 8.5px/1 var(--mono);letter-spacing:.02em}
+.logo-name{font:600 11px var(--mono);letter-spacing:.17em;white-space:nowrap}
+.logo-tag{font:400 8.5px var(--mono);letter-spacing:.1em;color:var(--text-3);border:1px solid var(--line-2);padding:2px 5px;border-radius:2px;white-space:nowrap}
+.nav{display:flex;align-items:stretch;height:100%;gap:0;min-width:0;overflow-x:auto;scrollbar-width:none}
+.nav::-webkit-scrollbar{display:none}
+.nav a{display:flex;align-items:center;gap:7px;padding:0 13px;height:100%;color:var(--text-3);font-size:11.5px;white-space:nowrap;border-bottom:1px solid transparent;margin-bottom:-1px;transition:color var(--dur) var(--ease),border-color var(--dur) var(--ease)}
+.nav a:hover{color:var(--text);background:var(--surface)}
+.nav a.on{color:var(--text);border-bottom-color:var(--accent)}
+.nv-idx{font:500 9px var(--mono);letter-spacing:.06em;color:var(--text-4)}
+.nav a.on .nv-idx{color:var(--accent)}
+.tb-right{margin-left:auto;display:flex;align-items:center;gap:10px;flex:0 0 auto}
+.build-tag{font:400 8.5px var(--mono);letter-spacing:.12em;color:var(--text-4);text-transform:uppercase;white-space:nowrap}
+
+/* ---------- data freshness chip + popover ---------- */
+.has-pop{position:relative;display:inline-flex}
+.data-chip{display:inline-flex;align-items:center;gap:8px;height:26px;padding:0 9px;border:1px solid var(--line-2);border-radius:var(--r-btn);font:400 9px var(--mono);letter-spacing:.08em;color:var(--text-2);white-space:nowrap;transition:border-color var(--dur),color var(--dur)}
+.data-chip:hover{border-color:var(--line-3);color:var(--text)}
+.data-chip .dot{width:5px;height:5px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px var(--accent-wash);flex:0 0 auto}
+.data-chip b{color:var(--text);font-weight:500;letter-spacing:.02em}
+.data-chip .cv{color:var(--text-4);transition:transform var(--dur)}
+.has-pop:hover .data-chip .cv{transform:translateY(1px)}
+.pop{display:none;position:absolute;top:calc(100% + 6px);right:0;z-index:140;background:var(--surface-2);border:1px solid var(--line-3);border-radius:var(--r-pop);box-shadow:var(--shadow);padding:12px;width:330px;text-align:left;cursor:default}
+.pop:before{content:"";position:absolute;left:0;right:0;top:-8px;height:8px}
+.has-pop:hover .pop,.has-pop:focus-within .pop,.has-pop.open .pop{display:block}
+.pop-h{display:flex;align-items:center;justify-content:space-between;gap:10px;font:500 9px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--text-3);padding-bottom:8px;border-bottom:1px solid var(--line)}
+.pop-h b{color:var(--text);font-weight:500}
+.pop-t{width:100%;border-collapse:collapse;margin-top:2px}
+.pop-t td{height:25px;font-size:10.5px;color:var(--text-2);border-bottom:1px solid var(--line);white-space:nowrap}
+.pop-t tr:last-child td{border-bottom:0}
+.pop-t td.r,.pop-t th.r{text-align:right;font-family:var(--mono);font-size:10px}
+.pop-t .st{display:inline-flex;align-items:center;gap:5px;font:400 8.5px var(--mono);letter-spacing:.06em;color:var(--text-3)}
+.pop-t .st i{width:4px;height:4px;border-radius:50%;background:var(--accent)}
+.pop-f{margin-top:8px;padding-top:8px;border-top:1px solid var(--line);font:400 9px/1.6 var(--mono);color:var(--text-4);letter-spacing:.02em}
+.pop-formula{width:340px;font-size:10.5px;line-height:1.65;color:var(--text-2)}
+.pop-formula h5{font:500 9px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--text-3);margin-bottom:7px}
+.pop-formula .fx{font-family:var(--mono);font-size:10px;color:var(--text);background:var(--surface-3);border:1px solid var(--line);padding:7px 8px;margin:7px 0;line-height:1.7;word-break:break-word}
+.pop-formula .fx em{font-style:normal;color:var(--accent-ink)}
+.pop-formula p{margin-top:5px;color:var(--text-3);font-size:10px}
+.pop-formula .rows{margin-top:6px;border-top:1px solid var(--line);padding-top:6px}
+.pop-formula .rows div{display:flex;justify-content:space-between;gap:16px;height:22px;align-items:center;font-family:var(--mono);font-size:9.5px;color:var(--text-3);border-bottom:1px dashed var(--line)}
+.pop-formula .rows div b{color:var(--text);font-weight:400}
+.q-btn{width:15px;height:15px;border:1px solid var(--line-3);border-radius:50%;display:inline-grid;place-items:center;font:500 8.5px var(--mono);color:var(--text-3);flex:0 0 auto;line-height:1;transition:color var(--dur),border-color var(--dur)}
+.q-btn:hover,.q-btn:focus-visible{color:var(--accent);border-color:var(--accent)}
+
+/* ---------- shell / page head ---------- */
+.app{max-width:1480px;margin:0 auto;padding:0 20px 100px}
+.screen{min-height:calc(100vh - 48px)}
+.pagehead{display:flex;align-items:flex-end;justify-content:space-between;gap:26px;padding:22px 0 16px;border-bottom:1px solid var(--line);margin-bottom:12px}
+.eyebrow{display:flex;align-items:center;gap:9px;font:500 9px var(--mono);letter-spacing:.18em;text-transform:uppercase;color:var(--text-3)}
+.eyebrow b{color:var(--accent);font-weight:500}
+.eyebrow .sl{color:var(--text-4)}
+h1{font-size:22px;line-height:1.2;font-weight:600;letter-spacing:-.012em;margin-top:7px}
+.sub{margin-top:8px;color:var(--text-2);font-size:11.5px;display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px}
+.sub .sep{color:var(--text-4);font-family:var(--mono);font-size:10px}
+.sub b{color:var(--text);font-weight:500}
+.ph-meta{display:flex;align-items:flex-end;gap:26px;text-align:right;flex:0 0 auto}
+.meta-lbl{font:400 8.5px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--text-4)}
+.meta-val{font:500 11px var(--mono);margin-top:4px;color:var(--text)}
+.bigquote{text-align:right}
+.bigquote .p{font:500 27px/1.1 var(--mono);letter-spacing:-.03em}
+.bigquote .d{display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:5px;font:400 10px var(--mono);color:var(--text-3)}
+
+/* ---------- grid + panel ---------- */
+.g12{display:grid;grid-template-columns:repeat(12,1fr);gap:12px}
+.c3{grid-column:span 3}.c4{grid-column:span 4}.c5{grid-column:span 5}.c6{grid-column:span 6}
+.c7{grid-column:span 7}.c8{grid-column:span 8}.c9{grid-column:span 9}.c12{grid-column:span 12}
+.vstack{display:flex;flex-direction:column;gap:12px;min-width:0}
+.panel{position:relative;background:var(--surface);border:1px solid var(--line);min-width:0;display:flex;flex-direction:column}
+.panel-h{display:flex;align-items:center;justify-content:space-between;gap:12px;height:42px;min-height:42px;padding:0 14px;border-bottom:1px solid var(--line)}
+.ph-l{display:flex;align-items:center;gap:10px;min-width:0}
+.ph-idx{font:500 9px var(--mono);color:var(--text-4);letter-spacing:.05em;flex:0 0 auto}
+.panel-h h2{font-size:12px;font-weight:600;letter-spacing:.005em;white-space:nowrap;flex:0 0 auto}
+.ph-kicker{font:400 8.5px var(--mono);letter-spacing:.16em;color:var(--text-4);text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ph-r{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;min-width:0}
+.panel-b{padding:14px;min-width:0;flex:1}
+.panel-b.flush{padding:0}
+.panel-f{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 14px;border-top:1px solid var(--line);color:var(--text-3);font:400 8.5px var(--mono);letter-spacing:.06em;text-transform:uppercase;flex-wrap:wrap}
+.panel-f .r{color:var(--text-4)}
+.split{display:grid;gap:14px}
+.split-txt{font-size:11px;line-height:1.65;color:var(--text-2)}
+.note{font:400 9px/1.6 var(--mono);color:var(--text-4);letter-spacing:.02em}
+
+/* ---------- buttons / seg / tabs / tag ---------- */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:27px;padding:0 10px;border:1px solid var(--line-2);border-radius:var(--r-btn);background:var(--surface);color:var(--text-2);font-size:11px;white-space:nowrap;transition:border-color var(--dur) var(--ease),color var(--dur) var(--ease),background var(--dur) var(--ease)}
+.btn:hover{color:var(--text);border-color:var(--line-3);background:var(--surface-2)}
+.btn:active{transform:translateY(.5px)}
+.btn.pri{background:var(--text);border-color:var(--text);color:var(--bg);font-weight:500}
+.btn.pri:hover{background:var(--text);color:var(--bg);opacity:.86}
+.btn.sm{height:23px;padding:0 8px;font-size:10.5px}
+.btn.xs{height:20px;padding:0 6px;font-size:9.5px;font-family:var(--mono);letter-spacing:.02em}
+.btn.ghost{border-color:transparent;background:transparent}
+.btn.ghost:hover{border-color:var(--line-2);background:var(--surface-2)}
+.btn svg{width:11px;height:11px;flex:0 0 auto}
+.icon-btn{width:26px;height:26px;display:inline-grid;place-items:center;border:1px solid var(--line-2);border-radius:var(--r-btn);color:var(--text-2);transition:color var(--dur),border-color var(--dur),background var(--dur);flex:0 0 auto}
+.icon-btn:hover{color:var(--text);border-color:var(--line-3);background:var(--surface-2)}
+.icon-btn svg{width:13px;height:13px}
+.seg{display:inline-flex;background:var(--surface);border:1px solid var(--line-2);border-radius:var(--r-btn);overflow:hidden;flex:0 0 auto}
+.seg>button{height:25px;padding:0 9px;font:400 10px var(--mono);letter-spacing:.02em;color:var(--text-3);border-right:1px solid var(--line-2);transition:color var(--dur),background var(--dur);white-space:nowrap}
+.seg>button:last-child{border-right:0}
+.seg>button:hover{color:var(--text);background:var(--surface-2)}
+.seg>button.on{background:var(--text);color:var(--bg);font-weight:500}
+.seg.q>button{font-family:var(--sans);font-size:10.5px}
+.seg.sm>button{height:22px;padding:0 7px;font-size:9.5px}
+.tabs{display:flex;gap:16px;align-items:center;min-width:0;overflow-x:auto;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tabs button{position:relative;height:32px;display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--text-3);white-space:nowrap;transition:color var(--dur)}
+.tabs button:hover{color:var(--text)}
+.tabs button.on{color:var(--text)}
+.tabs button.on:after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;background:var(--accent)}
+.tabs .av{font:400 8.5px var(--mono);color:var(--text-4)}
+.tabs button.on .av{color:var(--accent)}
+.tag{display:inline-flex;align-items:center;gap:5px;height:18px;padding:0 6px;border:1px solid var(--line-3);border-radius:2px;font:500 8.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--text-2);white-space:nowrap;flex:0 0 auto}
+.tag.accent{color:var(--accent);border-color:var(--accent)}
+.tag.up{color:var(--up);border-color:var(--up);background:var(--tag-up-bg)}
+.tag.down{color:var(--down);border-color:var(--down);background:var(--tag-down-bg)}
+.tag.warn{color:var(--warn);border-color:var(--warn)}
+.tag.dim{color:var(--text-3);border-color:var(--line-2)}
+.tag i{width:4px;height:4px;background:currentColor;border-radius:50%;flex:0 0 auto}
+.squote{font:400 9px var(--mono);color:var(--text-3);letter-spacing:.02em}
+
+/* ---------- tiles（1px hairline 网格） ---------- */
+.tiles{display:grid;gap:1px;background:var(--line);border:1px solid var(--line)}
+.tiles>div,.tiles>button{background:var(--surface);padding:11px 14px;min-width:0;text-align:left}
+.tiles>button{transition:background var(--dur)}
+.tiles>button:hover{background:var(--surface-2)}
+.k-lbl{font:400 8.5px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--text-3);white-space:nowrap}
+.k-val{font:500 23px/1.1 var(--mono);letter-spacing:-.035em;margin-top:8px;white-space:nowrap}
+.k-val.sm{font-size:19px;margin-top:7px}
+.k-sub{margin-top:6px;font:400 8.5px var(--mono);color:var(--text-3);letter-spacing:.02em;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.k-sub .up,.k-sub .down{font-weight:500}
+
+/* ---------- tables ---------- */
+.tbl-wrap{overflow-x:auto;min-width:0;scrollbar-width:thin}
+.tbl{width:100%;border-collapse:collapse;font-size:11.5px}
+.tbl th{height:30px;padding:0 10px;text-align:right;font:400 8.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);border-bottom:1px solid var(--line);white-space:nowrap;background:var(--surface-2);vertical-align:middle}
+.tbl th:first-child,.tbl td:first-child{text-align:left}
+.tbl th.srt{cursor:pointer;user-select:none;transition:color var(--dur)}
+.tbl th.srt:hover{color:var(--text)}
+.tbl th .ar{display:inline-block;width:8px;margin-left:3px;font-size:7px;color:var(--text-4);opacity:.6}
+.tbl th.on{color:var(--text)}
+.tbl th.on .ar{color:var(--accent);opacity:1}
+.tbl td{height:40px;padding:0 10px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap;vertical-align:middle}
+.tbl tbody tr:last-child td{border-bottom:0}
+.tbl tbody tr{transition:background var(--dur)}
+.tbl tbody tr:hover td{background:var(--hover)}
+.tbl tbody tr.clickable{cursor:pointer}
+.tbl .nm{font-weight:500;color:var(--text);font-size:11.5px}
+.tbl .cd{font:400 9px var(--mono);color:var(--text-3);margin-left:6px;letter-spacing:.02em}
+.tbl .tx{font-family:var(--mono);font-size:11px}
+.tbl .dim{color:var(--text-3)}
+.tbl .r{text-align:right}
+.tbl .mini-tag{font:400 8.5px var(--mono);color:var(--text-4);margin-left:6px;letter-spacing:.04em}
+.tbl-wrap.mw-620 .tbl{min-width:620px}
+.tbl-wrap.mw-760 .tbl{min-width:760px}
+.tbl-wrap.mw-880 .tbl{min-width:880px}
+.tbl-wrap.mw-980 .tbl{min-width:980px}
+
+/* ---------- percentile bar ---------- */
+.pbar{position:relative;height:3px;background:var(--line);margin-top:9px}
+.pbar i{position:absolute;left:0;top:0;bottom:0;background:var(--text);opacity:.75}
+.pbar u{position:absolute;top:-2px;width:1px;height:7px;background:var(--accent)}
+.pbar-ticks{display:flex;justify-content:space-between;margin-top:5px;font:400 8px var(--mono);color:var(--text-4);letter-spacing:.03em}
+
+/* ---------- valuation band ---------- */
+.panel-tabs{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 14px;height:40px;min-height:40px;border-bottom:1px solid var(--line)}
+.vb-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;padding:12px 14px 2px}
+.vb-lbl{font:400 8.5px var(--mono);letter-spacing:.13em;text-transform:uppercase;color:var(--text-3)}
+.vb-value{display:flex;align-items:baseline;gap:5px;margin-top:5px}
+.vb-value .v{font:500 34px/1 var(--mono);letter-spacing:-.04em}
+.vb-value .u{font:400 12px var(--mono);color:var(--text-3)}
+.vb-pct{text-align:right;display:flex;align-items:center;gap:14px}
+.vb-pct .pv{font:500 17px var(--mono);letter-spacing:-.02em;margin-top:5px}
+.vb-chart{height:266px;padding:6px 8px 0}
+.bandrefs{display:flex;align-items:center;gap:18px;flex-wrap:wrap;padding:0 14px 10px;font:400 9px var(--mono);color:var(--text-3)}
+.bandrefs span{display:inline-flex;align-items:center;gap:6px}
+.bandrefs .sw{width:12px;height:0;border-top:1px dashed var(--line-3);flex:0 0 auto}
+.bandrefs b{color:var(--text);font-weight:400}
+.mini-stack{display:flex;flex-direction:column;gap:12px;min-width:0}
+.mind{position:relative;flex:1;display:flex;flex-direction:column;justify-content:center;gap:0;background:var(--surface);border:1px solid var(--line);padding:10px 12px;text-align:left;min-height:92px;transition:background var(--dur),border-color var(--dur)}
+.mind:hover{background:var(--surface-2)}
+.mind.on{box-shadow:inset 2px 0 0 var(--accent)}
+.mind-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.mind-name{font:500 8.5px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--text-3)}
+.mind-pct{font:400 9px var(--mono);color:var(--text-2)}
+.mind-mid{display:flex;align-items:flex-end;justify-content:space-between;gap:8px;margin-top:6px}
+.mind-val{font:500 19px/1 var(--mono);letter-spacing:-.03em}
+.mind-spark{width:84px;height:24px;flex:0 0 auto;opacity:.9}
+.mind-spark svg{width:100%;height:100%}
+
+/* ---------- MVI ---------- */
+.mvi-split{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:14px;padding:14px;align-items:stretch}
+.mvi-left{min-width:0;display:flex;flex-direction:column}
+.mvi-big{display:flex;align-items:baseline;gap:10px;margin-top:4px}
+.mvi-big .v{font:500 38px/1 var(--mono);letter-spacing:-.045em}
+.mvi-sub{display:flex;align-items:center;gap:16px;margin-top:8px;flex-wrap:wrap}
+.mvi-sub .it{display:flex;align-items:center;gap:6px;font:400 9px var(--mono);color:var(--text-3);letter-spacing:.04em}
+.mvi-sub .it b{color:var(--text);font-weight:500;font-size:11px}
+.factors{margin-top:16px;display:flex;flex-direction:column;gap:0;border-top:1px solid var(--line)}
+.factor{display:grid;grid-template-columns:54px 1fr 44px;align-items:center;gap:10px;height:27px;border-bottom:1px solid var(--line)}
+.f-name{font:400 8.5px var(--mono);letter-spacing:.06em;color:var(--text-3);text-transform:uppercase}
+.f-bar{height:3px;background:var(--line);position:relative}
+.f-bar i{position:absolute;left:0;top:0;bottom:0;background:var(--text);opacity:calc(.25 + var(--o,0))}
+.f-val{text-align:right;font:400 9px var(--mono);color:var(--text-2)}
+.mvi-right{min-width:0;display:flex;flex-direction:column;border-left:1px solid var(--line);padding-left:14px}
+.mvi-chart{flex:1;min-height:224px}
+.mvi-chart .chart{height:100%}
+
+/* ---------- heat ---------- */
+.heat-grid{display:grid;grid-template-columns:repeat(8,1fr);gap:1px;background:var(--line);border-top:1px solid var(--line)}
+.heat-cell{position:relative;background:var(--surface);padding:11px 12px 14px;min-width:0;cursor:default;transition:background var(--dur);text-align:left}
+.heat-cell:hover{background:var(--surface-2)}
+.heat-cell .hn{font-size:11px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.heat-cell .hv{font:500 16px/1 var(--mono);letter-spacing:-.02em;margin-top:6px}
+.heat-cell .hs{font:400 8px var(--mono);color:var(--text-4);letter-spacing:.04em;margin-top:3px}
+.heat-bar{position:absolute;left:0;right:0;bottom:0;height:2px;background:var(--line)}
+.heat-bar i{display:block;height:100%;width:var(--w,50%);background:var(--hc,var(--text-3));opacity:.9}
+.heat-cell.lo .hv{color:var(--heat-lo)}
+.heat-cell.mid .hv{color:var(--heat-mid)}
+.heat-cell.hi .hv{color:var(--heat-hi)}
+.heat-cell.lo{background:linear-gradient(180deg,var(--heat-lo-bg),transparent 62%),var(--surface)}
+.heat-cell.mid{background:linear-gradient(180deg,var(--heat-mid-bg),transparent 62%),var(--surface)}
+.heat-cell.hi{background:linear-gradient(180deg,var(--heat-hi-bg),transparent 62%),var(--surface)}
+.heat-cell:hover{filter:brightness(1.12)}
+
+/* ---------- dividend scatter ---------- */
+.div-split{display:grid;grid-template-columns:minmax(0,8fr) minmax(0,4fr);gap:0}
+.div-chart{padding:10px 6px 6px 0;min-width:0}
+.div-side{border-left:1px solid var(--line);padding:14px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.div-chart .chart{height:330px}
+.stat-big{font:500 24px/1 var(--mono);letter-spacing:-.03em}
+.stat-row{display:flex;align-items:baseline;justify-content:space-between;gap:10px;height:26px;border-bottom:1px solid var(--line);font-size:10.5px;color:var(--text-2)}
+.stat-row:last-child{border-bottom:0}
+.stat-row b{font:400 10px var(--mono);color:var(--text)}
+.stat-row .cd{font:400 8.5px var(--mono);color:var(--text-4);margin-left:5px}
+.div-list{flex:1;min-height:0}
+
+/* ---------- modal ---------- */
+.modal{position:fixed;inset:0;z-index:220;display:none}
+.modal.on{display:block}
+.modal-bd{position:absolute;inset:0;background:rgba(0,0,0,.8)}
+html[data-theme="light"] .modal-bd{background:rgba(250,250,250,.82)}
+.modal-panel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(1120px,calc(100vw - 32px));max-height:calc(100vh - 36px);overflow:auto;background:var(--surface);border:1px solid var(--line-3);border-radius:8px;box-shadow:var(--shadow)}
+.modal-h{position:sticky;top:0;z-index:2;background:var(--surface);display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.modal-h .tt{display:flex;align-items:center;gap:10px;min-width:0}
+.modal-h h3{font-size:13px;font-weight:600;white-space:nowrap}
+.modal-b{padding:14px 16px 16px}
+.modal-meta{display:flex;align-items:center;gap:22px;flex-wrap:wrap;padding-bottom:12px;margin-bottom:10px;border-bottom:1px solid var(--line)}
+.modal-meta .it{display:flex;flex-direction:column;gap:3px}
+.modal-meta .it .l{font:400 8px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--text-4)}
+.modal-meta .it .v{font:500 15px var(--mono);letter-spacing:-.02em}
+.modal-chart{height:368px}
+
+/* ---------- drawer ---------- */
+.drawer-bd{position:fixed;inset:0;z-index:205;background:rgba(0,0,0,.5);opacity:0;pointer-events:none;transition:opacity var(--dur)}
+html[data-theme="light"] .drawer-bd{background:rgba(9,9,11,.28)}
+.drawer-bd.on{opacity:1;pointer-events:auto}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(400px,94vw);z-index:210;background:var(--surface);border-left:1px solid var(--line-3);display:flex;flex-direction:column;opacity:0;pointer-events:none;transform:translateX(6px);transition:opacity var(--dur) var(--ease),transform var(--dur) var(--ease)}
+.drawer.on{opacity:1;pointer-events:auto;transform:none}
+.drawer-h{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line);min-height:48px}
+.drawer-h .tt{min-width:0}
+.drawer-h h3{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.drawer-h .sb{font:400 9px var(--mono);color:var(--text-3);margin-top:2px;letter-spacing:.04em}
+.drawer-b{padding:14px;overflow:auto;flex:1}
+.drawer-f{padding:10px 14px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end}
+.d-stat{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line);margin-top:12px}
+.d-stat>div{background:var(--surface);padding:9px 10px}
+.d-stat .l{font:400 8px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--text-4)}
+.d-stat .v{font:500 15px var(--mono);letter-spacing:-.02em;margin-top:4px}
+.d-spark{height:64px;margin-top:10px}
+.d-spark .chart{height:100%}
+
+/* ---------- charts ---------- */
+.chart{position:relative;width:100%;min-width:0}
+.chart svg{display:block;width:100%;height:100%}
+.chart canvas{display:none}
+.c-grid{stroke:var(--line);stroke-width:1;shape-rendering:crispEdges}
+.c-axis{stroke:var(--line-2);stroke-width:1;shape-rendering:crispEdges}
+.c-tick{fill:var(--text-3);font:9px var(--mono);letter-spacing:.03em}
+.c-tick-2{fill:var(--text-4);font:8px var(--mono);letter-spacing:.03em}
+.c-main{fill:none;stroke:var(--text);stroke-width:1.25;stroke-linejoin:round;stroke-linecap:round}
+.c-second{fill:none;stroke:var(--text-3);stroke-width:1;stroke-dasharray:4 3;stroke-linejoin:round;stroke-linecap:round}
+.c-third{fill:none;stroke:var(--text-3);stroke-width:1;stroke-dasharray:1 3}
+.c-band{fill:var(--band)}
+.c-area{fill:var(--text);fill-opacity:.055}
+.c-ref{stroke:var(--line-3);stroke-width:1;stroke-dasharray:2 3}
+.c-ref-lbl{fill:var(--text-4);font:8px var(--mono);letter-spacing:.04em}
+.c-cur{fill:var(--accent);stroke:var(--surface);stroke-width:1.5}
+.c-cur-halo{fill:var(--accent);fill-opacity:.16}
+.c-xh{stroke:var(--line-3);stroke-width:1;stroke-dasharray:2 2}
+.c-dot{fill:var(--text);stroke:var(--surface);stroke-width:1.5}
+.c-dot-2{fill:var(--text-2);stroke:var(--surface);stroke-width:1.5}
+.c-bar{fill:var(--text);fill-opacity:.4;transition:fill-opacity var(--dur)}
+.c-bar:hover{fill-opacity:.95}
+.c-bar.up{fill:var(--up);fill-opacity:.6}
+.c-bar.down{fill:var(--down);fill-opacity:.6}
+.c-pt{fill:var(--text);fill-opacity:.7;stroke:var(--surface);stroke-width:1;cursor:pointer;transition:fill var(--dur)}
+.c-pt:hover{fill:var(--accent);fill-opacity:1}
+.c-quad{stroke:var(--line-2);stroke-width:1;stroke-dasharray:2 3}
+.c-quad-lbl{fill:var(--text-4);font:8px var(--mono);letter-spacing:.08em}
+.legend{display:flex;flex-wrap:wrap;align-items:center;gap:6px 15px;font:400 8.5px var(--mono);letter-spacing:.03em;color:var(--text-3);margin-top:6px}
+.legend>span{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.sw{width:13px;height:0;border-top:1px solid var(--text);flex:0 0 auto}
+.sw.d{border-top:1px dashed var(--text-2)}
+.sw.d3{border-top:1px dashed var(--line-3)}
+.sw.a{height:5px;border:0;background:var(--area);box-shadow:inset 0 0 0 1px var(--line-2)}
+.sw.dot{width:5px;height:5px;border:0;border-radius:50%;background:var(--accent)}
+
+/* ---------- tooltip ---------- */
+.tip{position:fixed;z-index:300;pointer-events:none;background:var(--surface-2);border:1px solid var(--line-3);border-radius:var(--r-pop);padding:8px 10px;font-size:10.5px;line-height:1.55;color:var(--text-2);box-shadow:var(--shadow);max-width:300px;opacity:0;transform:translateY(2px);transition:opacity .1s var(--ease),transform .1s var(--ease)}
+html[data-theme="light"] .tip{box-shadow:0 12px 40px rgba(9,9,11,.16)}
+.tip.on{opacity:1;transform:none}
+.tip .tt{font:500 8.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);margin-bottom:4px}
+.tip .tr{display:flex;justify-content:space-between;align-items:baseline;gap:18px;font-family:var(--mono);font-size:10px;color:var(--text-3);height:17px}
+.tip .tr b{color:var(--text);font-weight:500;font-size:10.5px}
+.tip .tf{margin-top:5px;padding-top:5px;border-top:1px solid var(--line);font:400 8.5px/1.5 var(--mono);color:var(--text-4)}
+
+/* ---------- skeleton：细条扫描 + 骨架线 ---------- */
+.panel[data-busy] .sk{display:block}
+.sk{display:none;position:absolute;inset:0;z-index:5;background:var(--surface);overflow:hidden;padding:14px}
+.sk .ln{display:block;height:7px;margin-bottom:9px;background:linear-gradient(90deg,var(--line) 0%,var(--line-2) 50%,var(--line) 100%);background-size:220% 100%;animation:sh 1.25s linear infinite}
+.sk .ln.b{height:26px;width:42%;margin-bottom:13px}
+.sk .ln.chart-blk{height:calc(100% - 84px);margin:0;background:var(--surface-2);border:1px solid var(--line);animation:none;position:relative;overflow:hidden}
+.sk .ln.chart-blk:after{content:"";position:absolute;left:0;right:0;bottom:16px;height:1px;background:var(--line)}
+.sk .rows{display:flex;flex-direction:column;gap:0;margin-top:4px}
+.sk .r{display:flex;align-items:center;gap:12px;height:32px;border-bottom:1px solid var(--line)}
+.sk .r i{height:6px;background:var(--line-2);display:block}
+.sk .r i:nth-child(1){width:30%}.sk .r i:nth-child(2){width:14%}.sk .r i:nth-child(3){width:12%}.sk .r i:nth-child(4){width:9%}.sk .r i:nth-child(5){width:11%}
+.sk .grid16{display:grid;grid-template-columns:repeat(8,1fr);gap:1px;background:var(--line);border:1px solid var(--line);margin-top:2px}
+.sk .grid16 i{display:block;height:54px;background:var(--surface-2);animation:pulse 1.4s ease-in-out infinite}
+.sk .kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:1px;background:var(--line);border:1px solid var(--line)}
+.sk .kpis i{display:block;height:64px;background:var(--surface-2);animation:pulse 1.4s ease-in-out infinite}
+.sk .mini-list{display:flex;flex-direction:column;gap:12px;height:100%}
+.sk .mini-list i{display:block;flex:1;background:var(--surface-2);border:1px solid var(--line)}
+.sk .scan{position:absolute;top:0;bottom:0;width:22%;background:linear-gradient(90deg,transparent,var(--sheen),transparent);animation:scan 1.15s linear infinite;pointer-events:none}
+@keyframes sh{0%{background-position:120% 0}100%{background-position:-120% 0}}
+@keyframes scan{0%{left:-30%}100%{left:115%}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.72}}
+
+/* ---------- quadrants (dashboard) ---------- */
+.quads{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border-top:1px solid var(--line);flex:1}
+.quad{background:var(--surface);padding:11px 13px;min-width:0;display:flex;flex-direction:column;transition:background var(--dur);outline:none}
+.quad:hover,.quad:focus-within{background:var(--surface-2)}
+.q-top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.q-name{display:flex;align-items:center;gap:7px;font-size:11.5px;font-weight:500;color:var(--text)}
+.q-glyph{width:7px;height:7px;border:1px solid var(--text-3);transform:rotate(45deg);flex:0 0 auto}
+.quad.q-recovery .q-glyph{border-color:var(--text)}
+.quad.q-overheat .q-glyph{background:var(--text-3);border-color:var(--text-3)}
+.q-sub{font:400 8px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--text-4);margin-top:3px}
+.q-w{font:500 15px/1.2 var(--mono);letter-spacing:-.02em;text-align:right}
+.q-assets{display:flex;flex-wrap:wrap;gap:3px;margin-top:9px}
+.q-chip{font:400 8.5px var(--mono);color:var(--text-2);border:1px solid var(--line-2);padding:1px 4px;white-space:nowrap}
+.q-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:auto;padding-top:9px;font:400 8.5px var(--mono);color:var(--text-3)}
+.q-more{max-height:0;overflow:hidden;transition:max-height var(--dur) var(--ease);font:400 8.5px/1.6 var(--mono);color:var(--text-4)}
+.quad:hover .q-more,.quad:focus-within .q-more{max-height:36px;margin-top:6px}
+
+/* ---------- mode bar ---------- */
+.modebar{position:relative;display:flex;align-items:center;justify-content:center;height:56px;border-bottom:1px solid var(--line);margin-bottom:0}
+.modebar .seg{height:30px}
+.modebar .seg>button{height:28px;padding:0 16px;font-family:var(--sans);font-size:11.5px;letter-spacing:.01em}
+.mode-actions{position:absolute;right:0;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:8px}
+.modebar-tag{position:absolute;left:0;top:50%;transform:translateY(-50%);font:400 8.5px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--text-4)}
+
+/* ---------- dashboard head / selector ---------- */
+.dash-head{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:20px;padding:18px 0 14px;border-bottom:1px solid var(--line);margin-bottom:12px}
+.dash-title{min-width:0}
+.dash-title h1{margin-top:6px}
+.dash-title .tags{display:flex;align-items:center;gap:6px;margin-top:8px;flex-wrap:wrap}
+.dash-title .tags .squote{font-size:9px}
+.dash-center{display:flex;flex-direction:column;align-items:center;gap:6px}
+.dash-right{display:flex;align-items:center;justify-content:flex-end;gap:8px}
+.sel{position:relative;display:inline-flex}
+.sel-btn{display:inline-flex;align-items:center;justify-content:space-between;gap:10px;min-width:340px;height:36px;padding:0 11px;border:1px solid var(--line-2);border-radius:var(--r-btn);background:var(--surface);font-size:11.5px;color:var(--text);transition:border-color var(--dur),background var(--dur)}
+.sel-btn:hover{border-color:var(--line-3);background:var(--surface-2)}
+.sel-btn .nm{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sel-btn .dt{font:400 8.5px var(--mono);color:var(--text-4);letter-spacing:.03em;white-space:nowrap}
+.sel-btn svg{width:11px;height:11px;color:var(--text-3);flex:0 0 auto}
+.sel-menu{display:none;position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:100;background:var(--surface-2);border:1px solid var(--line-3);border-radius:var(--r-pop);box-shadow:var(--shadow);overflow:hidden}
+.sel.open .sel-menu{display:block}
+.sel-item{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:9px 11px;font-size:11px;color:var(--text-2);border-bottom:1px solid var(--line);text-align:left}
+.sel-item:last-child{border-bottom:0}
+.sel-item:hover{background:var(--surface-3);color:var(--text)}
+.sel-item .m{font:400 8.5px var(--mono);color:var(--text-4)}
+.sel-item.dis{opacity:.5;cursor:not-allowed}
+.sel-h{font:400 8px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--text-4);padding:7px 11px 3px}
+.sel-foot{padding:7px 11px;border-top:1px solid var(--line);font:400 8px var(--mono);color:var(--text-4);letter-spacing:.03em}
+
+/* ---------- KPI ---------- */
+.kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:1px;background:var(--line);border:1px solid var(--line)}
+.kpi{background:var(--surface);padding:11px 14px;min-width:0}
+.kpi .k-sub{justify-content:flex-start}
+
+/* ---------- stacked bar / risk ---------- */
+.stackbar{display:flex;gap:1px;height:11px;background:var(--line);border:1px solid var(--line);margin-top:10px}
+.stackbar i{display:block;height:100%;background:var(--text);opacity:var(--o,.6);transition:opacity var(--dur)}
+.stackbar i:hover{opacity:1;background:var(--accent)}
+.risk-list{display:flex;flex-direction:column;margin-top:10px}
+.risk-row{display:flex;align-items:center;gap:8px;height:25px;border-bottom:1px solid var(--line);font-size:10.5px;color:var(--text-2)}
+.risk-row:last-child{border-bottom:0}
+.risk-row .dotmark{width:5px;height:5px;background:var(--text);opacity:.7;flex:0 0 auto}
+.risk-row .rn{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.risk-row .rv{font:400 9px var(--mono);color:var(--text);white-space:nowrap}
+.risk-row .rc{font:400 8.5px var(--mono);color:var(--text-4);width:52px;text-align:right;white-space:nowrap}
+
+/* ---------- fund bar chart ---------- */
+.fund-split{display:grid;grid-template-columns:1fr;border-top:0}
+.fund-chart{border-right:0;border-bottom:1px solid var(--line);padding:12px 14px 8px;min-width:0}
+.fund-chart .chart{height:236px}
+.fund-tbl{min-width:0}
+.fund-tbl .tbl th{background:var(--surface-2)}
+
+/* ---------- empty state ---------- */
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:26px 18px;min-height:150px;height:100%}
+.empty svg{width:24px;height:24px;color:var(--text-4);margin-bottom:10px}
+.empty h4{font-size:12px;font-weight:500;color:var(--text-2)}
+.empty p{font-size:10.5px;color:var(--text-3);margin-top:5px;line-height:1.6;max-width:34em}
+.empty .tag{margin-top:10px}
+
+/* ---------- footnote / footer ---------- */
+.foot{margin-top:14px;padding-top:10px;border-top:1px solid var(--line);display:flex;justify-content:space-between;gap:10px 20px;flex-wrap:wrap;font:400 8.5px/1.7 var(--mono);color:var(--text-4);letter-spacing:.04em;text-transform:uppercase}
+.foot .l{display:flex;flex-wrap:wrap;gap:4px 18px}
+.foot b{color:var(--text-3);font-weight:400}
+
+/* ---------- floating controls ---------- */
+.floatctl{position:fixed;right:16px;bottom:16px;z-index:160;display:flex;align-items:center;gap:8px;padding:6px;background:var(--surface);border:1px solid var(--line-3);border-radius:8px;box-shadow:var(--shadow)}
+.floatctl .stat{font:400 8px var(--mono);letter-spacing:.06em;color:var(--text-4);padding:0 5px;white-space:nowrap;text-transform:uppercase}
+.floatctl .seg>button{height:21px;padding:0 8px;font-size:9px}
+.floatctl .sep{width:1px;height:16px;background:var(--line-2)}
+
+/* ---------- responsive ---------- */
+@media (max-width:1199px){
+  .heat-grid{grid-template-columns:repeat(8,1fr)}
+  .mvi-split{grid-template-columns:minmax(0,1fr);}
+  .mvi-right{border-left:0;border-top:1px solid var(--line);padding-left:0;padding-top:12px}
+  .mvi-chart{min-height:170px}
+  .div-split{grid-template-columns:minmax(0,1fr)}
+  .div-side{border-left:0;border-top:1px solid var(--line)}
+  .fund-split{grid-template-columns:minmax(0,1fr)}
+  .fund-chart{border-right:0;border-bottom:1px solid var(--line)}
+  .fund-chart .chart{height:200px}
+}
+@media (max-width:1023px){
+  .tb{gap:16px}
+  .logo-name{display:none}
+  .build-tag{display:none}
+  .g12{grid-template-columns:repeat(6,1fr)}
+  .c3,.c4,.c5{grid-column:span 3}
+  .c6,.c7,.c8,.c9{grid-column:span 6}
+  .c12{grid-column:span 6}
+  .kpis{grid-template-columns:repeat(3,1fr)}
+  .kpis .kpi:nth-child(4),.kpis .kpi:nth-child(5){grid-column:span 1}
+  .dash-head{grid-template-columns:1fr;justify-items:start;gap:12px}
+  .dash-center{justify-self:stretch;align-items:stretch}
+  .sel{display:block}
+  .sel-btn{min-width:0;width:100%}
+  .dash-right{justify-content:flex-start}
+  .modebar{height:auto;flex-wrap:wrap;justify-content:flex-start;padding:10px 0;gap:8px}
+  .modebar .seg{order:1}
+  .mode-actions{position:static;transform:none;order:1;margin-left:auto}
+  .modebar-tag{position:static;transform:none;order:2;width:100%}
+  .heat-grid{grid-template-columns:repeat(4,1fr)}
+  .c3{grid-column:span 6}
+}
+@media (max-width:767px){
+  .app{padding:0 12px 88px}
+  .tb{height:44px;padding:0 12px;gap:10px}
+  .logo-mark{width:20px;height:20px}
+  .nav a{padding:0 9px;font-size:10.5px;gap:5px}
+  .data-chip{padding:0 7px;gap:6px;font-size:8.5px}
+  .data-chip .dl-hide{display:none}
+  .pagehead{flex-direction:column;align-items:flex-start;gap:14px;padding:16px 0 12px}
+  h1{font-size:20px}
+  .ph-meta{text-align:left;align-items:flex-start;gap:18px;flex-wrap:wrap}
+  .bigquote{text-align:left}
+  .bigquote .d{justify-content:flex-start}
+  .g12{grid-template-columns:1fr;gap:10px}
+  .c3,.c4,.c5,.c6,.c7,.c8,.c9,.c12{grid-column:auto}
+  .vstack{gap:10px}
+  .mini-stack{flex-direction:column}
+  .mind{min-height:86px}
+  .panel-h{height:auto;min-height:40px;padding:8px 12px;flex-wrap:wrap;row-gap:7px}
+  .ph-kicker{display:none}
+  .panel-b{padding:12px}
+  .panel-f{padding:8px 12px}
+  .vb-head{padding:10px 12px 2px;flex-wrap:wrap;gap:10px}
+  .vb-chart{height:196px;padding:2px 4px 0}
+  .vb-value .v{font-size:28px}
+  .panel-tabs{padding:0 12px;height:auto;min-height:38px;flex-wrap:wrap;gap:4px;padding-top:4px;padding-bottom:4px}
+  .tabs{gap:14px}
+  .tabs button{height:30px;font-size:10.5px}
+  .bandrefs{padding:0 12px 10px;gap:10px 12px;font-size:8px}
+  .mvi-split{padding:12px}
+  .mvi-big .v{font-size:32px}
+  .mvi-chart{min-height:150px}
+  .heat-grid{grid-template-columns:repeat(4,1fr)}
+  .heat-cell{padding:8px 9px 11px}
+  .heat-cell .hv{font-size:14px}
+  .div-chart .chart{height:250px}
+  .div-side{padding:12px}
+  .stat-big{font-size:20px}
+  .kpis{grid-template-columns:repeat(2,1fr)}
+  .kpi{padding:10px 12px}
+  .k-val{font-size:20px}
+  .dash-head{padding:14px 0 10px}
+  .sel-btn{height:34px}
+  .quads{grid-template-columns:1fr 1fr}
+  .quad{padding:9px 10px}
+  .q-chip{font-size:8px}
+  .fund-chart .chart{height:190px}
+  .modal-panel{width:calc(100vw - 16px);max-height:calc(100vh - 16px)}
+  .modal-b{padding:10px}
+  .modal-chart{height:250px}
+  .modal-h{padding:10px 12px}
+  .modal-meta{gap:14px}
+  .floatctl{right:10px;bottom:10px;padding:5px;gap:6px}
+  .floatctl .stat{display:none}
+  .foot{font-size:8px}
+  .drawer{width:100vw}
+  .pop{width:min(330px,calc(100vw - 24px));right:-2px}
+  .pop-formula{width:min(340px,calc(100vw - 24px))}
+  .tbl td{height:36px}
+  .q-sub{font-size:7.5px}
+  .q-w{font-size:13px}
+  .sk .grid16{grid-template-columns:repeat(4,1fr)}
+  .sk .kpis{grid-template-columns:repeat(2,1fr)}
+}
+@media (max-width:420px){
+  .logo-tag{display:none}
+  .data-chip .yr{display:none}
+  .kpis{grid-template-columns:repeat(2,1fr)}
+  .heat-grid{grid-template-columns:repeat(4,1fr)}
+  .quads{grid-template-columns:1fr}
+  .mode-actions .btn span.lbl-long{display:none}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*:before,*:after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
+}
+/* ---------- structural patches ---------- */
+[data-card]{position:relative}
+[data-card][data-busy] > *:not(.sk){visibility:hidden}
+[data-card][data-busy] > .sk{display:block}
+.btn[aria-pressed="true"]{color:var(--text);border-color:var(--line-3);background:var(--surface-2);box-shadow:inset 0 -1px 0 var(--accent)}
+.btn[disabled]{opacity:.42;cursor:not-allowed}
+.chart{transition:opacity var(--dur) linear}
+.vb-chart .chart{height:100%}
+.heat-cell.lo .heat-bar i{background:var(--heat-lo)}
+.heat-cell.mid .heat-bar i{background:var(--heat-mid)}
+.heat-cell.hi .heat-bar i{background:var(--heat-hi)}
+.twarn{color:var(--warn);border-bottom:1px dotted var(--warn);cursor:help}
+.tiles-4{grid-template-columns:repeat(4,1fr)}
+@media (max-width:1023px){.tiles-4{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:420px){.tiles-4{grid-template-columns:1fr}}
+
+/* ---------- final layout fixes ---------- */
+#chart-hsi{height:288px}
+.modal-chart .chart{height:100%}
+#quickTbl th:nth-child(2),#quickTbl td:nth-child(2){width:128px}
+#quickTbl th:nth-child(3),#quickTbl td:nth-child(3){width:118px}
+#quickTbl th:nth-child(4),#quickTbl td:nth-child(4){width:118px}
+#quickTbl th:nth-child(5),#quickTbl td:nth-child(5){width:128px}
+#quickTbl th:nth-child(6),#quickTbl td:nth-child(6){width:118px}
+#quickTbl th:nth-child(7),#quickTbl td:nth-child(7){width:44px}
+.comps{display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--line);border-top:1px solid var(--line)}
+.comp{background:var(--surface);padding:12px 14px;min-height:92px;min-width:0}
+.comp .k-lbl{margin-bottom:10px}
+.comp-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.comp-txt{font-size:10.5px;color:var(--text-3);line-height:1.6;margin-top:8px}
+.comp-skel{display:flex;flex-direction:column;gap:6px;margin-top:2px}
+.comp-skel i{display:block;height:6px;background:var(--line-2)}
+.comp-skel i:nth-child(1){width:62%}
+.comp-skel i:nth-child(2){width:88%}
+.comp-skel i:nth-child(3){width:44%}
+.comp-empty{display:flex;align-items:center;gap:10px;color:var(--text-3);font-size:10.5px}
+.comp-empty svg{width:20px;height:20px;color:var(--text-4);flex:0 0 auto}
+@media (max-width:1023px){.comps{grid-template-columns:repeat(3,1fr)}#chart-hsi{height:240px}}
+@media (max-width:600px){.comps{grid-template-columns:repeat(2,1fr)}#chart-hsi{height:210px}}
+</style>
+</head>
+<body>
+<!-- ================= TOP BAR ================= -->
+<header class="topbar">
+  <div class="tb">
+    <a class="logo" href="#/a" aria-label="Balanced Portfolio 原型首页">
+      <span class="logo-mark">BP</span>
+      <span class="logo-name">BALANCED PORTFOLIO</span>
+      <span class="logo-tag">V2 · MONO</span>
+    </a>
+    <nav class="nav" aria-label="原型页面切换">
+      <a href="#/a" data-nav="a"><span class="nv-idx">A</span>指数估值</a>
+      <a href="#/b" data-nav="b"><span class="nv-idx">B</span>恒生指数</a>
+      <a href="#/c" data-nav="c"><span class="nv-idx">C</span>Dashboard</a>
+    </nav>
+    <div class="tb-right">
+      <span class="build-tag">STATIC PROTOTYPE · 2026-11-27 · ZERO DEP</span>
+    </div>
+  </div>
+</header>
+
+<div class="app">
+
+<!-- ============================================================
+     SCREEN A · /valuation
+     ============================================================ -->
+<section class="screen" id="screen-a">
+  <header class="pagehead">
+    <div>
+      <div class="eyebrow"><b>A</b><span class="sl">/</span>VALUATION<span class="sl">/</span>指数估值</div>
+      <h1>指数估值</h1>
+      <div class="sub">
+        <b id="a-quote-name">沪深300</b>
+        <span class="squote num" id="a-quote-close">4,186.42</span>
+        <span class="num up" id="a-quote-chg">+0.68%</span>
+        <span class="sep">·</span>521 只指数
+        <span class="sep">·</span>PE / PB / 股息率 / 风险溢价
+        <span class="sep">·</span>每日 21:00 更新
+        <span class="sep">·</span><span class="mono">SNAPSHOT 2026-11-27</span>
+      </div>
+    </div>
+    <div class="ph-meta">
+      <div>
+        <div class="meta-lbl" style="text-align:right">DATA FRESHNESS</div>
+        <div class="has-pop" style="margin-top:5px">
+          <button class="data-chip" aria-haspopup="dialog" aria-label="全局行情数据更新明细">
+            <span class="dot"></span><span>DATA</span><b class="num">2026-11-27</b><span class="squote" style="font-size:8px;letter-spacing:.04em">8/8</span>
+            <svg class="cv" width="9" height="9" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+          </button>
+          <div class="pop" role="dialog" aria-label="数据更新明细">
+            <div class="pop-h"><span>数据更新明细</span><span><b>8 / 8</b> 已完成</span></div>
+            <table class="pop-t"><tbody>
+              <tr><td>A 股行情</td><td class="r">2026-11-27</td><td class="r"><span class="st"><i></i>OK</span></td></tr>
+              <tr><td>港股行情</td><td class="r">2026-11-27</td><td class="r"><span class="st"><i></i>OK</span></td></tr>
+              <tr><td>ETF 行情</td><td class="r">2026-11-27</td><td class="r"><span class="st"><i></i>OK</span></td></tr>
+              <tr><td>基金净值</td><td class="r">2026-11-26</td><td class="r"><span class="st"><i style="background:var(--text-3)"></i>T-1 夜间</span></td></tr>
+              <tr><td>股指期货</td><td class="r">2026-11-27</td><td class="r"><span class="st"><i></i>OK</span></td></tr>
+              <tr><td>指数行情</td><td class="r">2026-11-27</td><td class="r"><span class="st"><i></i>OK</span></td></tr>
+              <tr><td>指数估值</td><td class="r">2026-11-27</td><td class="r"><span class="st"><i></i>OK</span></td></tr>
+              <tr><td>MVI 指数</td><td class="r">2026-11-27</td><td class="r"><span class="st"><i></i>OK</span></td></tr>
+            </tbody></table>
+            <div class="pop-f">口径：取各数据集最新完整交易日，全站展示 min(last_success_date)。基金净值为 T-1 夜间更新，属正常口径；估值 21:00、MVI 23:50 完成后推进。</div>
+          </div>
+        </div>
+      </div>
+      <button class="btn">导出快照</button>
+    </div>
+  </header>
+
+  <!-- 01 · Valuation Band -->
+  <div class="g12">
+    <div class="panel c8" data-card data-skel="chart">
+      <div class="panel-h">
+        <div class="ph-l"><span class="ph-idx">01</span><h2>估值分位带</h2><span class="ph-kicker">VALUATION BAND</span></div>
+        <div class="ph-r">
+          <div class="seg" id="a-idx" role="group" aria-label="指数选择"></div>
+        </div>
+      </div>
+      <div class="panel-tabs">
+        <div class="tabs" id="a-metric" role="tablist" aria-label="估值指标"></div>
+        <div class="seg sm" id="a-win" role="group" aria-label="时间窗口">
+          <button class="on" data-win="5">近5年</button><button data-win="10">近10年</button><button data-win="all">全部</button>
+        </div>
+      </div>
+      <div class="vb-head">
+        <div>
+          <div class="vb-lbl" id="a-big-lbl">PE-TTM · 沪深300</div>
+          <div class="vb-value"><span class="v num" id="a-big">13.40</span><span class="u" id="a-unit">x</span></div>
+        </div>
+        <div class="vb-pct">
+          <div style="text-align:right">
+            <div class="vb-lbl" id="a-pct-lbl">近 5 年分位</div>
+            <div class="pv num" id="a-pct">42.0%</div>
+          </div>
+          <span class="tag accent" id="a-zone"><i></i>中性</span>
+        </div>
+      </div>
+      <div class="vb-chart"><div class="chart" id="chart-band" role="img" aria-label="估值历史曲线与分位区间"></div></div>
+      <div class="bandrefs" id="a-refs">
+        <span><i class="sw"></i>机会值 <b class="num">—</b></span>
+        <span><i class="sw"></i>中位数 <b class="num">—</b></span>
+        <span><i class="sw"></i>危险值 <b class="num">—</b></span>
+        <span style="margin-left:auto"><i class="sw dot" style="border:0"></i>当前 <b class="num">2026-11-27</b></span>
+      </div>
+      <div class="panel-f"><span>WEEKLY · 分位窗口随下方选择联动</span><span class="r">SOURCE · 自建估值归档 / 2026-11-27</span></div>
+    </div>
+
+    <div class="vstack c4" data-card data-skel="mini">
+      <button class="mind on" data-metric-btn="pe" aria-pressed="true">
+        <div class="mind-top"><span class="mind-name">PE-TTM</span><span class="mind-pct">分位 <b class="num" data-mpct="pe">42.0%</b></span></div>
+        <div class="mind-mid"><span class="mind-val num" data-mval="pe">13.40</span><span class="mind-spark" data-spark="pe"></span></div>
+      </button>
+      <button class="mind" data-metric-btn="pb" aria-pressed="false">
+        <div class="mind-top"><span class="mind-name">PB</span><span class="mind-pct">分位 <b class="num" data-mpct="pb">38.0%</b></span></div>
+        <div class="mind-mid"><span class="mind-val num" data-mval="pb">1.38</span><span class="mind-spark" data-spark="pb"></span></div>
+      </button>
+      <button class="mind" data-metric-btn="dy" aria-pressed="false">
+        <div class="mind-top"><span class="mind-name">股息率 TTM</span><span class="mind-pct">分位 <b class="num" data-mpct="dy">61.0%</b></span></div>
+        <div class="mind-mid"><span class="mind-val num" data-mval="dy">3.20%</span><span class="mind-spark" data-spark="dy"></span></div>
+      </button>
+      <button class="mind" data-metric-btn="erp" aria-pressed="false">
+        <div class="mind-top"><span class="mind-name">风险溢价 ERP</span><span class="mind-pct">分位 <b class="num" data-mpct="erp">55.0%</b></span></div>
+        <div class="mind-mid"><span class="mind-val num" data-mval="erp">5.10%</span><span class="mind-spark" data-spark="erp"></span></div>
+      </button>
+    </div>
+  </div>
+
+  <!-- 02 · MVI -->
+  <div class="g12" style="margin-top:12px">
+    <div class="panel c12" data-card data-skel="chart">
+      <div class="panel-h">
+        <div class="ph-l">
+          <span class="ph-idx">02</span><h2>市场估值指数</h2><span class="ph-kicker">MARKET VALUATION INDEX · MVI</span>
+        </div>
+        <div class="ph-r">
+          <span class="has-pop">
+            <button class="btn xs" aria-label="估值分公式与权重">估值分 <span style="color:var(--text-3)">?</span></button>
+            <span class="pop pop-formula" role="dialog" aria-label="估值分公式">
+              <h5>估值分 · Valuation Score</h5>
+              <div class="fx">估值分 = Σ wᵢ × (100 − pᵢ)<br>MVI = 100 − 估值分</div>
+              <div class="rows">
+                <div><span>PE-TTM</span><b>w 30% · p 25.3%</b></div>
+                <div><span>PB</span><b>w 20% · p 26.0%</b></div>
+                <div><span>股息率</span><b>w 15% · p 36.0%</b></div>
+                <div><span>风险溢价 ERP</span><b>w 25% · p 47.2%</b></div>
+                <div><span>ROE (TTM)</span><b>w 10% · p 13.0%</b></div>
+              </div>
+              <p>窗口：近 5 年周频，分位 pᵢ 为滚动 260 周分位；固定权重 v1，in-sample 拟合，仅作市场温度参考，不构成策略。</p>
+            </span>
+          </span>
+          <span class="has-pop">
+            <button class="btn xs" aria-label="风险分公式与因子">风险分 <span style="color:var(--text-3)">?</span></button>
+            <span class="pop pop-formula" role="dialog" aria-label="风险分公式">
+              <h5>风险分 · Risk Score</h5>
+              <div class="fx">风险分 = 0.35·波动率分位<br>&nbsp;&nbsp;+ 0.25·最大回撤分位 + 0.20·集中度<br>&nbsp;&nbsp;+ 0.20·拥挤度</div>
+              <div class="rows">
+                <div><span>历史波动率（60D）</span><b>71.2 · 35%</b></div>
+                <div><span>最大回撤（1Y）</span><b>63.4 · 25%</b></div>
+                <div><span>行业集中度</span><b>58.0 · 20%</b></div>
+                <div><span>成交拥挤度</span><b>72.75 · 20%</b></div>
+              </div>
+              <p>风险分独立于 MVI 主值展示：越高表示当前环境下回撤风险越大。窗口 5 年，周频，固定权重 v1，in-sample。</p>
+            </span>
+          </span>
+          <span class="squote" style="margin-left:2px">近 5 年 · 周频</span>
+          <button class="btn sm" id="mviOpen">打开图表
+            <svg viewBox="0 0 14 14" aria-hidden="true"><path d="M5 2H2v3M9 2h3v3M5 12H2V9M9 12h3V9" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="mvi-split">
+        <div class="mvi-left">
+          <div class="vb-lbl">MVI · 当前值 / 0–100</div>
+          <div class="mvi-big">
+            <span class="v num" id="mviVal">31.29</span>
+            <span class="tag accent"><i></i>低估</span>
+          </div>
+          <div class="mvi-sub">
+            <span class="it">估值分 <b class="num">68.71</b></span>
+            <span class="it">风险分 <b class="num">66.92</b></span>
+            <span class="it">5Y 分位 <b class="num">12.4%</b></span>
+            <span class="it">周环比 <b class="num down">−1.82</b></span>
+          </div>
+          <div class="factors" aria-label="MVI 因子贡献">
+            <div class="factor"><span class="f-name">PE</span><span class="f-bar"><i style="width:74.7%;--o:.55"></i></span><span class="f-val">22.41</span></div>
+            <div class="factor"><span class="f-name">PB</span><span class="f-bar"><i style="width:49.3%;--o:.42"></i></span><span class="f-val">14.80</span></div>
+            <div class="factor"><span class="f-name">股息率</span><span class="f-bar"><i style="width:32.0%;--o:.32"></i></span><span class="f-val">9.60</span></div>
+            <div class="factor"><span class="f-name">ERP</span><span class="f-bar"><i style="width:44.0%;--o:.40"></i></span><span class="f-val">13.20</span></div>
+            <div class="factor"><span class="f-name">ROE</span><span class="f-bar"><i style="width:29.0%;--o:.28"></i></span><span class="f-val">8.70</span></div>
+          </div>
+          <div class="note" style="margin-top:9px">估值分 = Σ wᵢ × (100 − pᵢ) · MVI = 100 − 估值分 · 风险分单独展示</div>
+        </div>
+        <div class="mvi-right">
+          <div class="mvi-chart"><div class="chart" id="chart-mvi" role="img" aria-label="MVI 近5年走势与分位带"></div></div>
+          <div class="legend">
+            <span><i class="sw"></i>MVI</span>
+            <span><i class="sw a"></i>分位带（P20–P80）</span>
+            <span><i class="sw d3"></i>低估 35 / 高估 65</span>
+            <span><i class="sw dot"></i>当前 31.29</span>
+            <span style="margin-left:auto">0 = 便宜 · 100 = 贵</span>
+          </div>
+        </div>
+      </div>
+      <div class="panel-f"><span>WEEKLY · 修数后序列 · 无尖刺</span><span class="r">IN-SAMPLE · FIXED WEIGHTS V1 · 2026-11-27</span></div>
+    </div>
+  </div>
+
+  <!-- 03 · Industry heat -->
+  <div class="g12" style="margin-top:12px">
+    <div class="panel c12" data-card data-skel="heat">
+      <div class="panel-h">
+        <div class="ph-l">
+          <span class="ph-idx">03</span><h2>行业估值热力</h2><span class="ph-kicker">INDUSTRY PE PERCENTILE · 16 SECTORS</span>
+          <span class="has-pop">
+            <button class="q-btn" aria-label="行业估值热力口径">?</button>
+            <span class="pop pop-formula" role="dialog" aria-label="行业估值热力口径">
+              <h5>行业估值热力 · 口径</h5>
+              <div class="fx">行业热力 = 该行业下所有指数<br>PE-TTM 近 5 年分位均值</div>
+              <p>样本数 = 参与计算的指数数量；分位越低越便宜（绿），越高越贵（红）。颜色只表达估值高低，与涨跌红绿无关。</p>
+            </span>
+          </span>
+        </div>
+        <div class="ph-r"><span class="squote">近 5 年 PE-TTM 分位均值 · 2026-11-27</span></div>
+      </div>
+      <div class="heat-grid" id="heatGrid"></div>
+      <div class="panel-f"><span>COLOR · 低分位=便宜 / 高分位=贵</span><span class="r">SAMPLE = 参与计算指数数 · 点击查看明细</span></div>
+    </div>
+  </div>
+
+  <!-- 04 · Dividend attractiveness -->
+  <div class="g12" style="margin-top:12px">
+    <div class="panel c12" data-card data-skel="chart">
+      <div class="panel-h">
+        <div class="ph-l"><span class="ph-idx">04</span><h2>红利指数吸引力</h2><span class="ph-kicker">DIVIDEND INDEX ATTRACTIVENESS</span></div>
+        <div class="ph-r">
+          <span class="squote">样本 30 只红利 / 股息指数</span>
+          <span class="seg q" id="divMode" role="group" aria-label="红利估值模式">
+            <button class="on" data-divmode="abs">绝对估值</button><button data-divmode="rel">相对估值</button>
+          </span>
+        </div>
+      </div>
+      <div class="div-split">
+        <div class="div-chart">
+          <div class="chart" id="chart-div" role="img" aria-label="红利指数 PB 与股息率散点图"></div>
+          <div class="legend" id="divLegend">
+            <span><i class="sw d"></i>回归线</span>
+            <span><i class="sw dot" style="border-radius:50%"></i>指数（气泡=基金规模）</span>
+            <span style="margin-left:auto">X · PB（对数轴） / Y · 股息率 TTM</span>
+          </div>
+        </div>
+        <aside class="div-side">
+          <div>
+            <div class="k-lbl">回归拟合</div>
+            <div class="stat-big num" id="divR2">R² 0.42</div>
+            <div class="note" id="divEq" style="margin-top:6px">股息率 = 6.91 − 2.14 · ln(PB)</div>
+          </div>
+          <div class="div-list">
+            <div class="k-lbl" style="margin-bottom:4px">股息率 TOP 5</div>
+            <div id="divTop"></div>
+          </div>
+          <div class="note" id="divNote">绝对估值：低 PB + 高股息率 = 更有吸引力；气泡为跟踪基金规模（亿元）。30 只样本，剔除成立不足 1 年指数。</div>
+        </aside>
+      </div>
+      <div class="panel-f"><span>SAMPLE · 30 · PB 对数轴 · OLS 回归</span><span class="r">SIZE = 跟踪基金规模（亿元）</span></div>
+    </div>
+  </div>
+
+  <!-- 05 · Screener -->
+  <div class="g12" style="margin-top:12px">
+    <div class="panel c12" data-card data-skel="table">
+      <div class="panel-h">
+        <div class="ph-l"><span class="ph-idx">05</span><h2>快速变化</h2><span class="ph-kicker">INDEX SCREENER · 11 INDICES</span></div>
+        <div class="ph-r"><span class="squote">点击表头排序 · 点击行查看详情</span></div>
+      </div>
+      <div class="panel-b flush">
+        <div class="tbl-wrap mw-880">
+          <table class="tbl" id="quickTbl">
+            <thead><tr>
+              <th style="padding-left:14px">指数</th>
+              <th class="srt" data-k="close">收盘</th>
+              <th class="srt" data-k="pe">PE 分位</th>
+              <th class="srt" data-k="pb">PB 分位</th>
+              <th class="srt" data-k="dy">股息率分位</th>
+              <th class="srt" data-k="y1">近 1 年</th>
+              <th style="width:36px"></th>
+            </tr></thead>
+            <tbody id="quickBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="panel-f"><span>DATA · 2026-11-27 · 11 / 521 只指数</span><span class="r">点击「恒生指数」进入 B 页详情</span></div>
+    </div>
+  </div>
+
+
+  <!-- 06 · components / states -->
+  <div class="g12" style="margin-top:12px">
+    <div class="panel c12" data-card data-skel="text">
+      <div class="panel-h">
+        <div class="ph-l"><span class="ph-idx">06</span><h2>组件与状态</h2><span class="ph-kicker">COMPONENTS · STATES</span></div>
+        <div class="ph-r"><span class="squote">局部 loading · 空态 · hover / focus · 120ms</span></div>
+      </div>
+      <div class="comps">
+        <div class="comp">
+          <div class="k-lbl">BUTTONS</div>
+          <div class="comp-row">
+            <button class="btn pri sm">主按钮</button>
+            <button class="btn sm">次按钮</button>
+            <button class="btn ghost sm">幽灵</button>
+            <button class="btn sm" disabled>禁用</button>
+          </div>
+          <div class="comp-txt">27 / 23px 高度 · focus-visible 1px sky ring</div>
+        </div>
+        <div class="comp">
+          <div class="k-lbl">SEGMENTED · TABS</div>
+          <div class="comp-row"><div class="seg sm"><button class="on">近5年</button><button>近10年</button><button>全部</button></div></div>
+          <div class="comp-row" style="margin-top:8px"><div class="tabs"><button class="on">PE-TTM</button><button>PB</button><button>股息率</button></div></div>
+        </div>
+        <div class="comp">
+          <div class="k-lbl">TAGS · BADGES</div>
+          <div class="comp-row">
+            <span class="tag accent"><i></i>低估</span>
+            <span class="tag dim">中性</span>
+            <span class="tag up"><i></i>上涨</span>
+            <span class="tag down"><i></i>下跌</span>
+            <span class="tag warn">WARN</span>
+          </div>
+          <div class="comp-txt">涨跌只用红绿 · 估值分位用 sky 说明色</div>
+        </div>
+        <div class="comp">
+          <div class="k-lbl">TOOLTIP · POPOVER</div>
+          <div class="comp-txt" style="margin-top:0">悬停 <span class="twarn" data-tip="TE 5.41% &gt; 5% 阈值 · 数据质量告警示例">TE 5.41%</span> 查看明细；图表 hover 显示十字线。</div>
+          <div class="comp-row" style="margin-top:8px">
+            <span class="has-pop">
+              <button class="btn xs">口径 <span style="color:var(--text-3)">?</span></button>
+              <span class="pop pop-formula" style="width:250px">
+                <h5>口径示例</h5>
+                <div class="fx">分位 = 当前值在窗口内的经验分位（0–100）</div>
+                <p>窗口 5 年 · 周频 · 2026-11-27</p>
+              </span>
+            </span>
+          </div>
+        </div>
+        <div class="comp">
+          <div class="k-lbl">EMPTY STATE</div>
+          <div class="comp-empty">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4z" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+            <span>图标 + 一行说明<br>不显示空表格骨架</span>
+          </div>
+        </div>
+        <div class="comp">
+          <div class="k-lbl">LOCAL SKELETON</div>
+          <div class="comp-skel"><i></i><i></i><i></i></div>
+          <div class="comp-txt">独立 1.2s · 细条扫描 · 页头不动</div>
+        </div>
+      </div>
+      <div class="panel-f"><span>STATES · DEFAULT / HOVER / FOCUS / DISABLED / LOADING / EMPTY</span><span class="r">REDUCED MOTION · 0.01MS</span></div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <div class="l">
+      <span><b>V2 · VERCEL MONO GRID</b></span>
+      <span>局部 loading · 无全局遮罩</span>
+      <span>涨跌 = 红涨绿跌（A 股语义）</span>
+      <span>零外部依赖 · 内联 SVG</span>
+    </div>
+    <div class="l"><span>PROTOTYPE / 2026-11-27 / NOT FOR PRODUCTION</span></div>
+  </div>
+</section>
+
+
+<!-- ============================================================
+     SCREEN B · /valuation/HSI
+     ============================================================ -->
+<section class="screen" id="screen-b" hidden>
+  <header class="pagehead">
+    <div>
+      <div class="eyebrow"><b>B</b><span class="sl">/</span>INDEX DETAIL<span class="sl">/</span>恒生指数</div>
+      <h1>恒生指数 <span style="font:400 11px var(--mono);color:var(--text-3);letter-spacing:.04em;margin-left:6px">HSI</span></h1>
+      <div class="sub">
+        <span>HSI · 港股</span><span class="sep">·</span>82 只成分
+        <span class="sep">·</span>港元计价 · 价格指数
+        <span class="sep">·</span>PE / PB 为港币口径
+        <span class="sep">·</span><span class="mono">SNAPSHOT 2026-11-27</span>
+      </div>
+    </div>
+    <div class="bigquote">
+      <div class="meta-lbl">CLOSE · 2026-11-27</div>
+      <div class="p num">24,586.32</div>
+      <div class="d">
+        <span class="up num">+0.82%</span>
+        <span class="squote">+200.14</span>
+        <span class="tag up"><i></i>上涨</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- 4 metric cards -->
+  <div class="tiles tiles-4" data-card data-skel="kpi">
+    <div>
+      <div class="k-lbl">PE-TTM</div>
+      <div class="k-val">11.20</div>
+      <div class="k-sub"><span>5Y 分位</span><b class="num">35%</b><span class="squote">均值 12.42</span></div>
+      <div class="pbar"><i style="width:35%"></i><u style="left:35%"></u></div>
+      <div class="pbar-ticks"><span>0</span><span>50</span><span>100</span></div>
+    </div>
+    <div>
+      <div class="k-lbl">PB</div>
+      <div class="k-val">1.05</div>
+      <div class="k-sub"><span>5Y 分位</span><b class="num">29%</b><span class="squote">均值 1.14</span></div>
+      <div class="pbar"><i style="width:29%"></i><u style="left:29%"></u></div>
+      <div class="pbar-ticks"><span>0</span><span>50</span><span>100</span></div>
+    </div>
+    <div>
+      <div class="k-lbl">股息率 TTM</div>
+      <div class="k-val">3.41%</div>
+      <div class="k-sub"><span>5Y 分位</span><b class="num">68%</b><span class="squote">均值 3.05%</span></div>
+      <div class="pbar"><i style="width:68%"></i><u style="left:68%"></u></div>
+      <div class="pbar-ticks"><span>0</span><span>50</span><span>100</span></div>
+    </div>
+    <div>
+      <div class="k-lbl">风险溢价 ERP</div>
+      <div class="k-val">4.92%</div>
+      <div class="k-sub"><span>5Y 分位</span><b class="num">61%</b><span class="squote">10Y 美债 4.05%</span></div>
+      <div class="pbar"><i style="width:61%"></i><u style="left:61%"></u></div>
+      <div class="pbar-ticks"><span>0</span><span>50</span><span>100</span></div>
+    </div>
+  </div>
+
+  <div class="g12" style="margin-top:12px">
+    <div class="panel c8" data-card data-skel="chart">
+      <div class="panel-h">
+        <div class="ph-l"><span class="ph-idx">01</span><h2>估值与点位</h2><span class="ph-kicker">VALUATION &amp; LEVEL · DUAL AXIS</span></div>
+        <div class="ph-r">
+          <button class="btn sm" id="hsiBand" aria-pressed="true">分位带</button>
+          <div class="seg sm" id="hsiWin" role="group" aria-label="窗口">
+            <button class="on" data-hsiwin="10">近10年</button><button data-hsiwin="5">近5年</button>
+          </div>
+        </div>
+      </div>
+      <div class="panel-b" style="padding:10px 8px 4px">
+        <div class="chart" id="chart-hsi" role="img" aria-label="恒生指数 PE-TTM 与点位双轴图"></div>
+        <div class="legend" style="padding:0 6px">
+          <span><i class="sw"></i>PE-TTM（左轴）</span>
+          <span><i class="sw d"></i>恒生指数点位（右轴）</span>
+          <span><i class="sw d3"></i>机会值 9.20 / 危险值 13.80</span>
+          <span><i class="sw a"></i>PE 分位带 P20–P80</span>
+        </div>
+      </div>
+      <div class="panel-f"><span>PE-TTM · 恒生指数 · 周频 · 港币口径</span><span class="r">2026-11-27</span></div>
+    </div>
+
+    <div class="panel c4" data-card data-skel="chart">
+      <div class="panel-h">
+        <div class="ph-l"><span class="ph-idx">02</span><h2>收益风险</h2><span class="ph-kicker">RETURN &amp; RISK</span></div>
+        <div class="ph-r"><span class="squote">年化</span></div>
+      </div>
+      <div class="panel-b">
+        <div class="chart" id="chart-risk" role="img" aria-label="恒生指数 1/3/5 年年化收益率柱状图" style="height:118px"></div>
+        <div class="legend"><span><i class="sw a"></i>年化收益（1Y / 3Y / 5Y）</span></div>
+        <table class="tbl" style="margin-top:8px">
+          <thead><tr><th>指标</th><th>1Y</th><th>3Y</th><th>5Y</th></tr></thead>
+          <tbody>
+            <tr><td>年化收益</td><td class="tx up">+18.4%</td><td class="tx up">+6.2%</td><td class="tx up">+2.8%</td></tr>
+            <tr><td>年化波动</td><td class="tx">22.1%</td><td class="tx">24.6%</td><td class="tx">23.8%</td></tr>
+            <tr><td>最大回撤</td><td class="tx down">−18.6%</td><td class="tx down">−31.2%</td><td class="tx down">−46.8%</td></tr>
+            <tr><td>Sharpe</td><td class="tx">0.71</td><td class="tx">0.19</td><td class="tx">0.06</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="panel-f"><span>RISK FREE · 2.0%</span><span class="r">周频 · 2026-11-27</span></div>
+    </div>
+  </div>
+
+  <!-- Tracking funds -->
+  <div class="g12" style="margin-top:12px">
+    <div class="panel c12" data-card data-skel="table">
+      <div class="panel-h">
+        <div class="ph-l"><span class="ph-idx">03</span><h2>跟踪基金</h2><span class="ph-kicker">TRACKING FUNDS · 23</span></div>
+        <div class="ph-r">
+          <span class="squote">规模合计 <b style="color:var(--text)">1,274 亿</b> · 数据截至 2026-11-23 · 更新于 2026-11-27 21:10</span>
+          <button class="btn sm" id="fundExpand">展开全部 23 只</button>
+        </div>
+      </div>
+      <div class="fund-split">
+        <div class="fund-chart">
+          <div class="k-lbl" style="padding:0 4px">TOP 10 · 规模（亿元）</div>
+          <div class="chart" id="chart-funds" role="img" aria-label="跟踪恒生指数基金规模前10条形图" style="margin-top:8px"></div>
+        </div>
+        <div class="fund-tbl">
+          <div class="tbl-wrap mw-980">
+            <table class="tbl" id="fundTbl">
+              <thead><tr>
+                <th style="padding-left:14px">基金</th>
+                <th>公司</th>
+                <th>基金经理</th>
+                <th class="srt" data-fk="size">规模(亿)</th>
+                <th>费率</th>
+                <th class="srt" data-fk="te">TE 1Y</th>
+                <th class="srt" data-fk="vol">年化波动</th>
+                <th class="srt" data-fk="y1">1Y 收益</th>
+              </tr></thead>
+              <tbody id="fundBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="panel-f"><span>TE 口径 · 近 1 年周频 · 净值 acc_nav（缺失回退 ETF 后复权）</span><span class="r">TE &gt; 5% 标注 WARN</span></div>
+    </div>
+  </div>
+
+  <div class="g12" style="margin-top:12px">
+    <div class="panel c5" data-card data-skel="empty">
+      <div class="panel-h"><div class="ph-l"><span class="ph-idx">04</span><h2>成分 / 行业权重</h2><span class="ph-kicker">CONSTITUENTS</span></div></div>
+      <div class="empty">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+        <h4>成分股权重数据建设中</h4>
+        <p>HSI 成分与行业权重数据源接入中，首批预计 2026-12 上线；当前区块统一空态，不展示空表格骨架。</p>
+        <span class="tag dim">CONSTITUENT DATA · PENDING</span>
+      </div>
+    </div>
+    <div class="panel c7" data-card data-skel="text">
+      <div class="panel-h"><div class="ph-l"><span class="ph-idx">05</span><h2>口径说明</h2><span class="ph-kicker">METHODOLOGY</span></div></div>
+      <div class="panel-b">
+        <div class="stat-row"><span>累计净值口径</span><b>acc_nav（分红再投），缺失回退 ETF 后复权</b></div>
+        <div class="stat-row"><span>指数口径</span><b>HSI 价格指数 · HKDCNY 折算人民币展示</b></div>
+        <div class="stat-row"><span>样本窗口</span><b>1Y / 3Y / 5Y 周频；PE-TTM 分位窗口随图表切换</b></div>
+        <div class="stat-row"><span>跟踪误差</span><b>近 1 年周频年化；&gt;5% 视为异常，标注 WARN</b></div>
+        <div class="stat-row"><span>更新时间</span><b>2026-11-27 21:10 · 数据截至 2026-11-23</b></div>
+        <div class="note" style="margin-top:10px">净值与基准同口径：基准 HSI 全收益（无源时价格指数 × HKDCNY 并标注）。基金规模为最近一次披露，非实时。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <div class="l"><span><b>B / HSI DETAIL</b></span><span>估值 · 跟踪基金 · 空态 · 口径</span><span>局部 loading</span></div>
+    <div class="l"><span>PROTOTYPE / 2026-11-27 / NOT FOR PRODUCTION</span></div>
+  </div>
+</section>
+
+<!-- ============================================================
+     SCREEN C · /dashboard
+     ============================================================ -->
+<section class="screen" id="screen-c" hidden>
+  <div class="modebar">
+    <span class="modebar-tag">C / DASHBOARD</span>
+    <div class="seg q" id="dashMode" role="group" aria-label="Dashboard 模式">
+      <button class="on" data-dash="quad">四象限组合</button>
+      <button data-dash="basket">一篮子资产</button>
+    </div>
+    <div class="mode-actions">
+      <button class="btn sm"><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M7 2v10M2 7h10" fill="none" stroke="currentColor" stroke-width="1.2"/></svg><span class="lbl-long">新建篮子</span></button>
+      <button class="btn sm pri">保存</button>
+    </div>
+  </div>
+
+  <!-- ---------- QUADRANT ---------- -->
+  <div id="dash-quad">
+    <div class="dash-head">
+      <div class="dash-title">
+        <div class="eyebrow"><b>C1</b><span class="sl">/</span>QUADRANT<span class="sl">/</span>四象限</div>
+        <h1>多资产全天候</h1>
+        <div class="tags">
+          <span class="tag dim">DEMO</span>
+          <span class="squote">风险平价 · 4 象限 · 再平衡阈值 5pp</span>
+        </div>
+      </div>
+      <div class="dash-center">
+        <div class="sel" id="portSel">
+          <button class="sel-btn" aria-haspopup="listbox" aria-expanded="false">
+            <span style="display:flex;align-items:center;gap:8px;min-width:0"><span class="nm">多资产全天候</span><span class="tag dim">DEMO</span></span>
+            <span style="display:flex;align-items:center;gap:10px"><span class="dt">更新 2026-11-27</span>
+              <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+            </span>
+          </button>
+          <div class="sel-menu" role="listbox" aria-label="选择组合">
+            <div class="sel-h">我的组合</div>
+            <button class="sel-item" role="option" aria-selected="true"><span>多资产全天候</span><span class="m">DEMO · 09-12</span></button>
+            <button class="sel-item dis" role="option" aria-disabled="true"><span>稳健收益增强</span><span class="m">即将上线</span></button>
+            <button class="sel-item dis" role="option" aria-disabled="true"><span>全天候 · 低波</span><span class="m">即将上线</span></button>
+            <div class="sel-foot">最近更新 2026-11-27 · T-1 自动更新</div>
+          </div>
+        </div>
+        <span class="squote">12 个资产 · 近 5 年 · 月度再平衡</span>
+      </div>
+      <div class="dash-right"><span class="squote">T-1 · 2026-11-27</span></div>
+    </div>
+
+    <div class="kpis" data-card data-skel="kpi">
+      <div class="kpi"><div class="k-lbl">年化收益</div><div class="k-val up">+9.2%</div><div class="k-sub">近 5 年 · 年化</div></div>
+      <div class="kpi"><div class="k-lbl">年化波动</div><div class="k-val">7.8%</div><div class="k-sub">近 5 年 · 年化</div></div>
+      <div class="kpi"><div class="k-lbl">Sharpe</div><div class="k-val">1.18</div><div class="k-sub">无风险利率 2.0%</div></div>
+      <div class="kpi"><div class="k-lbl">最大回撤</div><div class="k-val down">−12.4%</div><div class="k-sub">峰值 → 谷底</div></div>
+      <div class="kpi"><div class="k-lbl">累计净值</div><div class="k-val">1.46</div><div class="k-sub">起始 1.00 · 2021-11-26</div></div>
+    </div>
+
+    <div class="g12" style="margin-top:12px">
+      <div class="panel c7" data-card data-skel="chart">
+        <div class="panel-h">
+          <div class="ph-l"><span class="ph-idx">01</span><h2>净值曲线</h2><span class="ph-kicker">NAV VS BENCHMARK</span></div>
+          <div class="ph-r"><span class="squote">组合 vs 60/40 基准 · 周频</span></div>
+        </div>
+        <div class="panel-b" style="padding:10px 8px 4px">
+          <div class="chart" id="chart-nav" role="img" aria-label="多资产全天候净值曲线与基准对比" style="height:268px"></div>
+          <div class="legend" style="padding:0 6px">
+            <span><i class="sw"></i>多资产全天候</span>
+            <span><i class="sw d"></i>基准 60/40</span>
+            <span style="margin-left:auto">累计净值 1.46 / 1.28</span>
+          </div>
+        </div>
+        <div class="panel-f"><span>截至 2026-11-27 · 周频 · 月度再平衡</span><span class="r">最大回撤 −12.4%</span></div>
+      </div>
+
+      <div class="panel c5" data-card data-skel="mini">
+        <div class="panel-h">
+          <div class="ph-l"><span class="ph-idx">02</span><h2>四象限矩阵</h2><span class="ph-kicker">GROWTH × INFLATION</span></div>
+          <div class="ph-r"><span class="squote">权重 / 贡献</span></div>
+        </div>
+        <div class="quads">
+          <div class="quad q-recovery" tabindex="0">
+            <div class="q-top"><div><div class="q-name"><span class="q-glyph"></span>复苏</div><div class="q-sub">增长 ↑ · 通胀 ↓</div></div><div class="q-w num">32.4%</div></div>
+            <div class="q-assets"><span class="q-chip">沪深300</span><span class="q-chip">中证500</span><span class="q-chip">中证红利</span></div>
+            <div class="q-foot"><span>贡献 <b class="up num">+3.8pp</b></span><span>超配 +2.1pp</span></div>
+            <div class="q-more">14.8 / 9.6 / 8.0 · 季度再平衡</div>
+          </div>
+          <div class="quad q-overheat" tabindex="0">
+            <div class="q-top"><div><div class="q-name"><span class="q-glyph"></span>过热</div><div class="q-sub">增长 ↑ · 通胀 ↑</div></div><div class="q-w num">21.8%</div></div>
+            <div class="q-assets"><span class="q-chip">黄金ETF</span><span class="q-chip">原油基金</span></div>
+            <div class="q-foot"><span>贡献 <b class="up num">+2.6pp</b></span><span>低配 −0.6pp</span></div>
+            <div class="q-more">12.6 / 9.2 · 油价与金价对冲</div>
+          </div>
+          <div class="quad" tabindex="0">
+            <div class="q-top"><div><div class="q-name"><span class="q-glyph"></span>滞胀</div><div class="q-sub">增长 ↓ · 通胀 ↑</div></div><div class="q-w num">18.6%</div></div>
+            <div class="q-assets"><span class="q-chip">短融ETF</span><span class="q-chip">货币基金</span></div>
+            <div class="q-foot"><span>贡献 <b class="up num">+1.1pp</b></span><span>低配 −1.4pp</span></div>
+            <div class="q-more">7.1 / 11.5 · 现金缓冲</div>
+          </div>
+          <div class="quad" tabindex="0">
+            <div class="q-top"><div><div class="q-name"><span class="q-glyph"></span>衰退</div><div class="q-sub">增长 ↓ · 通胀 ↓</div></div><div class="q-w num">27.2%</div></div>
+            <div class="q-assets"><span class="q-chip">十年国债</span><span class="q-chip">长期国债ETF</span></div>
+            <div class="q-foot"><span>贡献 <b class="up num">+1.7pp</b></span><span>超配 +0.9pp</span></div>
+            <div class="q-more">16.2 / 11.0 · 久期保护</div>
+          </div>
+        </div>
+        <div class="panel-f"><span>HOVER · 展开象限明细</span><span class="r">贡献合计 +9.2pp</span></div>
+      </div>
+    </div>
+
+    <div class="g12" style="margin-top:12px">
+      <div class="panel c12" data-card data-skel="table">
+        <div class="panel-h">
+          <div class="ph-l"><span class="ph-idx">03</span><h2>当前持仓</h2><span class="ph-kicker">HOLDINGS · 9 ASSETS</span></div>
+          <div class="ph-r"><span class="squote">再平衡动作按 5pp 阈值</span></div>
+        </div>
+        <div class="panel-b flush">
+          <div class="tbl-wrap mw-760">
+            <table class="tbl">
+              <thead><tr><th style="padding-left:14px">资产</th><th>类别</th><th>权重</th><th>风险贡献</th><th>再平衡动作</th></tr></thead>
+              <tbody>
+                <tr><td><span class="nm">沪深300</span><span class="cd">000300</span></td><td><span class="tag dim">股票</span></td><td class="tx">14.8%</td><td class="tx">17.4%</td><td><span class="tag dim">持有</span></td></tr>
+                <tr><td><span class="nm">中证500</span><span class="cd">000905</span></td><td><span class="tag dim">股票</span></td><td class="tx">9.6%</td><td class="tx">14.8%</td><td><span class="tag accent">加仓 +0.6pp</span></td></tr>
+                <tr><td><span class="nm">中证红利</span><span class="cd">000922</span></td><td><span class="tag dim">股票</span></td><td class="tx">8.0%</td><td class="tx">8.2%</td><td><span class="tag dim">持有</span></td></tr>
+                <tr><td><span class="nm">黄金ETF</span><span class="cd">518880</span></td><td><span class="tag dim">商品</span></td><td class="tx">12.6%</td><td class="tx">12.1%</td><td><span class="tag dim">减仓 −0.4pp</span></td></tr>
+                <tr><td><span class="nm">原油基金</span><span class="cd">161129</span></td><td><span class="tag dim">商品</span></td><td class="tx">9.2%</td><td class="tx">10.4%</td><td><span class="tag dim">持有</span></td></tr>
+                <tr><td><span class="nm">短融ETF</span><span class="cd">511360</span></td><td><span class="tag dim">债券</span></td><td class="tx">7.1%</td><td class="tx">5.2%</td><td><span class="tag dim">持有</span></td></tr>
+                <tr><td><span class="nm">货币基金</span><span class="cd">511990</span></td><td><span class="tag dim">现金</span></td><td class="tx">11.5%</td><td class="tx">3.1%</td><td><span class="tag accent">加仓 +0.8pp</span></td></tr>
+                <tr><td><span class="nm">十年国债</span><span class="cd">10Y</span></td><td><span class="tag dim">债券</span></td><td class="tx">16.2%</td><td class="tx">17.8%</td><td><span class="tag dim">减仓 −0.7pp</span></td></tr>
+                <tr><td><span class="nm">长期国债ETF</span><span class="cd">511060</span></td><td><span class="tag dim">债券</span></td><td class="tx">11.0%</td><td class="tx">11.0%</td><td><span class="tag dim">持有</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel-f"><span>权重合计 100.0% · 风险贡献合计 100.0%</span><span class="r">下次再平衡检查 · 2026-12-01</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ---------- BASKET ---------- -->
+  <div id="dash-basket" hidden>
+    <div class="dash-head">
+      <div class="dash-title">
+        <div class="eyebrow"><b>C2</b><span class="sl">/</span>BASKET<span class="sl">/</span>一篮子</div>
+        <h1>A股核心资产 12 只 <span style="font:400 12px var(--sans);color:var(--text-3);margin-left:4px">（示例）</span></h1>
+        <div class="tags">
+          <span class="tag dim">示例</span><span class="tag dim">只读</span><span class="tag dim">可复制</span>
+          <span class="squote">服务端重算 · 游客可见 · 复制需登录</span>
+        </div>
+      </div>
+      <div class="dash-center">
+        <div class="sel" id="basketSel">
+          <button class="sel-btn" aria-haspopup="listbox" aria-expanded="false">
+            <span style="display:flex;align-items:center;gap:8px;min-width:0"><span class="nm">A股核心资产 12 只（示例）</span><span class="tag dim">示例</span></span>
+            <span style="display:flex;align-items:center;gap:10px"><span class="dt">更新 2026-11-27</span>
+              <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+            </span>
+          </button>
+          <div class="sel-menu" role="listbox" aria-label="选择篮子">
+            <div class="sel-h">示例篮子</div>
+            <button class="sel-item" role="option" aria-selected="true"><span>A股核心资产 12 只（示例）</span><span class="m">示例 · 只读</span></button>
+            <div class="sel-h">我的篮子</div>
+            <button class="sel-item dis" role="option" aria-disabled="true"><span>我的篮子（需登录）</span><span class="m">登录后可编辑</span></button>
+            <div class="sel-foot">示例篮子由服务端重算 · 最近更新 2026-11-27</div>
+          </div>
+        </div>
+        <span class="squote">12 个资产 · 近 5 年 · 风险平价目标</span>
+      </div>
+      <div class="dash-right">
+        <button class="btn sm" id="copyBasket">复制篮子</button>
+        <span class="squote" id="copyHint" style="min-width:64px"></span>
+      </div>
+    </div>
+
+    <div class="kpis" data-card data-skel="kpi">
+      <div class="kpi"><div class="k-lbl">年化收益</div><div class="k-val up">+11.4%</div><div class="k-sub">近 5 年 · 年化</div></div>
+      <div class="kpi"><div class="k-lbl">年化波动</div><div class="k-val">19.2%</div><div class="k-sub">近 5 年 · 年化</div></div>
+      <div class="kpi"><div class="k-lbl">Sharpe</div><div class="k-val">0.59</div><div class="k-sub">无风险利率 2.0%</div></div>
+      <div class="kpi"><div class="k-lbl">最大回撤</div><div class="k-val down">−28.6%</div><div class="k-sub">峰值 → 谷底</div></div>
+      <div class="kpi"><div class="k-lbl">累计净值</div><div class="k-val">1.72</div><div class="k-sub">起始 1.00 · 2021-11-26</div></div>
+    </div>
+
+    <div class="g12" style="margin-top:12px">
+      <div class="panel c7" data-card data-skel="chart">
+        <div class="panel-h">
+          <div class="ph-l"><span class="ph-idx">01</span><h2>净值曲线</h2><span class="ph-kicker">NAV VS BENCHMARK</span></div>
+          <div class="ph-r"><span class="squote">示例篮子 vs 沪深300 · 周频</span></div>
+        </div>
+        <div class="panel-b" style="padding:10px 8px 4px">
+          <div class="chart" id="chart-bnav" role="img" aria-label="示例篮子净值曲线与沪深300基准对比" style="height:268px"></div>
+          <div class="legend" style="padding:0 6px">
+            <span><i class="sw"></i>A股核心资产 12 只</span>
+            <span><i class="sw d"></i>沪深300</span>
+            <span style="margin-left:auto">累计净值 1.72 / 0.85</span>
+          </div>
+        </div>
+        <div class="panel-f"><span>截至 2026-11-27 · 周频 · 风险平价目标</span><span class="r">最大回撤 −28.6%</span></div>
+      </div>
+
+      <div class="panel c5" data-card data-skel="mini">
+        <div class="panel-h">
+          <div class="ph-l"><span class="ph-idx">02</span><h2>风险贡献</h2><span class="ph-kicker">RISK CONTRIBUTION</span></div>
+          <div class="ph-r"><span class="squote">12 只 · 合计 100%</span></div>
+        </div>
+        <div class="panel-b">
+          <div class="k-lbl">风险贡献堆叠（按资产）</div>
+          <div class="stackbar" id="basketStack" aria-label="风险贡献堆叠条"></div>
+          <div class="risk-list" id="basketRiskList"></div>
+          <div class="note" style="margin-top:8px">宁德时代 / 紫金矿业 / 比亚迪贡献最高；茅台权重最高但波动贡献低于其权重。</div>
+        </div>
+        <div class="panel-f"><span>RISK PARITY · 近 3 年窗口</span><span class="r">单资产上限 40%</span></div>
+      </div>
+    </div>
+
+    <div class="g12" style="margin-top:12px">
+      <div class="panel c12" data-card data-skel="table">
+        <div class="panel-h">
+          <div class="ph-l"><span class="ph-idx">03</span><h2>篮子持仓</h2><span class="ph-kicker">HOLDINGS · 12 STOCKS</span></div>
+          <div class="ph-r"><span class="squote">目标权重 · 风险贡献 · 近 1 年收益</span></div>
+        </div>
+        <div class="panel-b flush">
+          <div class="tbl-wrap mw-760">
+            <table class="tbl">
+              <thead><tr><th style="padding-left:14px">资产</th><th>类别</th><th>目标权重</th><th>风险贡献</th><th>近 1 年</th><th>数据区间</th></tr></thead>
+              <tbody id="basketBody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel-f"><span>示例 · 只读 · 复制需登录 · 仅管理员可编辑</span><span class="r">服务端重算 · 2026-11-27</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <div class="l"><span><b>C / DASHBOARD</b></span><span>四象限 + 一篮子 · 局部 loading</span><span>游客可读 · 复制需登录</span></div>
+    <div class="l"><span>PROTOTYPE / 2026-11-27 / NOT FOR PRODUCTION</span></div>
+  </div>
+</section>
+
+</div><!-- /app -->
+
+<!-- ================= OVERLAYS ================= -->
+<div class="tip" id="tip" role="status" aria-live="polite"></div>
+
+<!-- MVI modal -->
+<div class="modal" id="mviModal" aria-hidden="true">
+  <div class="modal-bd" data-close-modal></div>
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-label="MVI 展开图表">
+    <div class="modal-h">
+      <div class="tt">
+        <span class="ph-idx">02</span><h3>MVI · 展开图表</h3>
+        <span class="tag accent"><i></i>低估</span>
+        <span class="squote">估值分 68.71 / 风险分 66.92</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <div class="seg sm" id="mviIdx" role="group" aria-label="指数切换">
+          <button class="on" data-mviidx="000300">沪深300</button>
+          <button data-mviidx="000510">中证A500</button>
+          <button data-mviidx="000016">上证50</button>
+          <button data-mviidx="000985">中证全指</button>
+        </div>
+        <button class="icon-btn" data-close-modal aria-label="关闭">
+          <svg viewBox="0 0 14 14" aria-hidden="true"><path d="M3 3l8 8M11 3l-8 8" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="modal-b">
+      <div class="modal-meta">
+        <div class="it"><span class="l">MVI</span><span class="v num" style="color:var(--accent-ink)">31.29</span></div>
+        <div class="it"><span class="l">ZONE</span><span class="v" style="font:500 12px var(--sans);color:var(--accent)">低估</span></div>
+        <div class="it"><span class="l">INDEX</span><span class="v num" id="modalIdxVal">6,482.15</span></div>
+        <div class="it"><span class="l">5Y PCT</span><span class="v num">12.4%</span></div>
+        <div class="it"><span class="l">WINDOW</span><span class="v num" style="font-size:11px">5Y · WEEKLY</span></div>
+        <span style="margin-left:auto" class="squote">左轴 MVI 0–100 · 右轴指数收盘 · HOVER 十字线</span>
+      </div>
+      <div class="modal-chart"><div class="chart" id="chart-modal" role="img" aria-label="MVI 与指数收盘双轴图"></div></div>
+      <div class="legend">
+        <span><i class="sw a" style="background:var(--area)"></i>MVI（0–100，左轴）</span>
+        <span><i class="sw d"></i>指数收盘（右轴）</span>
+        <span><i class="sw dot"></i>当前 MVI 31.29</span>
+        <span style="margin-left:auto">周频 · 修数后序列</span>
+      </div>
+    </div>
+    <div style="padding:9px 16px;border-top:1px solid var(--line);display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font:400 8.5px var(--mono);letter-spacing:.06em;color:var(--text-4);text-transform:uppercase">
+      <span>MVI = 100 − 估值分 · 固定权重 v1 · in-sample</span><span>SOURCE · 自建估值归档 / 2026-11-27</span>
+    </div>
+  </div>
+</div>
+
+<!-- index drawer -->
+<div class="drawer-bd" id="drawerBd"></div>
+<aside class="drawer" id="drawer" aria-hidden="true" aria-label="指数详情">
+  <div class="drawer-h">
+    <div class="tt"><h3 id="drawerName">沪深300</h3><div class="sb" id="drawerSub">000300 · A股 · 2026-11-27</div></div>
+    <button class="icon-btn" id="drawerClose" aria-label="关闭详情">
+      <svg viewBox="0 0 14 14" aria-hidden="true"><path d="M3 3l8 8M11 3l-8 8" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+    </button>
+  </div>
+  <div class="drawer-b">
+    <div class="d-spark"><div class="chart" id="chart-drawer" role="img" aria-label="指数近一年走势"></div></div>
+    <div class="d-stat" id="drawerStats"></div>
+    <div class="note" style="margin-top:12px">原型说明：本抽屉代替详情页跳转（完整详情页本轮仅实现 HSI）。点击恒生指数行可直接进入 B 页。</div>
+  </div>
+  <div class="drawer-f">
+    <button class="btn" id="drawerOpenPage">打开详情页</button>
+    <button class="btn pri" id="drawerAdd">加入对比</button>
+  </div>
+</aside>
+
+<!-- floating controls -->
+<div class="floatctl">
+  <span class="stat" id="loadStat">LOCAL LOAD · IDLE</span>
+  <div class="seg" id="themeToggle" role="group" aria-label="主题切换">
+    <button data-theme-btn="dark" class="on" aria-pressed="true">暗</button>
+    <button data-theme-btn="light" aria-pressed="false">明</button>
+  </div>
+  <span class="sep"></span>
+  <button class="btn sm" id="demoLoad" aria-label="重新播放各卡片局部 loading">演示加载</button>
+</div>
+
+<script>
+(function(){
+'use strict';
+/* ============================================================
+   V2 · VERCEL MONO GRID — prototype logic
+   零依赖 · 内联 SVG · 局部 loading · 红涨绿跌 · 双主题
+   ============================================================ */
+
+/* ---------------- dom / format ---------------- */
+const $ = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const nf = (v, d) => Number(v).toLocaleString('en-US', { minimumFractionDigits: d == null ? 2 : d, maximumFractionDigits: d == null ? 2 : d });
+const pf = (v, d) => Number(v).toFixed(d == null ? 1 : d) + '%';
+const sp = (v, d) => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(Number(v)).toFixed(d == null ? 2 : d) + '%';
+const NONBREAK = '\u2212';
+const END_DATE = new Date(2026, 10, 27);
+const DAY = 86400000;
+const NS = 'http://www.w3.org/2000/svg';
+
+function hashStr(s) {
+  let h = 2166136261 >>> 0;
+  s = String(s);
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+function rng(seed) {
+  let a = hashStr(seed);
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function waveSeries(n, o) {
+  const r = rng(o.seed || 'w');
+  const ph1 = r() * 6.283, ph2 = r() * 6.283, ph3 = r() * 6.283;
+  const out = [];
+  const slope = o.slope || 0;
+  for (let i = 0; i < n; i++) {
+    const t = n > 1 ? i / (n - 1) : 0;
+    let v = o.base + slope * t;
+    v += o.amp * (0.62 * Math.sin(t * Math.PI * 2 * 1.35 + ph1) + 0.28 * Math.sin(t * Math.PI * 2 * 3.7 + ph2) + 0.16 * Math.sin(t * Math.PI * 2 * 8.9 + ph3));
+    v += (r() - 0.5) * o.amp * (o.noise == null ? 0.12 : o.noise);
+    out.push(v);
+  }
+  if (o.end != null) {
+    const k = Math.min(o.blend == null ? 22 : o.blend, n);
+    for (let j = 0; j < k; j++) {
+      const f = (j + 1) / k;
+      out[n - k + j] = out[n - k + j] * (1 - f) + o.end * f;
+    }
+    out[n - 1] = o.end;
+  }
+  return out;
+}
+function navSeries(n, o) {
+  const r = rng(o.seed || 'nav');
+  const dt = 1 / 52;
+  const mu = Math.log(1 + (o.annual == null ? 0.08 : o.annual)) / 52;
+  const sig = (o.vol == null ? 0.12 : o.vol) * Math.sqrt(dt);
+  let v = 1;
+  let out = [];
+  for (let i = 0; i < n; i++) {
+    out.push(v);
+    const z = (r() + r() + r() + r() - 2) * 1.2247;
+    v *= Math.exp(mu - 0.5 * sig * sig + sig * z);
+  }
+  if (o.end != null) {
+    const f = o.end / out[n - 1];
+    out = out.map((x, i) => x * Math.pow(f, i / (n - 1)));
+  }
+  return out;
+}
+function quantile(arr, q) {
+  if (!arr.length) return 0;
+  const a = arr.slice().sort((x, y) => x - y);
+  const pos = (a.length - 1) * q;
+  const lo = Math.floor(pos), hi = Math.ceil(pos);
+  return a[lo] + (a[hi] - a[lo]) * (pos - lo);
+}
+function pctRank(arr, v) {
+  let c = 0;
+  for (let i = 0; i < arr.length; i++) if (arr[i] < v) c++;
+  return (c / arr.length) * 100;
+}
+function normInv(p) {
+  p = clamp(p, 0.02, 0.98);
+  return Math.log(p / (1 - p)) * 0.551;
+}
+function datesBack(n, stepDays) {
+  const out = [];
+  for (let i = 0; i < n; i++) out.push(new Date(END_DATE.getTime() - (n - 1 - i) * stepDays * DAY));
+  return out;
+}
+function fmtDate(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function fmtShort(d) {
+  return d.getFullYear() + '.' + String(d.getMonth() + 1).padStart(2, '0');
+}
+
+/* ---------------- svg ---------------- */
+function svgEl(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  if (attrs) for (const k in attrs) {
+    if (attrs[k] == null) continue;
+    e.setAttribute(k, attrs[k]);
+  }
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function svgText(parent, x, y, str, cls, anchor) {
+  const t = svgEl('text', { x, y, class: cls || 'c-tick', 'text-anchor': anchor || 'start' }, parent);
+  t.textContent = str;
+  return t;
+}
+function tipBox(title, rows, footer) {
+  let h = '<div class="tt">' + title + '</div>';
+  (rows || []).forEach(r => { h += '<div class="tr"><span>' + r[0] + '</span><b>' + r[1] + '</b></div>'; });
+  if (footer) h += '<div class="tf">' + footer + '</div>';
+  return h;
+}
+
+/* ---------------- tooltip ---------------- */
+const tipEl = $('#tip');
+function showTip(html, ev) {
+  tipEl.innerHTML = html;
+  tipEl.classList.add('on');
+  moveTip(ev);
+}
+function moveTip(ev) {
+  if (!ev) return;
+  const pad = 12;
+  const w = tipEl.offsetWidth || 160, h = tipEl.offsetHeight || 60;
+  let x = (ev.clientX || 0) + 16, y = (ev.clientY || 0) - 12;
+  if (x + w > window.innerWidth - 8) x = (ev.clientX || 0) - w - 16;
+  if (y + h > window.innerHeight - 8) y = window.innerHeight - h - 8;
+  if (y < 8) y = 8;
+  tipEl.style.left = x + 'px';
+  tipEl.style.top = y + 'px';
+}
+function hideTip() { tipEl.classList.remove('on'); }
+
+/* ---------------- line chart engine ---------------- */
+function drawLineChart(el, cfg) {
+  if (!el) return;
+  const W = Math.floor(el.clientWidth), H = Math.floor(el.clientHeight);
+  if (W < 60 || H < 40) return;
+  el.innerHTML = '';
+  const svg = svgEl('svg', { viewBox: '0 0 ' + W + ' ' + H, width: W, height: H, 'aria-hidden': 'true' }, el);
+  const pad = Object.assign({ l: 44, r: 14, t: 12, b: 22 }, cfg.pad || {});
+  if (cfg.right && !(cfg.pad && cfg.pad.r != null)) pad.r = 46;
+  const n = cfg.n;
+  const plotW = Math.max(10, W - pad.l - pad.r);
+  const plotH = Math.max(10, H - pad.t - pad.b);
+  const L = cfg.left || {};
+  const lmin = L.min, lmax = L.max;
+  const yL = v => pad.t + (1 - (v - lmin) / (lmax - lmin)) * plotH;
+  let yR = null, rmin, rmax;
+  if (cfg.right) { rmin = cfg.right.min; rmax = cfg.right.max; yR = v => pad.t + (1 - (v - rmin) / (rmax - rmin)) * plotH; }
+  const x = i => pad.l + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+
+  /* gradient defs */
+  let gradId = null;
+  if (cfg.gradient) {
+    gradId = 'g' + hashStr(cfg.id || 'chart' + Math.random());
+    const defs = svgEl('defs', {}, svg);
+    const lg = svgEl('linearGradient', { id: gradId, x1: '0', y1: '0', x2: '0', y2: '1' }, defs);
+    svgEl('stop', { offset: '0', style: 'stop-color:var(--text);stop-opacity:.17' }, lg);
+    svgEl('stop', { offset: '0.72', style: 'stop-color:var(--text);stop-opacity:.04' }, lg);
+    svgEl('stop', { offset: '1', style: 'stop-color:var(--text);stop-opacity:0' }, lg);
+  }
+
+  /* y bands */
+  (cfg.bands || []).forEach(b => {
+    let d = '';
+    for (let i = 0; i < n; i++) d += (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + yL(b.hi[i]).toFixed(1);
+    for (let i = n - 1; i >= 0; i--) d += 'L' + x(i).toFixed(1) + ' ' + yL(b.lo[i]).toFixed(1);
+    svgEl('path', { d: d + 'Z', class: b.cls || 'c-band' }, svg);
+  });
+
+  /* grid + left ticks */
+  const ticks = L.ticks || 4;
+  for (let i = 0; i <= ticks; i++) {
+    const val = lmin + ((lmax - lmin) * i) / ticks;
+    const y = yL(val);
+    svgEl('line', { x1: pad.l, x2: W - pad.r, y1: y, y2: y, class: 'c-grid' }, svg);
+    const t = svgText(svg, pad.l - 6, y, L.format ? L.format(val) : val.toFixed(2), 'c-tick', 'end');
+    t.setAttribute('dy', '0.32em');
+  }
+  if (cfg.right) {
+    for (let i = 0; i <= ticks; i++) {
+      const val = rmin + ((rmax - rmin) * i) / ticks;
+      const y = pad.t + (1 - (val - rmin) / (rmax - rmin)) * plotH;
+      const t = svgText(svg, W - pad.r + 6, y, cfg.right.format ? cfg.right.format(val) : nf(val, 0), 'c-tick', 'start');
+      t.setAttribute('dy', '0.32em');
+    }
+  }
+
+  /* x ticks */
+  const xt = cfg.xTicks || (W < 420 ? 4 : W < 720 ? 5 : 6);
+  const xf = cfg.xFormat || (d => d.getFullYear());
+  for (let t = 1; t <= xt; t++) {
+    const idx = Math.round((t / xt) * (n - 1));
+    const lbl = svgText(svg, x(idx), H - 6, xf(cfg.dates[idx]), 'c-tick', 'middle');
+    lbl.setAttribute('dy', '0');
+  }
+  svgEl('line', { x1: pad.l, x2: W - pad.r, y1: pad.t + plotH, y2: pad.t + plotH, class: 'c-axis' }, svg);
+
+  /* refs */
+  (cfg.refs || []).forEach(rf => {
+    const y = yL(rf.v);
+    svgEl('line', { x1: pad.l, x2: W - pad.r, y1: y, y2: y, class: rf.cls || 'c-ref' }, svg);
+    if (rf.label) {
+      const rightSide = rf.side === 'right';
+      const t = svgText(svg, rightSide ? W - pad.r - 4 : pad.l + 5, y - 4, rf.label, 'c-ref-lbl', rightSide ? 'end' : 'start');
+      t.setAttribute('dy', '0');
+    }
+  });
+
+  /* series */
+  cfg.series.forEach(s => {
+    const y = (s.axis === 'right' && yR) ? yR : yL;
+    let d = '';
+    for (let i = 0; i < n; i++) d += (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(s.values[i]).toFixed(1);
+    if (s.area) {
+      const baseY = (pad.t + plotH).toFixed(1);
+      const area = d + 'L' + x(n - 1).toFixed(1) + ' ' + baseY + 'L' + x(0).toFixed(1) + ' ' + baseY + 'Z';
+      svgEl('path', { d: area, class: 'c-area', style: gradId ? 'fill:url(#' + gradId + ')' : null }, svg);
+    }
+    svgEl('path', { d: d, class: s.cls || 'c-main' }, svg);
+  });
+
+  /* marker */
+  if (cfg.marker) {
+    const i = cfg.marker.index;
+    const s = cfg.series[cfg.marker.series == null ? 0 : cfg.marker.series];
+    const y = (s.axis === 'right' && yR) ? yR : yL;
+    svgEl('circle', { cx: x(i), cy: y(s.values[i]), r: 6, class: 'c-cur-halo' }, svg);
+    svgEl('circle', { cx: x(i), cy: y(s.values[i]), r: 2.6, class: 'c-cur' }, svg);
+  }
+
+  /* crosshair */
+  if (cfg.tip) {
+    const xh = svgEl('line', { x1: 0, x2: 0, y1: pad.t, y2: pad.t + plotH, class: 'c-xh', style: 'opacity:0' }, svg);
+    const dots = cfg.series.map(s => svgEl('circle', { r: 2.6, cx: 0, cy: 0, class: s.axis === 'right' ? 'c-dot-2' : 'c-dot', style: 'opacity:0' }, svg));
+    const hit = svgEl('rect', { x: pad.l, y: pad.t, width: plotW, height: plotH, fill: 'transparent' }, svg);
+    hit.style.cursor = 'crosshair';
+    svgEl('line', { x1: pad.l, x2: W - pad.r, y1: pad.t + plotH, y2: pad.t + plotH, class: 'c-axis' }, svg);
+    let cur = -1;
+    const place = (i, ev) => {
+      cur = i;
+      xh.setAttribute('x1', x(i)); xh.setAttribute('x2', x(i)); xh.setAttribute('style', 'opacity:1');
+      cfg.series.forEach((s, k) => {
+        const y = (s.axis === 'right' && yR) ? yR : yL;
+        dots[k].setAttribute('cx', x(i));
+        dots[k].setAttribute('cy', y(s.values[i]));
+        dots[k].setAttribute('style', 'opacity:1');
+      });
+      showTip(cfg.tip(i), ev);
+    };
+    const hide = () => { cur = -1; xh.setAttribute('style', 'opacity:0'); dots.forEach(d => d.setAttribute('style', 'opacity:0')); hideTip(); };
+    const onMove = ev => {
+      const r = svg.getBoundingClientRect();
+      const px = (ev.clientX - r.left) * (W / r.width);
+      let i = Math.round(((px - pad.l) / plotW) * (n - 1));
+      i = clamp(i, 0, n - 1);
+      if (i === cur) { moveTip(ev); return; }
+      place(i, ev);
+    };
+    hit.addEventListener('pointermove', onMove);
+    hit.addEventListener('pointerdown', onMove);
+    hit.addEventListener('pointerleave', hide);
+    hit.setAttribute('tabindex', '0');
+    hit.setAttribute('role', 'application');
+    hit.setAttribute('aria-label', (cfg.a11y || '图表') + '，方向键查看数据');
+    hit.addEventListener('keydown', ev => {
+      if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
+      ev.preventDefault();
+      const i = clamp((cur < 0 ? n - 1 : cur + (ev.key === 'ArrowRight' ? 1 : -1)), 0, n - 1);
+      const r = svg.getBoundingClientRect();
+      const cx = r.left + (x(i) / W) * r.width;
+      place(i, { clientX: cx, clientY: r.top + r.height / 2 });
+    });
+    hit.addEventListener('blur', hide);
+  }
+  return svg;
+}
+
+/* ---------------- sparkline ---------------- */
+function drawSpark(el, values, o) {
+  if (!el || !values || values.length < 2) return;
+  const W = Math.max(28, el.clientWidth || 80), H = Math.max(12, el.clientHeight || 24);
+  const mn = Math.min.apply(null, values), mx = Math.max.apply(null, values);
+  const span = mx - mn || 1;
+  let d = '';
+  for (let i = 0; i < values.length; i++) {
+    const px = (i / (values.length - 1)) * (W - 1) + 0.5;
+    const py = H - 2 - ((values[i] - mn) / span) * (H - 4);
+    d += (i ? 'L' : 'M') + px.toFixed(1) + ' ' + py.toFixed(1);
+  }
+  el.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H + '" aria-hidden="true">' +
+    '<path d="' + d + 'L' + (W - 1) + ' ' + H + 'L0 ' + H + 'Z" class="c-area"/>' +
+    '<path d="' + d + '" fill="none" class="' + (o && o.cls ? o.cls : 'c-third') + '" style="stroke-width:1"/></svg>';
+}
+
+
+/* ============================================================
+   DATA · 2026-11-27 真实快照（content-spec）+ 合理 mock
+   ============================================================ */
+const state = {
+  screen: 'a',
+  a: { code: '000300', metric: 'pe', win: 5, sort: { k: 'pe', dir: 1 } },
+  b: { win: 10, band: true, expanded: false, fsort: { k: 'size', dir: -1 } },
+  c: { mode: 'quad' },
+  mviIdx: '000985',
+  divMode: 'abs'
+};
+
+const METRICS = [
+  { k: 'pe', label: 'PE-TTM', unit: 'x', d: 1, suffix: '' },
+  { k: 'pb', label: 'PB', unit: 'x', d: 2, suffix: '' },
+  { k: 'dy', label: '股息率', unit: '%', d: 2, suffix: '%' },
+  { k: 'erp', label: '风险溢价', unit: '%', d: 2, suffix: '%' }
+];
+const metricMeta = k => METRICS.find(m => m.k === k) || METRICS[0];
+const fmtMetric = (k, v) => nf(v, metricMeta(k).d) + metricMeta(k).suffix;
+
+/* 4 只指数：沪深300 / 中证A500 / 上证50 / 中证全指 */
+const IDX_ORDER = ['000300', '000510', '000016', '000985'];
+const IDX = {
+  '000300': { name: '沪深300', close: 4186.42, chg: 0.68, market: 'A股', metrics: {
+    pe: { v: 13.40, pct: 42, sd: 2.10 }, pb: { v: 1.38, pct: 38, sd: 0.19 }, dy: { v: 3.20, pct: 61, sd: 0.42 }, erp: { v: 5.10, pct: 55, sd: 1.05 } } },
+  '000510': { name: '中证A500', close: 5521.30, chg: 0.51, market: 'A股', metrics: {
+    pe: { v: 15.60, pct: 56, sd: 2.40 }, pb: { v: 1.62, pct: 49, sd: 0.22 }, dy: { v: 2.50, pct: 42, sd: 0.34 }, erp: { v: 4.30, pct: 38, sd: 0.95 } } },
+  '000016': { name: '上证50', close: 2842.66, chg: -0.12, market: 'A股', metrics: {
+    pe: { v: 11.80, pct: 58, sd: 1.70 }, pb: { v: 1.32, pct: 55, sd: 0.17 }, dy: { v: 3.60, pct: 72, sd: 0.45 }, erp: { v: 5.60, pct: 63, sd: 1.10 } } },
+  '000985': { name: '中证全指', close: 6482.15, chg: 0.35, market: 'A股', metrics: {
+    pe: { v: 17.90, pct: 61, sd: 2.80 }, pb: { v: 1.86, pct: 57, sd: 0.24 }, dy: { v: 2.40, pct: 46, sd: 0.32 }, erp: { v: 4.00, pct: 31, sd: 0.90 } } }
+};
+
+const ACACHE = {};
+function aView(code, metric, win) {
+  const key = [code, metric, win].join('|');
+  if (ACACHE[key]) return ACACHE[key];
+  const m = IDX[code].metrics[metric];
+  const years = win === 5 ? 5 : win === 10 ? 10 : 14;
+  const n = Math.round(years * 52);
+  const base = m.v - normInv(m.pct / 100) * m.sd;
+  const vals = waveSeries(n, { base, amp: m.sd * 0.98, seed: key, end: m.v });
+  const sorted = vals.slice().sort((a, b) => a - b);
+  const out = {
+    vals, n, dates: datesBack(n, 7),
+    pct: win === 5 ? m.pct : pctRank(vals, m.v),
+    q20: quantile(sorted, 0.2), q50: quantile(sorted, 0.5), q80: quantile(sorted, 0.8),
+    min: Math.min.apply(null, vals), max: Math.max.apply(null, vals)
+  };
+  ACACHE[key] = out;
+  return out;
+}
+
+/* MVI */
+const MVI_N = 260;
+const MVI_VALS = (function () {
+  const v = waveSeries(MVI_N, { base: 54, amp: 20, seed: 'mvi-v1', end: 31.29, blend: 26 });
+  return v.map(x => clamp(x, 4, 96));
+})();
+const MVI_DATES = datesBack(MVI_N, 7);
+const MVI_BAND = (function () {
+  const lo = [], hi = [];
+  for (let i = 0; i < MVI_N; i++) {
+    const w = MVI_VALS.slice(Math.max(0, i - 103), i + 1);
+    lo.push(quantile(w, 0.2));
+    hi.push(quantile(w, 0.8));
+  }
+  return { lo, hi };
+})();
+const MVI_PCT = (function () {
+  const out = [];
+  for (let i = 0; i < MVI_N; i++) out.push(pctRank(MVI_VALS.slice(0, i + 1), MVI_VALS[i]));
+  return out;
+})();
+
+/* 16 行业估值热力（PE-TTM 5Y 分位均值 / 样本数） */
+const HEAT = [
+  { n: '银行', p: 18, s: 28 }, { n: '非银金融', p: 34, s: 24 }, { n: '食品饮料', p: 22, s: 31 }, { n: '医药生物', p: 31, s: 46 },
+  { n: '电力设备', p: 47, s: 38 }, { n: '电子', p: 76, s: 52 }, { n: '计算机', p: 82, s: 41 }, { n: '传媒', p: 69, s: 27 },
+  { n: '通信', p: 71, s: 22 }, { n: '汽车', p: 55, s: 29 }, { n: '有色金属', p: 63, s: 26 }, { n: '基础化工', p: 44, s: 35 },
+  { n: '机械设备', p: 52, s: 33 }, { n: '房地产', p: 26, s: 19 }, { n: '公用事业', p: 39, s: 21 }, { n: '国防军工', p: 58, s: 18 }
+];
+const heatClass = p => (p < 35 ? 'lo' : p < 65 ? 'mid' : 'hi');
+const heatColor = p => (p < 35 ? 'var(--heat-lo)' : p < 65 ? 'var(--heat-mid)' : 'var(--heat-hi)');
+
+/* 30 只红利 / 股息指数 */
+const DIV = [
+  { n: '中证红利', c: '000922', pb: 0.78, dy: 6.42, size: 186.2 },
+  { n: '上证红利', c: '000015', pb: 0.72, dy: 6.85, size: 96.4 },
+  { n: '深证红利', c: '399324', pb: 0.86, dy: 5.92, size: 62.8 },
+  { n: '红利低波', c: '930955', pb: 0.81, dy: 6.24, size: 214.5 },
+  { n: '红利质量', c: '931468', pb: 0.94, dy: 5.58, size: 48.2 },
+  { n: '央企红利', c: '000825', pb: 0.68, dy: 7.12, size: 31.6 },
+  { n: '国企红利', c: '000824', pb: 0.74, dy: 6.68, size: 28.4 },
+  { n: '高股息策略', c: '930838', pb: 0.88, dy: 5.86, size: 22.6 },
+  { n: '港股通高股息', c: '930914', pb: 0.62, dy: 7.86, size: 88.2 },
+  { n: '恒生高股息', c: 'HSHDYI', pb: 0.58, dy: 8.42, size: 42.8 },
+  { n: '标普A股红利', c: '399411', pb: 0.83, dy: 5.94, size: 18.2 },
+  { n: '红利成长低波', c: '931446', pb: 0.92, dy: 5.62, size: 12.4 },
+  { n: '消费红利', c: '931588', pb: 1.24, dy: 4.62, size: 15.8 },
+  { n: '医药红利', c: '931589', pb: 1.42, dy: 4.18, size: 9.6 },
+  { n: '银行高股息', c: '931590', pb: 0.66, dy: 7.24, size: 24.2 },
+  { n: '能源红利', c: '931591', pb: 0.84, dy: 6.36, size: 14.4 },
+  { n: '公用红利', c: '931592', pb: 1.02, dy: 5.28, size: 7.8 },
+  { n: '金融红利', c: '931593', pb: 0.79, dy: 6.44, size: 11.2 },
+  { n: '红利价值', c: '931594', pb: 0.90, dy: 5.70, size: 6.4 },
+  { n: '红利精选', c: '931595', pb: 1.08, dy: 5.02, size: 5.8 },
+  { n: '红利100', c: '931596', pb: 0.87, dy: 5.82, size: 18.6 },
+  { n: '红利50', c: '931597', pb: 0.83, dy: 6.02, size: 7.2 },
+  { n: '低波红利', c: '931598', pb: 0.91, dy: 5.66, size: 9.4 },
+  { n: '高息策略', c: '931599', pb: 0.76, dy: 6.58, size: 13.8 },
+  { n: '股息率加权', c: '931600', pb: 0.81, dy: 6.22, size: 4.6 },
+  { n: '红利龙头', c: '931601', pb: 1.18, dy: 4.48, size: 8.2 },
+  { n: '红利优选', c: '931602', pb: 1.02, dy: 5.12, size: 3.8 },
+  { n: '红利稳健', c: '931603', pb: 1.32, dy: 4.36, size: 6.2 },
+  { n: '红利增强', c: '931604', pb: 2.14, dy: 3.28, size: 2.4 },
+  { n: '红利全收益', c: '931605', pb: 0.71, dy: 6.92, size: 26.8 }
+];
+DIV.forEach(d => {
+  d.pbPct = clamp(Math.round(((Math.log(d.pb) - Math.log(0.42)) / (Math.log(2.7) - Math.log(0.42))) * 100), 2, 98);
+  d.dyPct = clamp(Math.round(100 - ((d.dy - 2.6) / (8.8 - 2.6)) * 100), 2, 98);
+});
+
+/* 快速变化表（11 只，含 HSI 入口） */
+const QUICK = [
+  { name: '沪深300', code: '000300', close: 4186.42, chg: 0.68, pe: 42, pb: 38, dy: 61, y1: 18.4, peV: 13.40, pbV: 1.38, dyV: 3.20, erpV: 5.10, market: 'A股' },
+  { name: '中证A500', code: '000510', close: 5521.30, chg: 0.51, pe: 56, pb: 49, dy: 42, y1: 21.2, peV: 15.60, pbV: 1.62, dyV: 2.50, erpV: 4.30, market: 'A股' },
+  { name: '上证50', code: '000016', close: 2842.66, chg: -0.12, pe: 58, pb: 55, dy: 72, y1: 12.6, peV: 11.80, pbV: 1.32, dyV: 3.60, erpV: 5.60, market: 'A股' },
+  { name: '中证500', code: '000905', close: 7238.14, chg: 1.12, pe: 61, pb: 52, dy: 38, y1: 24.8, peV: 27.60, pbV: 2.18, dyV: 1.90, erpV: 2.40, market: 'A股' },
+  { name: '中证1000', code: '000852', close: 7934.62, chg: 1.48, pe: 66, pb: 58, dy: 30, y1: 31.4, peV: 42.30, pbV: 2.62, dyV: 1.30, erpV: 1.60, market: 'A股' },
+  { name: '创业板指', code: '399006', close: 2564.38, chg: 2.10, pe: 47, pb: 41, dy: 22, y1: 26.7, peV: 38.90, pbV: 4.86, dyV: 1.10, erpV: 1.20, market: 'A股' },
+  { name: '科创50', code: '000688', close: 1286.52, chg: 1.86, pe: 58, pb: 49, dy: 18, y1: 19.3, peV: 62.40, pbV: 4.42, dyV: 0.80, erpV: 0.70, market: 'A股' },
+  { name: '中证红利', code: '000922', close: 5288.16, chg: 0.24, pe: 22, pb: 31, dy: 84, y1: 9.8, peV: 6.80, pbV: 0.72, dyV: 4.60, erpV: 7.20, market: 'A股' },
+  { name: '中证银行', code: '399986', close: 6420.44, chg: 0.36, pe: 26, pb: 44, dy: 88, y1: 14.2, peV: 6.90, pbV: 0.68, dyV: 4.10, erpV: 7.00, market: 'A股' },
+  { name: '中证白酒', code: '399997', close: 6512.08, chg: -1.24, pe: 12, pb: 18, dy: 52, y1: -6.4, peV: 18.20, pbV: 4.92, dyV: 3.90, erpV: 2.60, market: 'A股' },
+  { name: '恒生指数', code: 'HSI', close: 24586.32, chg: 0.82, pe: 35, pb: 29, dy: 68, y1: 22.5, peV: 11.20, pbV: 1.05, dyV: 3.41, erpV: 4.92, market: '港股', hsi: true }
+];
+
+/* 23 只跟踪 HSI 的基金（规模合计 1,274 亿） */
+const FUNDS = [
+  { code: 'SH513660', name: '华夏沪港通恒生ETF', co: '华夏基金', pm: '李俊', size: 186.42, fee: '0.50%', te: 4.31, vol: 22.4, y1: 18.2 },
+  { code: 'SZ159920', name: '华夏恒生ETF', co: '华夏基金', pm: '徐猛', size: 172.36, fee: '0.50%', te: 2.86, vol: 22.1, y1: 18.6 },
+  { code: 'SH513600', name: '南方恒生ETF', co: '南方基金', pm: '罗文杰', size: 148.62, fee: '0.60%', te: 3.42, vol: 22.6, y1: 17.9 },
+  { code: 'SZ159954', name: '汇添富恒生ETF', co: '汇添富基金', pm: '乐无穹', size: 96.28, fee: '0.50%', te: 4.08, vol: 22.8, y1: 17.4 },
+  { code: 'SH513880', name: '华泰柏瑞恒生ETF', co: '华泰柏瑞', pm: '柳军', size: 88.46, fee: '0.50%', te: 5.41, vol: 23.1, y1: 16.8 },
+  { code: 'SH513900', name: '易方达恒生ETF', co: '易方达基金', pm: '余海燕', size: 82.14, fee: '0.15%', te: 2.74, vol: 22.2, y1: 18.9 },
+  { code: 'SZ159892', name: '广发恒生ETF', co: '广发基金', pm: '刘杰', size: 76.38, fee: '0.50%', te: 3.18, vol: 22.5, y1: 18.1 },
+  { code: 'SH513320', name: '嘉实恒生ETF', co: '嘉实基金', pm: '张钟玉', size: 68.52, fee: '0.60%', te: 4.62, vol: 23.0, y1: 17.2 },
+  { code: 'SZ159741', name: '博时恒生ETF', co: '博时基金', pm: '万琼', size: 61.24, fee: '0.50%', te: 2.92, vol: 22.3, y1: 18.4 },
+  { code: 'SH513210', name: '工银恒生ETF', co: '工银瑞信', pm: '赵栩', size: 54.86, fee: '0.45%', te: 3.86, vol: 22.7, y1: 17.7 },
+  { code: 'SZ159611', name: '招商恒生ETF', co: '招商基金', pm: '苏燕青', size: 38.42, fee: '0.50%', te: 3.54, vol: 22.6, y1: 17.9 },
+  { code: 'SH513680', name: '建信恒生ETF', co: '建信基金', pm: '梁洪昀', size: 32.18, fee: '0.50%', te: 4.16, vol: 22.9, y1: 17.1 },
+  { code: 'SZ159735', name: '鹏华恒生ETF', co: '鹏华基金', pm: '闫冬', size: 28.64, fee: '0.60%', te: 4.74, vol: 23.2, y1: 16.6 },
+  { code: 'SH513050', name: '国泰恒生ETF', co: '国泰基金', pm: '艾小军', size: 24.36, fee: '0.50%', te: 3.28, vol: 22.4, y1: 18.3 },
+  { code: 'SZ159726', name: '富国恒生ETF', co: '富国基金', pm: '王乐乐', size: 19.82, fee: '0.50%', te: 3.94, vol: 22.8, y1: 17.5 },
+  { code: 'SH513260', name: '中欧恒生ETF', co: '中欧基金', pm: '曲径', size: 16.44, fee: '0.60%', te: 4.88, vol: 23.3, y1: 16.4 },
+  { code: 'SZ159729', name: '银华恒生ETF', co: '银华基金', pm: '马君', size: 13.62, fee: '0.50%', te: 3.66, vol: 22.7, y1: 17.8 },
+  { code: 'SH513280', name: '平安恒生ETF', co: '平安基金', pm: '成钧', size: 11.28, fee: '0.50%', te: 4.24, vol: 22.9, y1: 17.0 },
+  { code: 'SZ159719', name: '景顺恒生ETF', co: '景顺长城', pm: '汪洋', size: 8.96, fee: '0.60%', te: 4.52, vol: 23.1, y1: 16.9 },
+  { code: 'SH513950', name: '浦银恒生ETF', co: '浦银安盛', pm: '陈士俊', size: 7.34, fee: '0.50%', te: 4.36, vol: 23.0, y1: 17.3 },
+  { code: 'SZ159815', name: '农银恒生ETF', co: '农银汇理', pm: '魏军', size: 6.12, fee: '0.60%', te: 4.68, vol: 23.2, y1: 16.7 },
+  { code: 'SH513630', name: '交银恒生ETF', co: '交银施罗德', pm: '蔡铮', size: 4.86, fee: '0.50%', te: 4.44, vol: 23.1, y1: 17.0 },
+  { code: 'SZ159716', name: '中信保诚恒生ETF', co: '中信保诚', pm: '韩依凌', size: 3.94, fee: '0.60%', te: 5.62, vol: 23.4, y1: 16.2 }
+];
+
+/* HSI 双轴序列 */
+const HSI_METRICS = [
+  { k: 'pe', label: 'PE-TTM', v: '11.20', pct: 35, mean: '12.42' },
+  { k: 'pb', label: 'PB', v: '1.05', pct: 29, mean: '1.14' },
+  { k: 'dy', label: '股息率 TTM', v: '3.41%', pct: 68, mean: '3.05%' },
+  { k: 'erp', label: '风险溢价 ERP', v: '4.92%', pct: 61, mean: '5.14%' }
+];
+const HSI_CACHE = {};
+function hsiView(win) {
+  if (HSI_CACHE[win]) return HSI_CACHE[win];
+  const n = win === 10 ? 520 : 260;
+  const pe = waveSeries(n, { base: 10.4, amp: 1.35, slope: 0.55, seed: 'hsi-pe-' + win, end: 11.20, blend: 26 });
+  const point = waveSeries(n, { base: 17800, amp: 2600, slope: 5600, seed: 'hsi-pt-' + win, end: 24586.32, blend: 26 });
+  const sorted = pe.slice().sort((a, b) => a - b);
+  const out = {
+    pe, point, n, dates: datesBack(n, 7),
+    q20: quantile(sorted, 0.2), q80: quantile(sorted, 0.8),
+    pmin: Math.min.apply(null, pe), pmax: Math.max.apply(null, pe),
+    imin: Math.min.apply(null, point), imax: Math.max.apply(null, point)
+  };
+  HSI_CACHE[win] = out;
+  return out;
+}
+
+/* 组合 / 篮子 NAV */
+const NAV_N = 260;
+const NAV_DATES = datesBack(NAV_N, 7);
+const NAV_QUAD = {
+  p: navSeries(NAV_N, { annual: 0.092, vol: 0.078, seed: 'nav-quad-p', end: 1.46 }),
+  b: navSeries(NAV_N, { annual: 0.064, vol: 0.11, seed: 'nav-quad-b', end: 1.28 })
+};
+const NAV_BASKET = {
+  p: navSeries(NAV_N, { annual: 0.114, vol: 0.192, seed: 'nav-basket-p', end: 1.72 }),
+  b: navSeries(NAV_N, { annual: 0.031, vol: 0.19, seed: 'nav-basket-b', end: 0.85 })
+};
+
+/* 一篮子 12 只 */
+const BASKET = [
+  { n: '贵州茅台', c: '600519', w: 14.2, rc: 12.1, y1: -3.8, r: '2015-01-05 至今' },
+  { n: '宁德时代', c: '300750', w: 12.4, rc: 14.6, y1: 28.4, r: '2018-06-11 至今' },
+  { n: '招商银行', c: '600036', w: 11.8, rc: 8.4, y1: 14.2, r: '2002-04-09 至今' },
+  { n: '中国平安', c: '601318', w: 9.4, rc: 9.8, y1: 11.6, r: '2007-03-01 至今' },
+  { n: '五粮液', c: '000858', w: 8.6, rc: 7.9, y1: -8.2, r: '1998-04-27 至今' },
+  { n: '美的集团', c: '000333', w: 8.2, rc: 7.2, y1: 9.4, r: '2013-09-18 至今' },
+  { n: '长江电力', c: '600900', w: 7.8, rc: 5.4, y1: 16.8, r: '2003-11-18 至今' },
+  { n: '紫金矿业', c: '601899', w: 7.2, rc: 9.1, y1: 42.6, r: '2008-04-25 至今' },
+  { n: '比亚迪', c: '002594', w: 6.8, rc: 10.4, y1: -2.4, r: '2011-06-30 至今' },
+  { n: '恒瑞医药', c: '600276', w: 5.6, rc: 6.2, y1: 18.2, r: '2000-10-18 至今' },
+  { n: '隆基绿能', c: '601012', w: 4.4, rc: 5.0, y1: -14.6, r: '2012-04-11 至今' },
+  { n: '海天味业', c: '603288', w: 3.6, rc: 3.9, y1: -6.1, r: '2014-02-11 至今' }
+];
+
+/* ============================================================
+   RENDER · 数据区块（HTML）
+   ============================================================ */
+function renderIdxSeg() {
+  const seg = $('#a-idx');
+  seg.innerHTML = IDX_ORDER.map(c => '<button data-code="' + c + '"' + (c === state.a.code ? ' class="on" aria-pressed="true"' : ' aria-pressed="false"') + '>' + IDX[c].name + '</button>').join('');
+}
+function renderMetricTabs() {
+  $('#a-metric').innerHTML = METRICS.map(m =>
+    '<button role="tab" data-metric="' + m.k + '"' + (m.k === state.a.metric ? ' class="on" aria-selected="true"' : ' aria-selected="false"') + '>' +
+    m.label + '<span class="av">' + m.unit + '</span></button>').join('');
+}
+function renderHeat() {
+  $('#heatGrid').innerHTML = HEAT.map((h, i) =>
+    '<div class="heat-cell ' + heatClass(h.p) + '" data-i="' + i + '" tabindex="0" role="button" aria-label="' + h.n + ' PE 分位 ' + h.p + '%">' +
+    '<div class="hn">' + h.n + '</div>' +
+    '<div class="hv">' + h.p + '%</div>' +
+    '<div class="hs">' + h.s + ' 指数</div>' +
+    '<div class="heat-bar"><i style="--w:' + h.p + '%"></i></div></div>').join('');
+  $$('#heatGrid .heat-cell').forEach(cell => {
+    const h = HEAT[+cell.dataset.i];
+    const html = () => tipBox('行业 · ' + h.n, [
+      ['PE-TTM 5Y 分位', h.p + '%'],
+      ['样本指数数', h.s + ' 只'],
+      ['估值判断', h.p < 35 ? '偏低（便宜）' : h.p < 65 ? '中性' : '偏高（贵）']
+    ], '分位越低越便宜 · 2026-11-27');
+    cell.addEventListener('pointerenter', e => showTip(html(), e));
+    cell.addEventListener('pointermove', moveTip);
+    cell.addEventListener('pointerleave', hideTip);
+    cell.addEventListener('focus', () => { const r = cell.getBoundingClientRect(); showTip(html(), { clientX: r.left + r.width / 2, clientY: r.top }); });
+    cell.addEventListener('blur', hideTip);
+  });
+}
+function renderDivTop() {
+  const top = DIV.slice().sort((a, b) => b.dy - a.dy).slice(0, 5);
+  $('#divTop').innerHTML = top.map(d =>
+    '<div class="stat-row"><span><span class="nm" style="font-size:10.5px">' + d.n + '</span><span class="cd">' + d.c + '</span></span><b>' + d.dy.toFixed(2) + '%</b></div>').join('');
+}
+function renderQuick() {
+  const s = state.a.sort;
+  const rows = QUICK.slice().sort((a, b) => (a[s.k] - b[s.k]) * s.dir);
+  $('#quickBody').innerHTML = rows.map(r =>
+    '<tr class="clickable" data-code="' + r.code + '">' +
+    '<td style="padding-left:14px"><span class="nm">' + r.name + '</span><span class="cd">' + r.code + '</span>' + (r.hsi ? '<span class="mini-tag">港股 · B 页</span>' : '') + '</td>' +
+    '<td class="tx">' + nf(r.close, 2) + '</td>' +
+    '<td class="tx">' + r.pe + '%</td>' +
+    '<td class="tx">' + r.pb + '%</td>' +
+    '<td class="tx">' + r.dy + '%</td>' +
+    '<td class="tx ' + (r.y1 >= 0 ? 'up' : 'down') + '">' + sp(r.y1, 1) + '</td>' +
+    '<td style="text-align:right;padding-right:10px"><svg width="10" height="10" viewBox="0 0 12 12" style="display:inline-block;color:var(--text-4)"><path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></td></tr>').join('');
+  $$('#quickTbl th.srt').forEach(th => {
+    if (!th.querySelector('.ar')) th.insertAdjacentHTML('beforeend', '<span class="ar">▲▼</span>');
+    const on = th.dataset.k === s.k;
+    th.classList.toggle('on', on);
+    th.querySelector('.ar').textContent = on ? (s.dir > 0 ? '▲' : '▼') : '▲▼';
+  });
+  $$('#quickBody tr').forEach(tr => tr.addEventListener('click', () => openRow(tr.dataset.code)));
+}
+function renderFunds() {
+  const s = state.b.fsort;
+  const rows = FUNDS.slice().sort((a, b) => (a[s.k] - b[s.k]) * s.dir);
+  const shown = state.b.expanded ? rows : rows.slice(0, 10);
+  $('#fundBody').innerHTML = shown.map(f =>
+    '<tr>' +
+    '<td style="padding-left:14px"><span class="nm">' + f.name + '</span><span class="cd">' + f.code + '</span></td>' +
+    '<td class="dim" style="font-size:10.5px">' + f.co + '</td>' +
+    '<td class="dim" style="font-size:10.5px">' + f.pm + '</td>' +
+    '<td class="tx">' + f.size.toFixed(2) + '</td>' +
+    '<td class="tx">' + f.fee + '</td>' +
+    '<td class="tx">' + (f.te > 5 ? '<span class="twarn" data-tip="TE 5.41% &gt; 5% 阈值：规模较小、成立不足 1 年，跟踪误差偏高">' + f.te.toFixed(2) + '%</span>' : f.te.toFixed(2) + '%') + '</td>' +
+    '<td class="tx">' + f.vol.toFixed(1) + '%</td>' +
+    '<td class="tx ' + (f.y1 >= 0 ? 'up' : 'down') + '">' + sp(f.y1, 1) + '</td></tr>').join('');
+  $$('#fundTbl th.srt').forEach(th => {
+    if (!th.querySelector('.ar')) th.insertAdjacentHTML('beforeend', '<span class="ar">▲▼</span>');
+    const on = th.dataset.fk === s.k;
+    th.classList.toggle('on', on);
+    if (!th.querySelector('.ar')) th.insertAdjacentHTML('beforeend', '<span class="ar">▲▼</span>');
+    th.querySelector('.ar').textContent = on ? (s.dir > 0 ? '▲' : '▼') : '▲▼';
+  });
+  $('#fundExpand').textContent = state.b.expanded ? '收起至前 10 只' : '展开全部 23 只';
+}
+function renderBasket() {
+  const maxRc = Math.max.apply(null, BASKET.map(s => s.rc));
+  $('#basketStack').innerHTML = BASKET.map(s =>
+    '<i data-n="' + s.n + '" data-rc="' + s.rc + '" style="flex:' + s.rc + ' 1 0%;--o:' + (0.3 + 0.55 * (s.rc / maxRc)).toFixed(2) + '"></i>').join('');
+  $$('#basketStack i').forEach(el => {
+    const s = BASKET.find(x => x.n === el.dataset.n);
+    const html = () => tipBox(s.n + ' · ' + s.c, [['目标权重', s.w + '%'], ['风险贡献', s.rc + '%'], ['风险贡献 / 权重', (s.rc / s.w).toFixed(2)]], '风险平价目标 · 近 3 年窗口');
+    el.addEventListener('pointerenter', e => showTip(html(), e));
+    el.addEventListener('pointermove', moveTip);
+    el.addEventListener('pointerleave', hideTip);
+  });
+  const top = BASKET.slice().sort((a, b) => b.rc - a.rc);
+  const head = top.slice(0, 8);
+  const rest = top.slice(8);
+  $('#basketRiskList').innerHTML = head.map(s =>
+    '<div class="risk-row"><span class="dotmark"></span><span class="rn">' + s.n + '</span><span class="rv">' + s.rc.toFixed(1) + '%</span><span class="rc">权重 ' + s.w.toFixed(1) + '%</span></div>').join('') +
+    (rest.length ? '<div class="risk-row"><span class="rn" style="color:var(--text-4)">其他 ' + rest.length + ' 只</span><span class="rv">' + rest.reduce((a, b) => a + b.rc, 0).toFixed(1) + '%</span><span class="rc">—</span></div>' : '');
+  $('#basketBody').innerHTML = BASKET.map(s =>
+    '<tr><td style="padding-left:14px"><span class="nm">' + s.n + '</span><span class="cd">' + s.c + '</span></td>' +
+    '<td><span class="tag dim">股票</span></td>' +
+    '<td class="tx">' + s.w.toFixed(1) + '%</td>' +
+    '<td class="tx">' + s.rc.toFixed(1) + '%</td>' +
+    '<td class="tx ' + (s.y1 >= 0 ? 'up' : 'down') + '">' + sp(s.y1, 1) + '</td>' +
+    '<td class="dim" style="font-size:10px">' + s.r + '</td></tr>').join('');
+}
+
+/* drawer */
+let drawerRow = null;
+function openDrawer(row) {
+  drawerRow = row;
+  $('#drawerName').textContent = row.name;
+  $('#drawerSub').textContent = row.code + ' · ' + row.market + ' · 2026-11-27';
+  const vals = waveSeries(150, { base: row.close * 0.86, amp: row.close * 0.055, slope: row.close * 0.12, seed: 'drawer-' + row.code, end: row.close, blend: 18 });
+  drawSpark($('#chart-drawer'), vals, { cls: 'c-main' });
+  $('#drawerStats').innerHTML = [
+    ['收盘', nf(row.close, 2), row.chg >= 0 ? 'up' : 'down'],
+    ['当日涨跌', sp(row.chg, 2), row.chg >= 0 ? 'up' : 'down'],
+    ['PE-TTM', nf(row.peV, 2), ''],
+    ['PE 分位', row.pe + '%', ''],
+    ['PB', nf(row.pbV, 2), ''],
+    ['PB 分位', row.pb + '%', ''],
+    ['股息率', nf(row.dyV, 2) + '%', ''],
+    ['股息率分位', row.dy + '%', ''],
+    ['风险溢价', nf(row.erpV, 2) + '%', ''],
+    ['近 1 年', sp(row.y1, 1), row.y1 >= 0 ? 'up' : 'down']
+  ].map(x => '<div><div class="l">' + x[0] + '</div><div class="v ' + x[2] + '">' + x[1] + '</div></div>').join('');
+  const openBtn = $('#drawerOpenPage');
+  if (row.hsi) {
+    openBtn.disabled = false;
+    openBtn.textContent = '打开 B 页详情';
+    openBtn.onclick = () => { closeDrawer(); location.hash = '#/b'; };
+  } else {
+    openBtn.disabled = true;
+    openBtn.textContent = '详情页待实现';
+    openBtn.onclick = null;
+  }
+  $('#drawer').classList.add('on');
+  $('#drawer').setAttribute('aria-hidden', 'false');
+  $('#drawerBd').classList.add('on');
+  document.body.classList.add('no-scroll');
+}
+function closeDrawer() {
+  $('#drawer').classList.remove('on');
+  $('#drawer').setAttribute('aria-hidden', 'true');
+  $('#drawerBd').classList.remove('on');
+  document.body.classList.remove('no-scroll');
+}
+function openRow(code) {
+  const row = QUICK.find(r => r.code === code);
+  if (!row) return;
+  if (row.hsi) { location.hash = '#/b'; return; }
+  openDrawer(row);
+}
+
+
+/* ============================================================
+   CHARTS
+   ============================================================ */
+function zoneName(p) { return p < 30 ? '低估' : p > 70 ? '高估' : '中性'; }
+function fadeRedraw(el, fn) {
+  if (!el) { fn(); return; }
+  el.style.opacity = '0';
+  setTimeout(() => { fn(); el.style.opacity = '1'; }, 60);
+}
+
+/* 01 · Valuation band */
+function drawBand() {
+  const el = $('#chart-band');
+  if (!el || !el.offsetParent) return;
+  const code = state.a.code, mk = state.a.metric, win = state.a.win;
+  const v = aView(code, mk, win);
+  const meta = metricMeta(mk);
+  const isP = meta.suffix === '%';
+  const min = Math.min(v.q20, v.min) * 0.985;
+  const max = Math.max(v.q80, v.max) * 1.015;
+  drawLineChart(el, {
+    id: 'band', n: v.n, dates: v.dates,
+    left: { min, max, ticks: 4, format: x => nf(x, meta.d) + (isP ? '%' : '') },
+    series: [{ values: v.vals, cls: 'c-main' }],
+    bands: [{ lo: new Array(v.n).fill(v.q20), hi: new Array(v.n).fill(v.q80) }],
+    refs: [{ v: v.q20 }, { v: v.q50 }, { v: v.q80 }],
+    marker: { index: v.n - 1 },
+    xTicks: win === 5 ? 6 : 7,
+    tip: i => {
+      const rank = pctRank(v.vals.slice(0, i + 1), v.vals[i]);
+      return tipBox(fmtDate(v.dates[i]) + ' · ' + IDX[code].name, [
+        [meta.label, fmtMetric(mk, v.vals[i])],
+        ['滚动分位', pf(rank, 1)],
+        ['机会 / 危险', fmtMetric(mk, v.q20) + ' / ' + fmtMetric(mk, v.q80)]
+      ], '周频 · 2026-11-27 · ' + (win === 5 ? '近5年' : win === 10 ? '近10年' : '全部'));
+    },
+    a11y: '估值分位带'
+  });
+}
+
+function drawMinis() {
+  const code = state.a.code, win = state.a.win;
+  METRICS.forEach(m => {
+    const v = aView(code, m.k, win);
+    const elV = $('[data-mval="' + m.k + '"]');
+    const elP = $('[data-mpct="' + m.k + '"]');
+    if (elV) elV.textContent = fmtMetric(m.k, IDX[code].metrics[m.k].v);
+    if (elP) elP.textContent = pf(v.pct, 1);
+    const sp = $('[data-spark="' + m.k + '"]');
+    if (sp) drawSpark(sp, v.vals.slice(-64), { cls: 'c-third' });
+  });
+  $$('.mind').forEach(b => {
+    const on = b.dataset.metricBtn === state.a.metric;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', String(on));
+  });
+}
+
+/* 02 · MVI */
+function drawMvi() {
+  const el = $('#chart-mvi');
+  if (!el || !el.offsetParent) return;
+  drawLineChart(el, {
+    id: 'mvi', n: MVI_N, dates: MVI_DATES,
+    left: { min: 0, max: 100, ticks: 4, format: v => String(Math.round(v)) },
+    series: [{ values: MVI_VALS, cls: 'c-main' }],
+    bands: [{ lo: MVI_BAND.lo, hi: MVI_BAND.hi }],
+    refs: [{ v: 35, label: '低估 35', side: 'right' }, { v: 65, label: '高估 65', side: 'right' }],
+    marker: { index: MVI_N - 1 },
+    xTicks: 5,
+    tip: i => tipBox(fmtDate(MVI_DATES[i]) + ' · MVI', [
+      ['MVI', nf(MVI_VALS[i], 2)],
+      ['5Y 分位', pf(MVI_PCT[i], 1)],
+      ['P20 / P80', nf(MVI_BAND.lo[i], 1) + ' / ' + nf(MVI_BAND.hi[i], 1)]
+    ], '周频 · 修数后序列 · 无尖刺'),
+    a11y: 'MVI 近5年走势'
+  });
+}
+
+/* 02b · MVI modal（双轴） */
+const MODAL_CACHE = {};
+function modalSeries(code) {
+  if (MODAL_CACHE[code]) return MODAL_CACHE[code];
+  const close = IDX[code].close;
+  const vals = waveSeries(MVI_N, { base: close * 0.79, amp: close * 0.07, slope: close * 0.14, seed: 'modal-' + code, end: close, blend: 20 });
+  const out = { vals, min: Math.min.apply(null, vals), max: Math.max.apply(null, vals) };
+  MODAL_CACHE[code] = out;
+  return out;
+}
+function drawModal() {
+  const el = $('#chart-modal');
+  if (!el || !el.offsetParent) return;
+  const code = state.mviIdx;
+  const ms = modalSeries(code);
+  $('#modalIdxVal').textContent = nf(IDX[code].close, 2);
+  drawLineChart(el, {
+    id: 'modal', n: MVI_N, dates: MVI_DATES,
+    left: { min: 0, max: 100, ticks: 5, format: v => String(Math.round(v)) },
+    right: { min: ms.min * 0.97, max: ms.max * 1.03, format: v => nf(v, 0) },
+    series: [
+      { values: MVI_VALS, cls: 'c-main', area: true },
+      { values: ms.vals, axis: 'right', cls: 'c-second' }
+    ],
+    marker: { index: MVI_N - 1, series: 0 },
+    xTicks: 6,
+    xFormat: d => String(d.getFullYear()),
+    tip: i => tipBox(fmtDate(MVI_DATES[i]) + ' · ' + IDX[code].name, [
+      ['MVI', nf(MVI_VALS[i], 2)],
+      ['指数收盘', nf(ms.vals[i], 2)],
+      ['MVI 5Y 分位', pf(MVI_PCT[i], 1)],
+      ['指数滚动分位', pf(pctRank(ms.vals.slice(0, i + 1), ms.vals[i]), 1)]
+    ], '左轴 MVI 0–100 · 右轴指数收盘 · 周频'),
+    a11y: 'MVI 与指数双轴图'
+  });
+}
+
+/* 04 · Dividend scatter */
+function regressDiv() {
+  const xs = DIV.map(d => Math.log(d.pb)), ys = DIV.map(d => d.dy);
+  const n = xs.length;
+  const mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n;
+  let sxx = 0, sxy = 0, syy = 0;
+  for (let i = 0; i < n; i++) { sxx += (xs[i] - mx) * (xs[i] - mx); sxy += (xs[i] - mx) * (ys[i] - my); syy += (ys[i] - my) * (ys[i] - my); }
+  const b = sxy / sxx, a = my - b * mx;
+  return { a, b, r2: (sxy * sxy) / (sxx * syy) };
+}
+function drawDivChart() {
+  const el = $('#chart-div');
+  if (!el || !el.offsetParent) return;
+  const W = Math.floor(el.clientWidth), H = Math.floor(el.clientHeight);
+  if (W < 80 || H < 60) return;
+  el.innerHTML = '';
+  const svg = svgEl('svg', { viewBox: '0 0 ' + W + ' ' + H, width: W, height: H, 'aria-hidden': 'true' }, el);
+  const pad = { l: 42, r: 18, t: 18, b: 26 };
+  const plotW = W - pad.l - pad.r, plotH = H - pad.t - pad.b;
+  const isAbs = state.divMode === 'abs';
+  const xmin = isAbs ? Math.log(0.45) : 0, xmax = isAbs ? Math.log(2.85) : 100;
+  const ymin = isAbs ? 2 : 0, ymax = isAbs ? 9 : 100;
+  const X = v => pad.l + ((isAbs ? Math.log(v) : v) - xmin) / (xmax - xmin) * plotW;
+  const Y = v => pad.t + (1 - (v - ymin) / (ymax - ymin)) * plotH;
+  const cid = 'clip' + (isAbs ? 'a' : 'r');
+  const defs = svgEl('defs', {}, svg);
+  const cp = svgEl('clipPath', { id: cid }, defs);
+  svgEl('rect', { x: pad.l, y: pad.t, width: plotW, height: plotH }, cp);
+
+  const xTicks = isAbs ? [0.5, 0.7, 1.0, 1.5, 2.0, 2.5] : [0, 25, 50, 75, 100];
+  const yTicks = isAbs ? [2, 4, 6, 8] : [0, 25, 50, 75, 100];
+  xTicks.forEach(v => {
+    const x = X(v);
+    svgEl('line', { x1: x, x2: x, y1: pad.t, y2: pad.t + plotH, class: 'c-grid' }, svg);
+    const t = svgText(svg, x, H - 6, isAbs ? (v < 1 ? v.toFixed(1) : v.toFixed(1)) : v + '%', 'c-tick', 'middle');
+    t.setAttribute('dy', '0');
+  });
+  yTicks.forEach(v => {
+    const y = Y(v);
+    svgEl('line', { x1: pad.l, x2: W - pad.r, y1: y, y2: y, class: 'c-grid' }, svg);
+    const t = svgText(svg, pad.l - 6, y, isAbs ? v.toFixed(0) + '%' : v + '%', 'c-tick', 'end');
+    t.setAttribute('dy', '0.32em');
+  });
+
+  /* quadrants for relative mode */
+  if (!isAbs) {
+    const mx = X(50), my = Y(50);
+    svgEl('line', { x1: mx, x2: mx, y1: pad.t, y2: pad.t + plotH, class: 'c-quad' }, svg);
+    svgEl('line', { x1: pad.l, x2: W - pad.r, y1: my, y2: my, class: 'c-quad' }, svg);
+    const q = [['高股息 · 低估值', pad.l + 8, pad.t + 13, 'start'], ['高股息 · 高估值', W - pad.r - 8, pad.t + 13, 'end'], ['低股息 · 低估值', pad.l + 8, pad.t + plotH - 7, 'start'], ['低股息 · 高估值', W - pad.r - 8, pad.t + plotH - 7, 'end']];
+    q.forEach(label => {
+      const t = svgText(svg, label[1], label[2], label[0], 'c-quad-lbl', label[3]);
+      t.setAttribute('dy', '0');
+    });
+  } else {
+    /* regression line */
+    const reg = regressDiv();
+    const y0 = reg.a + reg.b * xmin, y1 = reg.a + reg.b * xmax;
+    svgEl('line', {
+      x1: pad.l, y1: Y(clamp(y0, ymin, ymax)), x2: W - pad.r, y2: Y(clamp(y1, ymin, ymax)),
+      class: 'c-second', 'clip-path': 'url(#' + cid + ')'
+    }, svg);
+  }
+
+  /* bubbles */
+  DIV.forEach((d, i) => {
+    const x = X(isAbs ? d.pb : d.pbPct);
+    const y = Y(isAbs ? d.dy : d.dyPct);
+    const r = Math.min(13, 2.6 + Math.sqrt(d.size) * 0.72);
+    const c = svgEl('circle', { cx: x, cy: y, r: r, class: 'c-pt' }, svg);
+    c.addEventListener('pointerenter', e => showTip(dTip(d), e));
+    c.addEventListener('pointermove', moveTip);
+    c.addEventListener('pointerleave', hideTip);
+    c.addEventListener('pointerdown', e => showTip(dTip(d), e));
+  });
+
+  /* axis captions */
+  updateDivSide();
+}
+function dTip(d) {
+  return tipBox(d.n + ' · ' + d.c, [
+    ['PB', d.pb.toFixed(2) + 'x'],
+    ['PB 5Y 分位', d.pbPct + '%'],
+    ['股息率 TTM', d.dy.toFixed(2) + '%'],
+    ['股息率 5Y 分位', d.dyPct + '%'],
+    ['跟踪基金规模', d.size.toFixed(1) + ' 亿']
+  ], '红利指数吸引力 · 2026-11-27');
+}
+function updateDivSide() {
+  const reg = regressDiv();
+  if (state.divMode === 'abs') {
+    $('#divR2').textContent = 'R² ' + reg.r2.toFixed(2);
+    $('#divEq').textContent = '股息率 = ' + reg.a.toFixed(2) + ' − ' + Math.abs(reg.b).toFixed(2) + ' · ln(PB)';
+    $('#divNote').textContent = '绝对估值：低 PB + 高股息率 = 更有吸引力；气泡为跟踪基金规模（亿元）。30 只样本，剔除成立不足 1 年指数。';
+    $('#divLegend').innerHTML = '<span><i class="sw d"></i>回归线</span><span><i class="sw dot" style="border-radius:50%"></i>指数（气泡=基金规模）</span><span style="margin-left:auto">X · PB（对数轴） / Y · 股息率 TTM</span>';
+  } else {
+    $('#divR2').textContent = '四象限';
+    $('#divEq').textContent = 'X = PB 5Y 分位 · Y = 股息率 5Y 分位';
+    $('#divNote').textContent = '相对估值：左上（高股息 + 低估值）通常被视为更有吸引力；右下反之。气泡为跟踪基金规模（亿元）。';
+    $('#divLegend').innerHTML = '<span><i class="sw d"></i>50% 分位线</span><span><i class="sw dot" style="border-radius:50%"></i>指数（气泡=基金规模）</span><span style="margin-left:auto">四象限 · 左上 = 高股息 + 低估值</span>';
+  }
+}
+
+/* B · dual axis */
+function drawHsi() {
+  const el = $('#chart-hsi');
+  if (!el || !el.offsetParent) return;
+  const v = hsiView(state.b.win);
+  const ymin = Math.min(8.5, v.pmin * 0.98), ymax = Math.max(16, v.pmax * 1.02);
+  const imin = v.imin * 0.96, imax = v.imax * 1.04;
+  drawLineChart(el, {
+    id: 'hsi', n: v.n, dates: v.dates,
+    left: { min: ymin, max: ymax, ticks: 4, format: x => nf(x, 1) },
+    right: { min: imin, max: imax, format: x => nf(x, 0) },
+    series: [
+      { values: v.pe, cls: 'c-main' },
+      { values: v.point, axis: 'right', cls: 'c-second' }
+    ],
+    bands: state.b.band ? [{ lo: new Array(v.n).fill(v.q20), hi: new Array(v.n).fill(v.q80) }] : [],
+    refs: [{ v: 9.2, label: '机会 9.20', side: 'right' }, { v: 13.8, label: '危险 13.80', side: 'right' }],
+    marker: { index: v.n - 1 },
+    xTicks: state.b.win === 10 ? 6 : 5,
+    tip: i => tipBox(fmtDate(v.dates[i]) + ' · 恒生指数 HSI', [
+      ['PE-TTM', nf(v.pe[i], 2)],
+      ['指数点位', nf(v.point[i], 2)],
+      ['PE 滚动分位', pf(pctRank(v.pe.slice(0, i + 1), v.pe[i]), 1)]
+    ], '周频 · 港币口径 · 2026-11-27'),
+    a11y: '恒生指数估值与点位双轴图'
+  });
+}
+
+/* B · risk bars */
+const HSI_RISK = [
+  { k: '1Y', r: 18.4, vol: 22.1, mdd: -18.6, sharpe: 0.71 },
+  { k: '3Y', r: 6.2, vol: 24.6, mdd: -31.2, sharpe: 0.19 },
+  { k: '5Y', r: 2.8, vol: 23.8, mdd: -46.8, sharpe: 0.06 }
+];
+function drawRiskChart() {
+  const el = $('#chart-risk');
+  if (!el || !el.offsetParent) return;
+  const W = Math.floor(el.clientWidth), H = Math.floor(el.clientHeight);
+  if (W < 80 || H < 50) return;
+  el.innerHTML = '';
+  const svg = svgEl('svg', { viewBox: '0 0 ' + W + ' ' + H, width: W, height: H, 'aria-hidden': 'true' }, el);
+  const pad = { l: 28, r: 8, t: 16, b: 20 };
+  const plotW = W - pad.l - pad.r, plotH = H - pad.t - pad.b;
+  const max = 20;
+  const Y = v => pad.t + (1 - v / max) * plotH;
+  for (let i = 0; i <= 4; i++) {
+    const val = i * 5, y = Y(val);
+    svgEl('line', { x1: pad.l, x2: W - pad.r, y1: y, y2: y, class: 'c-grid' }, svg);
+    const t = svgText(svg, pad.l - 5, y, val.toFixed(0) + '%', 'c-tick', 'end');
+    t.setAttribute('dy', '0.32em');
+  }
+  const step = plotW / HSI_RISK.length;
+  HSI_RISK.forEach((d, i) => {
+    const bw = Math.min(30, step * 0.42);
+    const cx = pad.l + step * i + step / 2;
+    const y = Y(d.r);
+    const rect = svgEl('rect', { x: cx - bw / 2, y: y, width: bw, height: pad.t + plotH - y, class: 'c-bar' }, svg);
+    rect.style.cursor = 'pointer';
+    rect.addEventListener('pointerenter', e => showTip(tipBox(d.k + ' · 恒生指数', [
+      ['年化收益', sp(d.r, 1)],
+      ['年化波动', d.vol.toFixed(1) + '%'],
+      ['最大回撤', d.mdd.toFixed(1) + '%'],
+      ['Sharpe', d.sharpe.toFixed(2)]
+    ], '周频 · 无风险 2.0%'), e));
+    rect.addEventListener('pointermove', moveTip);
+    rect.addEventListener('pointerleave', hideTip);
+    const t = svgText(svg, cx, H - 6, d.k, 'c-tick', 'middle');
+    t.setAttribute('dy', '0');
+    const v = svgText(svg, cx, y - 4, sp(d.r, 1), 'c-tick-2', 'middle');
+    v.setAttribute('dy', '0');
+  });
+  svgEl('line', { x1: pad.l, x2: W - pad.r, y1: pad.t + plotH, y2: pad.t + plotH, class: 'c-axis' }, svg);
+}
+
+/* B · funds bars */
+function drawFundsChart() {
+  const el = $('#chart-funds');
+  if (!el || !el.offsetParent) return;
+  const W = Math.floor(el.clientWidth), H = Math.floor(el.clientHeight);
+  if (W < 100 || H < 100) return;
+  el.innerHTML = '';
+  const svg = svgEl('svg', { viewBox: '0 0 ' + W + ' ' + H, width: W, height: H, 'aria-hidden': 'true' }, el);
+  const rows = FUNDS.slice().sort((a, b) => b.size - a.size).slice(0, 10);
+  const pad = { l: 62, r: 48, t: 10, b: 20 };
+  const plotW = W - pad.l - pad.r, plotH = H - pad.t - pad.b;
+  const max = 200;
+  const X = v => pad.l + (v / max) * plotW;
+  for (let i = 0; i <= 4; i++) {
+    const val = i * 50, x = X(val);
+    svgEl('line', { x1: x, x2: x, y1: pad.t, y2: pad.t + plotH, class: 'c-grid' }, svg);
+    const t = svgText(svg, x, H - 5, String(val), 'c-tick', i === 0 ? 'start' : 'middle');
+    t.setAttribute('dy', '0');
+  }
+  const rowH = plotH / rows.length;
+  rows.forEach((f, i) => {
+    const y = pad.t + rowH * i + rowH / 2;
+    const bh = Math.min(11, rowH * 0.36);
+    const bw = Math.max(2, (f.size / max) * plotW);
+    const t = svgText(svg, pad.l - 7, y, f.code, 'c-tick', 'end');
+    t.setAttribute('dy', '0.32em');
+    const rect = svgEl('rect', { x: pad.l, y: y - bh / 2, width: bw, height: bh, class: 'c-bar' }, svg);
+    const vt = svgText(svg, pad.l + bw + 5, y, f.size.toFixed(1), 'c-tick-2', 'start');
+    vt.setAttribute('dy', '0.32em');
+    rect.style.cursor = 'pointer';
+    const tip = () => tipBox(f.name + ' · ' + f.code, [['基金公司', f.co], ['规模', f.size.toFixed(2) + ' 亿'], ['TE 1Y', f.te.toFixed(2) + '%'], ['1Y 收益', sp(f.y1, 1)]], '数据截至 2026-11-23 · 更新于 2026-11-27 21:10');
+    rect.addEventListener('pointerenter', e => showTip(tip(), e));
+    rect.addEventListener('pointermove', moveTip);
+    rect.addEventListener('pointerleave', hideTip);
+  });
+  svgText(svg, W - pad.r, H - 5, '亿元', 'c-tick-2', 'end');
+}
+
+/* C · NAV */
+function drawNavChart(el, d, footer) {
+  if (!el || !el.offsetParent) return;
+  const all = d.p.concat(d.b);
+  const min = Math.min.apply(null, all) * 0.985, max = Math.max.apply(null, all) * 1.015;
+  drawLineChart(el, {
+    id: el.id, n: NAV_N, dates: NAV_DATES,
+    left: { min, max, ticks: 4, format: v => v.toFixed(2) },
+    series: [{ values: d.p, cls: 'c-main' }, { values: d.b, cls: 'c-second' }],
+    refs: [{ v: 1, label: '初始 1.00' }],
+    marker: { index: NAV_N - 1 },
+    xTicks: 6,
+    tip: i => tipBox(fmtDate(NAV_DATES[i]), [
+      ['组合净值', nf(d.p[i], 3)],
+      ['基准净值', nf(d.b[i], 3)],
+      ['超额', sp((d.p[i] / d.b[i] - 1) * 100, 2)]
+    ], footer),
+    a11y: '净值曲线'
+  });
+}
+
+/* ============================================================
+   STATE UPDATERS
+   ============================================================ */
+function updateA() {
+  const code = state.a.code, mk = state.a.metric, win = state.a.win;
+  const idx = IDX[code], m = idx.metrics[mk], meta = metricMeta(mk);
+  const view = aView(code, mk, win);
+  $('#a-quote-name').textContent = idx.name;
+  $('#a-quote-close').textContent = nf(idx.close, 2);
+  const chgEl = $('#a-quote-chg');
+  chgEl.textContent = sp(idx.chg, 2);
+  chgEl.className = 'num ' + (idx.chg >= 0 ? 'up' : 'down');
+  $('#a-big-lbl').textContent = meta.label + ' · ' + idx.name;
+  $('#a-big').textContent = nf(m.v, 2);
+  $('#a-unit').textContent = meta.suffix || 'x';
+  $('#a-pct-lbl').textContent = win === 5 ? '近 5 年分位' : win === 10 ? '近 10 年分位' : '全部历史分位';
+  $('#a-pct').textContent = pf(view.pct, 1);
+  const zone = zoneName(view.pct);
+  const zEl = $('#a-zone');
+  zEl.className = 'tag ' + (view.pct < 30 ? 'accent' : 'dim');
+  zEl.innerHTML = '<i></i>' + zone;
+  $('#a-refs').innerHTML =
+    '<span><i class="sw"></i>机会值 <b class="num">' + fmtMetric(mk, view.q20) + '</b></span>' +
+    '<span><i class="sw"></i>中位数 <b class="num">' + fmtMetric(mk, view.q50) + '</b></span>' +
+    '<span><i class="sw"></i>危险值 <b class="num">' + fmtMetric(mk, view.q80) + '</b></span>' +
+    '<span style="margin-left:auto"><i class="sw dot" style="border:0"></i>当前 <b class="num">2026-11-27</b></span>';
+  $$('#a-idx button').forEach(b => { const on = b.dataset.code === code; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
+  $$('#a-win button').forEach(b => b.classList.toggle('on', b.dataset.win === (win === 'all' ? 'all' : String(win))));
+  $$('#a-metric button').forEach(b => { const on = b.dataset.metric === mk; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); });
+  drawMinis();
+}
+function updateHsi() {
+  $$('#hsiWin button').forEach(b => b.classList.toggle('on', b.dataset.hsiwin === String(state.b.win)));
+  const bandBtn = $('#hsiBand');
+  bandBtn.setAttribute('aria-pressed', String(state.b.band));
+}
+
+/* redraw all visible charts of a screen */
+function redrawScreen(name) {
+  if (name === 'a') { drawBand(); drawMinis(); drawMvi(); drawDivChart(); }
+  else if (name === 'b') { drawHsi(); drawRiskChart(); drawFundsChart(); }
+  else if (name === 'c') {
+    drawNavChart($('#chart-nav'), NAV_QUAD, '周频 · 多资产全天候');
+    drawNavChart($('#chart-bnav'), NAV_BASKET, '周频 · 示例篮子');
+  }
+}
+
+
+/* ============================================================
+   THEME
+   ============================================================ */
+const THEME_KEY = 'bp-proto-v2-theme';
+function setTheme(t, persist) {
+  document.documentElement.setAttribute('data-theme', t);
+  $$('#themeToggle button').forEach(b => {
+    const on = b.dataset.themeBtn === t;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', String(on));
+  });
+  if (persist) { try { localStorage.setItem(THEME_KEY, t); } catch (e) {} }
+}
+function initTheme() {
+  let t = 'dark';
+  try {
+    const q = new URLSearchParams(location.search).get('theme');
+    const s = localStorage.getItem(THEME_KEY);
+    if (q === 'light' || q === 'dark') t = q;
+    else if (s === 'light' || s === 'dark') t = s;
+  } catch (e) {}
+  setTheme(t, false);
+}
+
+/* ============================================================
+   LOCAL LOADING · 每卡片独立 skeleton，页头/布局不动
+   ============================================================ */
+function skelHTML(type) {
+  const scan = '<i class="scan"></i>';
+  switch (type) {
+    case 'chart': return scan + '<i class="ln b"></i><i class="ln" style="width:26%;height:6px"></i><i class="ln chart-blk"></i>';
+    case 'mini': return scan + '<div class="mini-list"><i></i><i></i><i></i><i></i></div>';
+    case 'heat': return scan + '<div class="grid16">' + new Array(16).fill('<i></i>').join('') + '</div>';
+    case 'table': return scan + '<i class="ln b"></i><div class="rows">' + new Array(6).fill('<div class="r"><i></i><i></i><i></i><i></i><i></i></div>').join('') + '</div>';
+    case 'kpi': return scan + '<div class="kpis">' + new Array(5).fill('<i></i>').join('') + '</div>';
+    case 'empty': return scan + '<i class="ln b"></i><i class="ln" style="width:66%"></i><i class="ln" style="width:44%"></i>';
+    default: return scan + '<i class="ln b"></i><i class="ln" style="width:82%"></i><i class="ln" style="width:58%"></i>';
+  }
+}
+function ensureSkeleton(card) {
+  if (card.querySelector(':scope > .sk')) return;
+  const sk = document.createElement('div');
+  sk.className = 'sk';
+  sk.setAttribute('aria-hidden', 'true');
+  sk.innerHTML = skelHTML(card.dataset.skel || 'text');
+  card.appendChild(sk);
+}
+let loadTimers = [];
+function localLoad(scope) {
+  if (!scope) return;
+  const cards = $$('[data-card]', scope);
+  cards.forEach(c => { ensureSkeleton(c); c.setAttribute('data-busy', ''); });
+  const stat = $('#loadStat');
+  if (stat) stat.textContent = 'LOCAL LOAD · ' + cards.length + ' CARDS';
+  loadTimers.forEach(t => clearTimeout(t));
+  loadTimers = [];
+  cards.forEach((c, i) => {
+    loadTimers.push(setTimeout(() => {
+      c.removeAttribute('data-busy');
+      c.classList.remove('reveal');
+      void c.offsetWidth;
+      c.classList.add('reveal');
+      if (stat && i === cards.length - 1) {
+        stat.textContent = 'LOCAL LOAD · DONE';
+        setTimeout(() => { if (stat && stat.textContent === 'LOCAL LOAD · DONE') stat.textContent = 'IDLE · SNAPSHOT 2026-11-27'; }, 1500);
+      }
+    }, 1200 + i * 45));
+  });
+}
+
+/* ============================================================
+   SCREEN ROUTING
+   ============================================================ */
+const loaded = { a: false, b: false, c: false };
+function closeSels() {
+  $$('.sel.open').forEach(s => {
+    s.classList.remove('open');
+    const b = s.querySelector('.sel-btn');
+    if (b) b.setAttribute('aria-expanded', 'false');
+  });
+}
+function showScreen(name) {
+  state.screen = name;
+  $$('.screen').forEach(s => { s.hidden = s.id !== 'screen-' + name; });
+  $$('.nav a').forEach(a => a.classList.toggle('on', a.dataset.nav === name));
+  closeModal(); closeDrawer(); closeSels(); hideTip();
+  requestAnimationFrame(() => redrawScreen(name));
+  if (!loaded[name]) { loaded[name] = true; localLoad($('#screen-' + name)); }
+}
+function route() {
+  let h = (location.hash || '').replace(/^#\/?/, '');
+  if (['a', 'b', 'c'].indexOf(h) < 0) h = 'a';
+  showScreen(h);
+  window.scrollTo(0, 0);
+}
+
+/* ============================================================
+   MODAL / DRAWER
+   ============================================================ */
+function openModal() {
+  const m = $('#mviModal');
+  m.classList.add('on');
+  m.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('no-scroll');
+  requestAnimationFrame(drawModal);
+}
+function closeModal() {
+  const m = $('#mviModal');
+  if (!m.classList.contains('on')) return;
+  m.classList.remove('on');
+  m.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('no-scroll');
+}
+
+/* ============================================================
+   DASHBOARD MODE
+   ============================================================ */
+function setDashMode(m) {
+  state.c.mode = m;
+  $$('#dashMode button').forEach(b => b.classList.toggle('on', b.dataset.dash === m));
+  $('#dash-quad').hidden = m !== 'quad';
+  $('#dash-basket').hidden = m !== 'basket';
+  requestAnimationFrame(() => {
+    if (m === 'quad') drawNavChart($('#chart-nav'), NAV_QUAD, '周频 · 多资产全天候');
+    else drawNavChart($('#chart-bnav'), NAV_BASKET, '周频 · 示例篮子');
+  });
+}
+
+/* ============================================================
+   EVENTS
+   ============================================================ */
+function bind() {
+  /* theme */
+  $$('#themeToggle button').forEach(b => b.addEventListener('click', () => setTheme(b.dataset.themeBtn, true)));
+  /* demo load */
+  $('#demoLoad').addEventListener('click', () => localLoad($('#screen-' + state.screen)));
+
+  /* A · index / metric / window */
+  $('#a-idx').addEventListener('click', e => {
+    const b = e.target.closest('button[data-code]');
+    if (!b) return;
+    state.a.code = b.dataset.code;
+    updateA();
+    fadeRedraw($('#chart-band'), drawBand);
+  });
+  $('#a-metric').addEventListener('click', e => {
+    const b = e.target.closest('button[data-metric]');
+    if (!b) return;
+    state.a.metric = b.dataset.metric;
+    updateA();
+    fadeRedraw($('#chart-band'), drawBand);
+  });
+  $('#a-win').addEventListener('click', e => {
+    const b = e.target.closest('button[data-win]');
+    if (!b) return;
+    state.a.win = b.dataset.win === 'all' ? 'all' : Number(b.dataset.win);
+    updateA();
+    fadeRedraw($('#chart-band'), drawBand);
+  });
+  $$('.mind').forEach(b => b.addEventListener('click', () => {
+    state.a.metric = b.dataset.metricBtn;
+    updateA();
+    fadeRedraw($('#chart-band'), drawBand);
+  }));
+
+  /* A · MVI modal */
+  $('#mviOpen').addEventListener('click', openModal);
+  $$('[data-close-modal]').forEach(x => x.addEventListener('click', closeModal));
+  $('#mviIdx').addEventListener('click', e => {
+    const b = e.target.closest('button[data-mviidx]');
+    if (!b) return;
+    state.mviIdx = b.dataset.mviidx;
+    $$('#mviIdx button').forEach(x => x.classList.toggle('on', x === b));
+    drawModal();
+  });
+
+  /* A · dividend mode */
+  $('#divMode').addEventListener('click', e => {
+    const b = e.target.closest('button[data-divmode]');
+    if (!b) return;
+    state.divMode = b.dataset.divmode;
+    $$('#divMode button').forEach(x => x.classList.toggle('on', x === b));
+    fadeRedraw($('#chart-div'), () => { drawDivChart(); updateDivSide(); });
+  });
+
+  /* A · quick table sort + row */
+  $$('#quickTbl th.srt').forEach(th => {
+    if (!th.querySelector('.ar')) th.insertAdjacentHTML('beforeend', '<span class="ar">▲▼</span>');
+    th.addEventListener('click', () => {
+      const k = th.dataset.k;
+      if (state.a.sort.k === k) state.a.sort.dir *= -1;
+      else state.a.sort = { k: k, dir: 1 };
+      renderQuick();
+    });
+  });
+
+  /* B · window / band / funds */
+  $('#hsiWin').addEventListener('click', e => {
+    const b = e.target.closest('button[data-hsiwin]');
+    if (!b) return;
+    state.b.win = Number(b.dataset.hsiwin);
+    updateHsi();
+    fadeRedraw($('#chart-hsi'), drawHsi);
+  });
+  $('#hsiBand').addEventListener('click', () => {
+    state.b.band = !state.b.band;
+    updateHsi();
+    fadeRedraw($('#chart-hsi'), drawHsi);
+  });
+  $('#fundExpand').addEventListener('click', () => {
+    state.b.expanded = !state.b.expanded;
+    renderFunds();
+  });
+  $$('#fundTbl th.srt').forEach(th => {
+    if (!th.querySelector('.ar')) th.insertAdjacentHTML('beforeend', '<span class="ar">▲▼</span>');
+    th.addEventListener('click', () => {
+      const k = th.dataset.fk;
+      if (state.b.fsort.k === k) state.b.fsort.dir *= -1;
+      else state.b.fsort = { k: k, dir: -1 };
+      renderFunds();
+    });
+  });
+
+  /* C · mode / selects / copy */
+  $('#dashMode').addEventListener('click', e => {
+    const b = e.target.closest('button[data-dash]');
+    if (b) setDashMode(b.dataset.dash);
+  });
+  $('#copyBasket').addEventListener('click', () => {
+    const hint = $('#copyHint');
+    hint.textContent = '复制需登录';
+    setTimeout(() => { if (hint.textContent === '复制需登录') hint.textContent = ''; }, 2400);
+  });
+
+  /* selects */
+  $$('.sel').forEach(sel => {
+    const btn = sel.querySelector('.sel-btn');
+    if (!btn) return;
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const open = !sel.classList.contains('open');
+      closeSels();
+      if (open) { sel.classList.add('open'); btn.setAttribute('aria-expanded', 'true'); }
+    });
+    $$('.sel-item:not(.dis)', sel).forEach(item => {
+      item.addEventListener('click', e => {
+        e.stopPropagation();
+        const nm = item.querySelector('span').textContent;
+        const t = sel.querySelector('.sel-btn .nm');
+        if (t) t.textContent = nm;
+        closeSels();
+      });
+    });
+  });
+  document.addEventListener('click', () => closeSels());
+
+  /* popovers: click toggle (hover handled by CSS) */
+  $$('.has-pop > button').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const p = btn.parentElement;
+      const open = !p.classList.contains('open');
+      $$('.has-pop.open').forEach(x => x.classList.remove('open'));
+      if (open) p.classList.add('open');
+    });
+  });
+  document.addEventListener('click', () => $$('.has-pop.open').forEach(p => p.classList.remove('open')));
+
+  /* drawer */
+  $('#drawerClose').addEventListener('click', closeDrawer);
+  $('#drawerBd').addEventListener('click', closeDrawer);
+  $('#drawerAdd').addEventListener('click', function () {
+    const b = this;
+    b.textContent = '需登录';
+    setTimeout(() => { b.textContent = '加入对比'; }, 1600);
+  });
+
+  /* data-tip delegate（简单 text / html） */
+  document.addEventListener('pointerover', e => {
+    const t = e.target.closest('[data-tip]');
+    if (t) showTip(t.getAttribute('data-tip'), e);
+  });
+  document.addEventListener('pointermove', e => {
+    if (tipEl.classList.contains('on') && e.target.closest('[data-tip]')) moveTip(e);
+  });
+  document.addEventListener('pointerout', e => {
+    const t = e.target.closest('[data-tip]');
+    if (t && (!e.relatedTarget || !t.contains(e.relatedTarget))) hideTip();
+  });
+
+  /* resize */
+  let rz = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(rz);
+    rz = setTimeout(() => redrawScreen(state.screen), 140);
+  });
+
+  /* keyboard */
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { closeModal(); closeDrawer(); closeSels(); hideTip(); }
+  });
+}
+
+/* ============================================================
+   BOOT
+   ============================================================ */
+function boot() {
+  initTheme();
+  renderIdxSeg();
+  renderMetricTabs();
+  renderHeat();
+  renderDivTop();
+  renderQuick();
+  renderFunds();
+  renderBasket();
+  updateA();
+  updateHsi();
+  bind();
+  route();
+}
+boot();
+})();
+</script>
+</body>
+</html>
+
