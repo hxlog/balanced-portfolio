@@ -523,3 +523,17 @@ def test_merge_freshness_meta_uses_savepoint() -> None:
     assert any("SAVEPOINT bp_data_freshness_meta" in sql for sql in sqls)
     update = [params for sql, params in conn.statements if "UPDATE bp_data_freshness" in sql]
     assert update and update[-1][1] == "index_valuation"
+
+def test_stored_missing_ignored_when_derived_newer() -> None:
+    """ddl/79 初始 status=missing 不得压在更新后的源表数据上（回归：全站 missing）。"""
+    from datetime import date
+
+    import bp_api.freshness as fr
+
+    spec = next(s for s in fr.DATASETS if s.key == "a_stock")
+    row = {"as_of": None, "status": "missing", "note": None, "meta": {}}
+    item = fr._build_item(
+        spec, row, date(2026, 11, 27), date(2026, 11, 27), [date(2026, 11, 27)]
+    )
+    assert item["as_of"] == "2026-11-27"
+    assert item["status"] == "ok", item

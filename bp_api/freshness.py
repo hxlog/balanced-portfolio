@@ -671,7 +671,17 @@ def _build_item(
         coverage and coverage.get("ratio") is not None
         and float(coverage["ratio"]) < COVERAGE_OK_MIN
     )
-    status = worst_status(state["status"], stored.get("status"),
+    # 写入方状态只在「没有更新的派生日期」时有效：ddl/79 初始行 status=missing，
+    # 若源表已有更新数据（derived_as_of > stored_as_of 或 stored as_of 为空），
+    # 不能把旧 missing/stale 当最严重状态，否则全站永远 missing。
+    stored_status = stored.get("status")
+    if derived_as_of is not None:
+        stored_as_of_state = stored.get("status")
+        if stored_as_of_state not in ("unavailable", "error") and (
+            stored_as_of is None or derived_as_of > stored_as_of
+        ):
+            stored_status = None
+    status = worst_status(state["status"], stored_status,
                           "lagging" if coverage_lagging else None)
     is_stale = status != "ok"
     note = state["note"] or stored.get("note")
