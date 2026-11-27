@@ -903,8 +903,10 @@ def _bond10_by_dates(conn: psycopg.Connection, days: Sequence[date]) -> dict[dat
             " WHERE series_code = 'cn_10y_yield' AND trade_date = ANY(%s)",
             (list(days),),
         )
+        # psycopg 对 numeric 返回 Decimal；这里统一转 float，避免后续
+        # quant_erp(float, Decimal) 触发 unsupported operand（000985 fallback bug）。
         return {
-            trade_date: value
+            trade_date: float(value)
             for trade_date, value in cur.fetchall()
             if trade_date is not None and _float(value) is not None
         }
