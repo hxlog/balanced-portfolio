@@ -1,9 +1,8 @@
-import { Suspense } from "react";
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import { getCachedDemoResult, resolveDefaultPortfolioId } from "@/lib/cached-data";
 import { DashboardModeGate } from "./DashboardModeGate";
-import { DashboardPageSkeleton } from "./DashboardSkeleton";
 
 export const metadata: Metadata = {
   title: "产品 Dashboard",
@@ -25,6 +24,7 @@ export default async function DashboardPage({
 }: {
   searchParams: SearchParams;
 }) {
+  await connection();
   const { id, mode: rawMode } = await searchParams;
   const mode = rawMode === "basket" ? "basket" : "quadrant";
   const portfolioId = id ? Number(id) : null;
@@ -45,9 +45,7 @@ export default async function DashboardPage({
       ? await getCachedDemoResult()
       : null;
 
-  return (
-    <Suspense fallback={<DashboardPageSkeleton mode={mode} />}>
-      <DashboardModeGate mode={mode} initialDemo={initialDemo} />
-    </Suspense>
-  );
+  // 不使用 Suspense/PPR 流式壳：basket 模式在 Next 16.2 PPR 下会触发
+  // streaming 替换顺序错误（HierarchyRequestError）。页面仍是动态渲染（searchParams 已 await）。
+  return <DashboardModeGate mode={mode} initialDemo={initialDemo} />;
 }

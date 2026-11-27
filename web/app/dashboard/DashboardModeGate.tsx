@@ -1,8 +1,7 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState, useTransition } from "react";
+import { useCallback, useEffect, useState, useTransition } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
   CenteredPageContainer,
@@ -11,10 +10,7 @@ import {
 import { modeFromQuery, modeHref, type PageMode } from "@/lib/basket-mode";
 import DashboardClient from "./DashboardClient";
 import { DashboardBaskets } from "./DashboardBaskets";
-import {
-  BasketBoardSkeleton,
-  DashboardContentSkeleton,
-} from "./DashboardSkeleton";
+import { DashboardContentSkeleton } from "./DashboardSkeleton";
 
 /**
  * Dashboard 顶层模式 shell：与 /builder 共用同一组「四象限组合 / 一篮子资产」切换按钮。
@@ -37,19 +33,23 @@ export function DashboardModeGate({
   mode: PageMode;
   initialDemo: Parameters<typeof DashboardClient>[0]["initialDemo"];
 }) {
-  const searchParams = useSearchParams();
-  const query = searchParams.toString();
   // 模式条（同步、即时反馈）与内容区（transition、低优先级）分开，让 pill 永远先响应。
   const [mode, setMode] = useState<PageMode>(initialMode);
   const [contentMode, setContentMode] = useState<PageMode>(initialMode);
   const [, startTransition] = useTransition();
 
-  // URL → 本地状态：浏览器前进/后退、外部链接、以及我们自己的 pushState 后都走这里。
+  // URL → 本地状态：只监听浏览器前进/后退。**不要**用 useSearchParams 初始化/同步：
+  // PPR 首屏时 useSearchParams 可能先是空串，会在服务端流式 chunk 尚未替换 fallback 时
+  // 触发客户端切换内容树，导致 streaming 替换报 HierarchyRequestError 与 hydration 失配。
   useEffect(() => {
-    const next = modeFromQuery(searchParams);
-    setMode(next);
-    startTransition(() => setContentMode(next));
-  }, [searchParams]);
+    const onPopState = () => {
+      const next = modeFromQuery(new URLSearchParams(window.location.search));
+      setMode(next);
+      startTransition(() => setContentMode(next));
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   const handleSelect = useCallback(
     (next: PageMode) => {
@@ -57,10 +57,11 @@ export function DashboardModeGate({
       setMode(next);
       startTransition(() => setContentMode(next));
       if (typeof window !== "undefined") {
-        window.history.pushState(null, "", modeHref("/dashboard", query, next));
+        const params = new URLSearchParams(window.location.search);
+        window.history.pushState(null, "", modeHref("/dashboard", params.toString(), next));
       }
     },
-    [mode, query],
+    [mode],
   );
 
   return (
@@ -83,25 +84,15 @@ export function DashboardModeGate({
         />
       </CenteredPageContainer>
 
-      <Suspense
-        fallback={
-          contentMode === "basket" ? (
-            <CenteredPageContainer reserveToc className="pt-4 pb-12">
-              <BasketBoardSkeleton />
-            </CenteredPageContainer>
-          ) : (
-            <DashboardContentSkeleton />
-          )
-        }
-      >
-        {contentMode === "basket" ? (
-          <CenteredPageContainer reserveToc className="pt-4 pb-12">
-            <DashboardBaskets />
-          </CenteredPageContainer>
-        ) : (
-          <DashboardClient initialDemo={initialDemo} />
-        )}
-      </Suspense>
+      {contentMode === "basket" ? (
+        <CenteredPageContainer reserveToc className="pt-4 pb-12">
+          <DashboardBaskets />
+        </CenteredPageContainer>
+      ) : contentMode === "quadrant" ? (
+        <DashboardClient initialDemo={initialDemo} />
+      ) : (
+        <DashboardContentSkeleton />
+      )}
     </>
   );
 }

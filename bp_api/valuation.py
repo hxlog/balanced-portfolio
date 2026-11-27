@@ -216,7 +216,7 @@ def register_routes(app: FastAPI) -> None:
             return hit
         with db.get_conn() as conn:
             data = repositories_valuation.get_market_valuation_index_range(
-                conn, range=range_key
+                conn, range_key=range_key
             )
         latest = data.get("latest") or {}
         history = data.get("history") or []
