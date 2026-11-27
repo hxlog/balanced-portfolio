@@ -15,6 +15,7 @@ from uuid import UUID
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 
 from . import (
     api_tokens,
@@ -160,9 +161,11 @@ from . import assets_unified
 from . import data_health
 from . import market_extra
 from . import market_last
+from . import freshness
 
 app = FastAPI(title="Balanced Portfolio API", version="1.0.0", lifespan=lifespan)
 _cffex.register_routes(app)
+freshness.register_routes(app)
 _crypto.register_routes(app)
 _otc.register_routes(app)
 valuation.register_routes(app)
@@ -183,6 +186,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# 大数据量只读端点（/api/v1/valuation/indices 等）启用 gzip，降低 510KB 传输至 ~1/5
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 @app.middleware("http")

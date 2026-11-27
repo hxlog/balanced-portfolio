@@ -150,8 +150,123 @@ def _history_stats(detail: dict, metric: str, window: str) -> Optional[dict]:
 # 覆盖大中小盘作为全市场代理，页面上会注明「宽基组合代理」。
 _BROAD_PROXY_CODES = ["000016", "000300", "000510", "000905", "000852"]
 
+# MVI overlay 支持的 4 只宽基（需求 3；与 repositories_valuation.OVERLAY_INDEX_CODES 保持一致）
+_MVI_OVERLAY_CODES = ("000300", "000510", "000016", "000985")
+# MVI 序列可用区间（与 repositories_valuation.MVI_RANGES 保持一致）
+_MVI_RANGE_KEYS = ("1y", "3y", "5y", "10y", "all")
+
 
 def register_routes(app: FastAPI) -> None:
+
+    # POST-REDESIGN: /api/v1 快速只读端点（首页估值页 / MVI 卡）。
+    # 与 /api/v1 public_api 的 API token 端点不同：这些是页面公开数据，走
+    # optional_user（匿名可读），由 Next rewrite 直接代理；gzip/TTL 由 root 的
+    # FastAPI 中间件统一接入，本模块只保证 SQL 走小表/快照表。
+    @app.get("/api/v1/valuation/indices")
+    def valuation_indices_fast(
+        window: WindowKey = Query("5y", description="分位窗口"),
+        metric: str = Query("pe_ttm", description="兼容参数（4 指标始终全部返回）"),
+        limit: Optional[int] = Query(None, ge=1, le=1000, description="可选分页；默认全部"),
+        offset: int = Query(0, ge=0),
+        _user: auth.UserContext | None = Depends(auth.optional_user),
+    ) -> dict:
+        """读 bp_index_valuation_latest 快照：全部跟踪指数 4 指标当前值/分位/涨跌（<50ms）。"""
+        key = _cache_key(
+            "v1_indices", window=window, metric=metric, limit=limit, offset=offset
+        )
+        hit = _get_cached(key)
+        if hit is not None:
+            return hit
+        if repositories_valuation is None:  # pragma: no cover - 并行开发期保护
+            raise HTTPException(503, "valuation_repository_unavailable")
+        with db.get_conn() as conn:
+            rows = repositories_valuation.get_valuation_latest_list(conn, window=window)
+        total = len(rows)
+        if limit is not None:
+            rows = rows[offset : offset + limit]
+        elif offset:
+            rows = rows[offset:]
+        updated_values = [
+            _iso(row.get("updated_at"))
+            for row in rows
+            if isinstance(row, dict) and row.get("updated_at") is not None
+        ]
+        payload = _envelope(
+            rows,
+            as_of=_latest_as_of(rows),
+            rows=len(rows),
+            total=total,
+            window=window,
+            metric=metric,
+            updated_at=max(updated_values) if updated_values else None,
+        )
+        cache.set_json(key, payload, ttl_seconds=CACHE_TTL_SECONDS)
+        return payload
+
+    @app.get("/api/v1/market/mvi")
+    def market_mvi(
+        range: str = Query("5y", description="1y/3y/5y/10y/all"),
+        _user: auth.UserContext | None = Depends(auth.optional_user),
+    ) -> dict:
+        """MVI 最新值 + 区间周频序列 + 因子贡献（读 bp_market_valuation_index）。"""
+        range_key = range if range in _MVI_RANGE_KEYS else "5y"
+        key = _cache_key("v1_mvi", range=range_key)
+        hit = _get_cached(key)
+        if hit is not None:
+            return hit
+        with db.get_conn() as conn:
+            data = repositories_valuation.get_market_valuation_index_range(
+                conn, range=range_key
+            )
+        latest = data.get("latest") or {}
+        history = data.get("history") or []
+        payload = _envelope(
+            {"latest": latest, "history": history},
+            as_of=latest.get("as_of"),
+            rows=len(history),
+            range=range_key,
+        )
+        cache.set_json(key, payload, ttl_seconds=CACHE_TTL_SECONDS)
+        return payload
+
+    @app.get("/api/v1/market/mvi/overlay")
+    def market_mvi_overlay(
+        index: str = Query("000985", description="000300/000510/000016/000985"),
+        range: str = Query("5y", description="1y/3y/5y/10y/all"),
+        _user: auth.UserContext | None = Depends(auth.optional_user),
+    ) -> dict:
+        """MVI 周频序列 + 指定指数收盘价序列（双轴 overlay；无价格返回空+reason，不造数）。"""
+        code = str(index or "").strip()
+        if code not in _MVI_OVERLAY_CODES:
+            raise HTTPException(404, "index_not_supported")
+        range_key = range if range in _MVI_RANGE_KEYS else "5y"
+        key = _cache_key("v1_mvi_overlay", index=code, range=range_key)
+        hit = _get_cached(key)
+        if hit is not None:
+            return hit
+        with db.get_conn() as conn:
+            data = repositories_valuation.get_market_mvi_overlay(
+                conn, code, range=range_key
+            )
+        series = data.get("series") or []
+        as_of = None
+        if series:
+            as_of = _iso(series[-1].get("trade_date"))
+        elif data.get("mvi_end"):
+            as_of = data["mvi_end"]
+        # P2：无价格且无 MVI 时不得用 date.today() 伪造 as_of（会让前端误以为数据
+        # 更新到今天）；如实返回 None，由 missing/reason 表达「无数据」。
+        payload = _envelope(
+            data,
+            as_of=as_of,
+            rows=len(series),
+            range=range_key,
+            source="bp_index_quote_daily",
+            missing=bool(data.get("missing")),
+            reason=data.get("reason"),
+        )
+        cache.set_json(key, payload, ttl_seconds=CACHE_TTL_SECONDS)
+        return payload
 
     # 静态路径必须先于 /{code} 注册, 否则 "overview"/"indices" 会被当成代码。
     @app.get("/api/valuation/overview")
@@ -303,6 +418,13 @@ def register_routes(app: FastAPI) -> None:
                     conn, code
                 )
                 detail["risk"] = repositories_valuation.get_index_risk_stats(conn, code)
+                # 需求 7/8：HSI 详情估值-点位双轴图（bfq 近 10 年）与跟踪基金数据截止/更新时间
+                detail["price_series"] = repositories_valuation.get_index_price_series(
+                    conn, code
+                )
+                detail["tracker_funds_meta"] = (
+                    repositories_valuation.get_index_tracker_funds_meta(conn, code)
+                )
         if detail is None:
             raise HTTPException(404, "index_not_found")
         payload = _envelope(detail, as_of=_latest_as_of([detail]), rows=1)
@@ -336,3 +458,13 @@ def register_routes(app: FastAPI) -> None:
         )
         cache.set_json(key, payload, ttl_seconds=CACHE_TTL_SECONDS)
         return payload
+
+    @app.get("/api/v1/valuation/{code}/history")
+    def valuation_history_v1(
+        code: str,
+        metric: SeriesMetric = Query("pe_ttm", description="估值指标"),
+        window: WindowKey = Query("5y", description="分位窗口"),
+        _user: auth.UserContext | None = Depends(auth.optional_user),
+    ) -> dict:
+        """v1 别名：前端估值带历史序列的新接口兜底口（与 legacy 同实现/同缓存）。"""
+        return valuation_history(code=code, metric=metric, window=window, _user=_user)

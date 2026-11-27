@@ -1,15 +1,14 @@
-"""repositories_valuation 集成测试（真实 bp_mig_test）。
+"""repositories_valuation 集成测试（显式启用的 bp_mig_test）。
 
-连接：81.71.158.239:5432/bp_mig_test，密码取 `.env` 的 PGPASSWORD（去除尾部空白）。
-不可达时整文件 skip；测试数据统一用 ``T3REPO%`` 前缀并在前后清理，避免污染
-同一测试库上的其他并行任务。
+连接：只有显式设置 `BP_MIG_TEST_DSN`（或 `BP_MIG_TEST=1` + `PGHOST`/`PGPASSWORD`）
+才运行，否则 skip——不硬编码 host、不从仓库 `.env` 读取生产口令（P1-4）。
+测试数据统一用 ``T3REPO%`` 前缀并在前后清理，避免污染同一测试库上的其他并行任务。
 """
 
 from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -19,34 +18,13 @@ import pytest
 from bp_api import repositories_valuation as repo
 
 TEST_PREFIX = "T3REPO"
-TEST_DB = {
-    "host": "81.71.158.239",
-    "port": 5432,
-    "dbname": "bp_mig_test",
-    "user": "postgres",
-}
-
-
-def _password() -> str:
-    env_path = Path(__file__).resolve().parents[2] / ".env"
-    if not env_path.exists():
-        pytest.skip(".env 不存在，跳过 bp_mig_test 集成测试")
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        if line.startswith("PGPASSWORD="):
-            return line.split("=", 1)[1].strip()
-    pytest.skip("PGPASSWORD 不在 .env 中，跳过 bp_mig_test 集成测试")
 
 
 def _connect() -> psycopg.Connection:
-    try:
-        return psycopg.connect(
-            **TEST_DB,
-            password=_password(),
-            connect_timeout=8,
-            autocommit=False,
-        )
-    except psycopg.Error as exc:  # pragma: no cover - 环境不可达时走 skip
-        pytest.skip(f"bp_mig_test 不可达: {exc}")
+    # P1-4：显式 BP_MIG_TEST_DSN / BP_MIG_TEST=1 才连接；不硬编码 host、不读 .env
+    from bp_api.tests._mig_db import connect_mig_test
+
+    return connect_mig_test()
 
 
 def _purge(conn: psycopg.Connection) -> None:

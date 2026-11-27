@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 import time
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
 
 import psycopg
@@ -25,10 +25,12 @@ import psycopg
 from bp_api.quant.valuation import erp as quant_erp
 from bp_api.quant.valuation import min_sample_for, summarize, window_slice
 from bp_api.repositories_valuation import (
+    refresh_valuation_latest,
     upsert_macro_series,
     upsert_constituents,
     upsert_fund_master,
     upsert_fund_performance,
+    upsert_quote_health,
     upsert_stock_master,
     upsert_tracker_funds,
     CALC_SRC_PINGAN,
@@ -182,6 +184,12 @@ def _as_date(value: Any) -> Optional[date]:
         return value.date()
     if isinstance(value, date):
         return value
+    # 中证官网 xls 的日期列经 pandas 读取后可能是 YYYYMMDD 整数
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            value = str(int(value))
+        except (TypeError, ValueError):
+            return None
     if isinstance(value, str):
         text = value.strip()
         for fmt in ("%Y%m%d", "%Y-%m-%d"):
@@ -519,13 +527,14 @@ def _build_series(
 
 
 def _build_percentiles(
-    conn: psycopg.Connection, index_code: str, trade_date: date
+    conn: psycopg.Connection,
+    index_code: str,
+    trade_date: date,
+    calc_src: str = CALC_SRC_PINGAN,
 ) -> list[dict]:
     rows: list[dict] = []
     for metric in PERCENTILE_METRIC_ORDER:
-        series = fetch_series(
-            conn, index_code, metric, CALC_SRC_PINGAN, None, trade_date
-        )
+        series = fetch_series(conn, index_code, metric, calc_src, None, trade_date)
         for window_key in PERCENTILE_WINDOW_ORDER:
             stats = summarize(window_slice(series, trade_date, window_key), min_sample_for(window_key))
             rows.append(
@@ -534,7 +543,7 @@ def _build_percentiles(
                     "as_of_date": trade_date,
                     "metric": metric,
                     "window_key": window_key,
-                    "calc_src": CALC_SRC_PINGAN,
+                    "calc_src": calc_src,
                     "pct": stats["pct"],
                     "mean": stats["mean"],
                     "sd": stats["sd"],
@@ -547,6 +556,579 @@ def _build_percentiles(
                 }
             )
     return rows
+
+
+# ---------------------------------------------------------------------------
+# 中证官网 fallback：平安 universe 未覆盖的指数（如 000985 中证全指）
+#
+# 平安估值源（INDEX_DATA/INDEX_DATA_V2）的 521 只 universe 不含中证全指 000985，
+# 且用 SH000985/ZI000985 等供应商代码也查不到。这里用中证指数官网的免费静态文件补：
+#   - indicator/{code}indicator.xls：滚动 20 个交易日的 PE(静态/滚动) + 股息率(LYR/TTM)；
+#   - perf/{code}perf.xls：滚动 24 个交易日 OHLC（每日增量）；
+#   - index-perf JSON API：首次接入时回补 2017 年以来的完整日线（仅一次，之后走 perf.xls）。
+#
+# 口径与来源记录：
+#   - 估值日频/序列 calc_src = csindex_value，is_primary=True（该指数没有平安主口径，
+#     csindex 即其主口径）；ERP 用同日 bp_macro_series.cn_10y_yield 计算，不做 forward-fill；
+#   - 行情写 bp_index_quote_daily，source = csindex_perf，adjust = bfq；
+#   - **PB 不可得**：中证官网估值文件只有 PE/股息率，没有 PB。这里不插值、不用其他
+#     指数/其他口径冒充，PB 留 NULL 并在 raw 里标记 pb_available=False（页面降级为
+#     「数据建设中」），待后续出现可授权的官方 PB 源再补。
+# ---------------------------------------------------------------------------
+
+FALLBACK_INDEX_CODES = ("000985",)
+CSINDEX_OSS_BASE = (
+    "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/file/autofile"
+)
+CSINDEX_PERF_API = "https://www.csindex.com.cn/csindex-home/perf/index-perf"
+CSINDEX_REFERER = "https://www.csindex.com.cn/"
+CSINDEX_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+)
+CALC_SRC_CSINDEX = "csindex_value"
+CALC_SRC_CSINDEX_PERF = "csindex_perf"
+#: 腾讯指数日 K（cn_index_tx 已注册）；作为 fallback 指数的行情主源
+CALC_SRC_CN_INDEX_TX = "cn_index_tx"
+# fallback 指数的静态主数据（官网指数概况；迁移 80 里也有同样的 000985 行，
+# 这里 upsert 一遍保证「迁移未应用的库/新库」也能正常落库）
+CSINDEX_MASTER_META: dict[str, dict] = {
+    "000985": {
+        "index_code": "000985",
+        "market": "CSI",
+        "wind_code": "000985.SH",
+        "name": "中证全指",
+        "short_name": "中证全指",
+        "index_type": "宽基",
+        "publisher": "中证指数有限公司",
+        "base_date": date(2004, 12, 31),
+        "base_point": 1000.0,
+        "income_method": "价格指数",
+        "weight_method": "调整市值加权",
+        "intro": "中证全指指数由全部 A 股中剔除 ST、*ST 及上市未满一定期限的证券后组成，反映 A 股市场整体表现。",
+        "is_active": True,
+        "is_tracked": True,
+    }
+}
+
+
+def _csindex_get(url: str, params: Optional[dict] = None, timeout: float = 25.0):
+    """带硬化指纹会话的 GET（失败回退普通 requests；测试可 monkeypatch）。"""
+    import requests
+
+    try:  # pragma: no cover - 硬化会话是可选增强
+        from .http_session import install_hardened_session
+
+        install_hardened_session()
+    except Exception:  # noqa: BLE001
+        pass
+    return requests.get(
+        url,
+        params=params,
+        headers={"User-Agent": CSINDEX_UA, "Referer": CSINDEX_REFERER},
+        timeout=timeout,
+    )
+
+
+def _csindex_column(frame, *candidates: str) -> Optional[str]:
+    for name in frame.columns:
+        text = str(name)
+        if any(candidate in text for candidate in candidates):
+            return name
+    return None
+
+
+def _parse_csindex_indicator(content: bytes) -> list[dict]:
+    """解析 indicator.xls：columns = 日期/市盈率1/市盈率2/股息率1/股息率2。"""
+    import io
+
+    import pandas as pd
+
+    frame = pd.read_excel(io.BytesIO(content))
+    date_col = _csindex_column(frame, "日期Date", "日期")
+    pe1_col = _csindex_column(frame, "市盈率1")
+    pe2_col = _csindex_column(frame, "市盈率2")
+    div1_col = _csindex_column(frame, "股息率1")
+    div2_col = _csindex_column(frame, "股息率2")
+    if not date_col:
+        return []
+    rows: list[dict] = []
+    for _, raw in frame.iterrows():
+        trade_date = _as_date(raw.get(date_col))
+        if trade_date is None:
+            continue
+        rows.append(
+            {
+                "trade_date": trade_date,
+                "pe_static": _positive(raw.get(pe1_col)) if pe1_col else None,
+                "pe_ttm": _positive(raw.get(pe2_col)) if pe2_col else None,
+                "dividend_yield_lyr": _bounded(raw.get(div1_col), -100.0, 100.0)
+                if div1_col
+                else None,
+                "dividend_yield_ttm": _bounded(raw.get(div2_col), -100.0, 100.0)
+                if div2_col
+                else None,
+            }
+        )
+    rows.sort(key=lambda item: item["trade_date"])
+    return rows
+
+
+def _parse_csindex_perf_xls(content: bytes) -> tuple[str, list[dict]]:
+    """解析 perf.xls（滚动 24 个交易日 OHLC）为行情行。"""
+    import io
+
+    import pandas as pd
+    from .db import QuoteRow
+
+    frame = pd.read_excel(io.BytesIO(content))
+    date_col = _csindex_column(frame, "日期Date", "日期")
+    close_col = _csindex_column(frame, "收盘Close", "收盘")
+    if not date_col or not close_col:
+        return "", []
+    open_col = _csindex_column(frame, "开盘Open", "开盘")
+    high_col = _csindex_column(frame, "最高High", "最高")
+    low_col = _csindex_column(frame, "最低Low", "最低")
+    pct_col = _csindex_column(frame, "涨跌幅")
+    vol_col = _csindex_column(frame, "成交量")
+    amt_col = _csindex_column(frame, "成交金额")
+    name_col = _csindex_column(frame, "指数中文简称Index Chinese Name", "中文简称")
+
+    def _num(row, col):
+        if not col:
+            return None
+        value = row.get(col)
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if math.isfinite(number) else None
+
+    name = ""
+    if name_col and len(frame):
+        name = str(frame[name_col].iloc[0] or "")
+    rows: list[dict] = []
+    for _, raw in frame.iterrows():
+        trade_date = _as_date(raw.get(date_col))
+        close = _num(raw, close_col)
+        if trade_date is None or close is None:
+            continue
+        rows.append(
+            {
+                "row": QuoteRow(
+                    trade_date=trade_date,
+                    symbol="",
+                    source=CALC_SRC_CSINDEX_PERF,
+                    category="index",
+                    name=name or None,
+                    open=_num(raw, open_col),
+                    high=_num(raw, high_col),
+                    low=_num(raw, low_col),
+                    close=close,
+                    volume=int(_num(raw, vol_col)) if _num(raw, vol_col) is not None else None,
+                    amount=_num(raw, amt_col),
+                    turnover_rate=None,
+                    pct_change=_num(raw, pct_col),
+                    adjust="bfq",
+                ),
+                "name": name,
+            }
+        )
+    rows.sort(key=lambda item: item["row"].trade_date)
+    return name, rows
+
+
+def _parse_csindex_perf_json(payload: dict) -> tuple[str, list[dict]]:
+    """解析 index-perf JSON（全历史日线）为行情行。"""
+    from .db import QuoteRow
+
+    items = payload.get("data") or []
+    if not isinstance(items, list):
+        return "", []
+    name = ""
+    rows: list[dict] = []
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        raw_date = item.get("tradeDate")
+        try:
+            trade_date = datetime.strptime(str(raw_date), "%Y%m%d").date()
+        except (TypeError, ValueError):
+            continue
+        close = _float(item.get("close"))
+        if close is None:
+            continue
+        name = name or _text(item.get("indexNameCn")) or ""
+        volume = _float(item.get("tradingVol"))
+        rows.append(
+            {
+                "row": QuoteRow(
+                    trade_date=trade_date,
+                    symbol="",
+                    source=CALC_SRC_CSINDEX_PERF,
+                    category="index",
+                    name=name or None,
+                    open=_float(item.get("open")),
+                    high=_float(item.get("high")),
+                    low=_float(item.get("low")),
+                    close=close,
+                    volume=int(volume) if volume is not None else None,
+                    amount=_float(item.get("tradingValue")),
+                    turnover_rate=None,
+                    pct_change=_float(item.get("changePct")),
+                    adjust="bfq",
+                ),
+                "name": name,
+            }
+        )
+    rows.sort(key=lambda item: item["row"].trade_date)
+    return name, rows
+
+
+def _fetch_tencent_quotes(
+    code: str, start: date, end: date
+) -> list[dict]:
+    """用腾讯 fqkline（bp_ingest.sources._fetch_tx_kline）取指数日 K。
+
+    中证官网 OSS 的 perf.xls 实测停留在 2021-08、index-perf JSON 又被 WAF 间歇
+    拦截，故 fallback 指数的行情主源改为腾讯（与 P0-3 指数行情链路同源同口径，
+    source = cn_index_tx，adjust = bfq）。失败返回空列表，由调用方记录降级链。
+    """
+    from .db import QuoteRow
+    from .sources import _fetch_tx_kline
+
+    frame = _fetch_tx_kline(code, start, end, "")
+    if frame is None or frame.empty:
+        return []
+    rows: list[dict] = []
+    for _, raw in frame.iterrows():
+        trade_date = _as_date(raw.get("trade_date"))
+        close = _float(raw.get("close"))
+        if trade_date is None or close is None:
+            continue
+        volume = _float(raw.get("volume"))
+        rows.append(
+            {
+                "row": QuoteRow(
+                    trade_date=trade_date,
+                    symbol=code,
+                    source=CALC_SRC_CN_INDEX_TX,
+                    category="index",
+                    name=None,
+                    open=_float(raw.get("open")),
+                    high=_float(raw.get("high")),
+                    low=_float(raw.get("low")),
+                    close=close,
+                    volume=int(volume) if volume is not None else None,
+                    amount=_float(raw.get("amount")),
+                    turnover_rate=None,
+                    pct_change=_float(raw.get("pct_change")),
+                    adjust="bfq",
+                ),
+                "name": None,
+            }
+        )
+    return rows
+
+
+def fetch_csindex_fallback(code: str, full_history: bool = False) -> dict:
+    """抓取一只中证官网 fallback 指数的估值/行情原始数据（不写库；测试可替换）。
+
+    返回 {"indicator": [...], "quotes": [...], "name": str, "errors": [...]}；
+    quotes 元素是 {"row": QuoteRow, "name": str}，full_history=True 时回补 2017 以来日线。
+    行情主源为腾讯 fqkline（source=cn_index_tx），中证官网 JSON/OSS 仅作降级。
+    """
+    result: dict = {"indicator": [], "quotes": [], "name": "", "errors": []}
+    today = date.today()
+    # 1) 行情主源：腾讯 fqkline（与 P0-3 指数行情链路同源同口径，source=cn_index_tx）
+    quote_start = date(2017, 1, 1) if full_history else today - timedelta(days=45)
+    try:
+        tencent_rows = _fetch_tencent_quotes(code, quote_start, today)
+        if tencent_rows:
+            result["quotes"].extend(tencent_rows)
+    except Exception as exc:  # noqa: BLE001
+        result["errors"].append(f"{code}: tencent_quotes: {type(exc).__name__}: {exc}")
+
+    # 2) 行情降级：中证官网 index-perf JSON（全历史；WAF 拦截时跳过）
+    if not result["quotes"]:
+        try:
+            response = _csindex_get(
+                CSINDEX_PERF_API,
+                params={
+                    "indexCode": code,
+                    "startDate": quote_start.strftime("%Y%m%d"),
+                    "endDate": today.strftime("%Y%m%d"),
+                },
+            )
+            response.raise_for_status()
+            name, rows = _parse_csindex_perf_json(response.json())
+            result["name"] = name
+            result["quotes"].extend(rows)
+        except Exception as exc:  # noqa: BLE001 - 单源失败只记录
+            result["errors"].append(f"{code}: csindex_history: {type(exc).__name__}: {exc}")
+
+    # 3) 行情降级：中证官网 OSS perf.xls（实测可能停留在 2021 年，只收近期行，
+    #    避免把陈旧价格写进行情表；全历史场景由腾讯/JSON 负责）
+    if not result["quotes"]:
+        try:
+            response = _csindex_get(f"{CSINDEX_OSS_BASE}/perf/{code}perf.xls")
+            response.raise_for_status()
+            name, rows = _parse_csindex_perf_xls(response.content)
+            recent = [
+                item
+                for item in rows
+                if item["row"].trade_date >= today - timedelta(days=45)
+            ]
+            result["name"] = result["name"] or name
+            result["quotes"].extend(recent)
+        except Exception as exc:  # noqa: BLE001
+            result["errors"].append(f"{code}: perf_xls: {type(exc).__name__}: {exc}")
+
+    # 4) 估值：中证官网 indicator.xls（PE 静态/滚动 + 股息率 LYR/TTM；无 PB）
+    try:
+        response = _csindex_get(f"{CSINDEX_OSS_BASE}/indicator/{code}indicator.xls")
+        response.raise_for_status()
+        result["indicator"] = _parse_csindex_indicator(response.content)
+    except Exception as exc:  # noqa: BLE001
+        result["errors"].append(f"{code}: indicator_xls: {type(exc).__name__}: {exc}")
+    return result
+
+
+def _bond10_by_dates(conn: psycopg.Connection, days: Sequence[date]) -> dict[date, float]:
+    if not days:
+        return {}
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT trade_date, value FROM bp_macro_series"
+            " WHERE series_code = 'cn_10y_yield' AND trade_date = ANY(%s)",
+            (list(days),),
+        )
+        return {
+            trade_date: value
+            for trade_date, value in cur.fetchall()
+            if trade_date is not None and _float(value) is not None
+        }
+
+
+def _build_csindex_rows(
+    conn: psycopg.Connection,
+    index_code: str,
+    indicator_rows: Sequence[Mapping[str, Any]],
+    max_date: Optional[date],
+) -> tuple[list[dict], list[dict], Optional[date]]:
+    """中证官网估值 -> (日频估值行, 序列行, 最新日期)；PB 缺失写 NULL。"""
+    usable = [
+        row
+        for row in indicator_rows
+        if isinstance(row.get("trade_date"), date)
+        and (max_date is None or row["trade_date"] <= max_date)
+    ]
+    if not usable:
+        return [], [], None
+    bond10 = _bond10_by_dates(conn, [row["trade_date"] for row in usable])
+    daily_rows: list[dict] = []
+    series_rows: list[dict] = []
+    for row in usable:
+        trade_date = row["trade_date"]
+        dividend = _bounded(row.get("dividend_yield_ttm"), -100.0, 100.0)
+        bond = bond10.get(trade_date)
+        erp_value = None
+        if dividend is not None and bond is not None:
+            erp_value = quant_erp(dividend / 100.0, bond)
+        raw = {
+            "source": "csindex_official_indicator",
+            "pb_available": False,
+            "bond10y_same_day": bond,
+        }
+        daily_rows.append(
+            {
+                "index_code": index_code,
+                "trade_date": trade_date,
+                "calc_src": CALC_SRC_CSINDEX,
+                "pe_ttm": _positive(row.get("pe_ttm")),
+                "pe_static": _positive(row.get("pe_static")),
+                "pb": None,
+                "dividend_yield_ttm": dividend,
+                "dividend_yield_lyr": _bounded(row.get("dividend_yield_lyr"), -100.0, 100.0),
+                "roe_ttm": None,
+                "roa_ttm": None,
+                "bond10y": bond,
+                "erp": erp_value,
+                "pe_basis": "csindex_official",
+                "pb_basis": None,
+                "div_basis": "csindex_official_ttm",
+                "level_pe": None,
+                "level_pb": None,
+                "level_dividend": None,
+                "is_primary": True,
+                "raw": raw,
+            }
+        )
+        for metric, value in (
+            ("pe_ttm", _positive(row.get("pe_ttm"))),
+            ("pe_static", _positive(row.get("pe_static"))),
+            ("dividend_yield_ttm", dividend),
+            ("dividend_yield_lyr", _bounded(row.get("dividend_yield_lyr"), -100.0, 100.0)),
+            ("erp", erp_value),
+        ):
+            if value is None:
+                continue
+            series_rows.append(
+                {
+                    "index_code": index_code,
+                    "trade_date": trade_date,
+                    "metric": metric,
+                    "calc_src": CALC_SRC_CSINDEX,
+                    "value": value,
+                    "is_weekly": False,
+                }
+            )
+    return daily_rows, series_rows, usable[-1]["trade_date"]
+
+
+def _refresh_quote_health(conn: psycopg.Connection, symbols: Sequence[str]) -> None:
+    """给 fallback 指数补 bp_index_quote_health（列表页行情状态/滞后用）。"""
+    if not symbols:
+        return
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT max(cal_date) FROM bp_trading_calendar"
+            " WHERE is_trading AND cal_date <= current_date"
+        )
+        row = cur.fetchone()
+        expected = row[0] if row else None
+        for symbol in symbols:
+            cur.execute(
+                "SELECT max(trade_date) FROM bp_index_quote_daily"
+                " WHERE symbol = %s AND adjust = 'bfq'",
+                (symbol,),
+            )
+            last_row = cur.fetchone()
+            last_date = last_row[0] if last_row else None
+            lag = 0
+            if last_date is None:
+                status = "missing"
+            elif expected is not None and last_date < expected:
+                cur.execute(
+                    "SELECT count(*) FROM bp_trading_calendar"
+                    " WHERE is_trading AND cal_date > %s AND cal_date <= %s",
+                    (last_date, expected),
+                )
+                lag = int(cur.fetchone()[0] or 0)
+                status = "stale" if lag <= 5 else "dead"
+            else:
+                status = "ok"
+            upsert_quote_health(
+                conn,
+                [
+                    {
+                        "symbol": symbol,
+                        "last_trade_date": last_date,
+                        "expected_trade_date": expected,
+                        "lag_trading_days": lag,
+                        "has_quote": last_date is not None,
+                        "status": status,
+                    }
+                ],
+            )
+
+
+def _run_csindex_fallback(
+    conn: psycopg.Connection,
+    covered_codes: set[str],
+    as_of: Optional[date],
+    errors: list[str],
+    fetch: Callable[[str, bool], dict] = fetch_csindex_fallback,
+) -> dict:
+    """对平安未覆盖的 fallback 指数补估值/行情并重算分位，返回计数摘要。
+
+    只处理 FALLBACK_INDEX_CODES 中本次平安 payload 未覆盖的代码；单指数失败写入
+    errors 并继续，不阻断整批估值。
+    """
+    from .db import upsert_quotes
+
+    summary = {
+        "indices": 0,
+        "valuation_rows": 0,
+        "series_rows": 0,
+        "percentile_rows": 0,
+        "quote_rows": 0,
+    }
+    for index_code in FALLBACK_INDEX_CODES:
+        if index_code in covered_codes:
+            continue
+        try:
+            meta = CSINDEX_MASTER_META.get(index_code)
+            if meta is None:
+                errors.append(f"csindex_fallback: {index_code}: missing master meta")
+                continue
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT count(*) FROM bp_index_quote_daily"
+                    " WHERE symbol = %s AND adjust = 'bfq'",
+                    (index_code,),
+                )
+                need_full = int(cur.fetchone()[0] or 0) == 0
+                cur.execute(
+                    "SELECT count(*) FROM bp_index_master WHERE index_code = %s",
+                    (index_code,),
+                )
+                has_master = int(cur.fetchone()[0] or 0) > 0
+            if not has_master:
+                upsert_index_master(conn, [meta])
+                summary["indices"] += 1
+
+            payload = fetch(index_code, need_full) or {}
+            errors.extend(payload.get("errors") or [])
+
+            quote_rows = []
+            quote_name = _text(payload.get("name")) or meta["name"]
+            for item in payload.get("quotes") or []:
+                row = item.get("row") if isinstance(item, Mapping) else None
+                if row is None:
+                    continue
+                # P2：fallback 行情按 as_of 截断，绝不把 as_of 之后的行情写进历史
+                # （fetch 抓的是「今天」，但估值任务可能用 --as-of 补历史日期）。
+                if as_of is not None and row.trade_date > as_of:
+                    continue
+                row.symbol = index_code
+                row.name = quote_name
+                quote_rows.append(row)
+            if quote_rows:
+                summary["quote_rows"] += upsert_quotes(conn, quote_rows)
+
+            daily_rows, series_rows, latest_date = _build_csindex_rows(
+                conn, index_code, payload.get("indicator") or [], as_of
+            )
+            if daily_rows:
+                summary["valuation_rows"] += upsert_valuation_daily(conn, daily_rows)
+            if series_rows:
+                summary["series_rows"] += upsert_valuation_series(conn, series_rows)
+            if latest_date is not None:
+                summary["percentile_rows"] += upsert_percentiles(
+                    conn,
+                    _build_percentiles(
+                        conn, index_code, latest_date, calc_src=CALC_SRC_CSINDEX
+                    ),
+                )
+            _refresh_quote_health(conn, [index_code])
+
+            # 最新日频估值是 oracle：fallback 写入后按 as_of 对齐（不回写未来日期）
+            if as_of is not None:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT count(*) FROM bp_index_valuation_daily"
+                        " WHERE index_code = %s AND trade_date > %s",
+                        (index_code, as_of),
+                    )
+                    future = int(cur.fetchone()[0] or 0)
+                if future:
+                    errors.append(
+                        f"csindex_fallback: {index_code}: {future} future rows ignored"
+                    )
+        except Exception as exc:  # noqa: BLE001 - 单指数失败隔离
+            errors.append(f"csindex_fallback: {index_code}: {type(exc).__name__}: {exc}")
+    return summary
 
 
 def _summary(
@@ -573,11 +1155,21 @@ def run_valuation_ingest(
     conn: psycopg.Connection,
     as_of: Optional[date] = None,
     fetch: Callable[[], dict] = fetch_all,
+    enable_fallback: Optional[bool] = None,
+    fallback_fetch: Optional[Callable[[str, bool], dict]] = None,
+    refresh_latest: bool = True,
 ) -> dict:
-    """抓取 → 落库 → 重算分位，返回摘要。
+    """抓取 → 落库 → 重算分位 → 刷新最新快照，返回摘要。
 
-    单个指数失败不影响其他指数；整体抓取异常也会落成 ``errors`` 并返回零计数摘要。
+    单个指数失败不影响其他指数；整体抓取异常也会落成 errors 并返回零计数摘要。
     本函数不 commit，事务由调用方提交。
+
+    - enable_fallback：是否用中证官网补平安未覆盖的指数（000985 等）。None 表示
+      自动判断：仅当使用真实 fetch_all 时启用（测试注入 fake fetch 时不联网）；
+    - fallback_fetch：fallback 抓取器（签名为 (code, full_history) -> dict），
+      默认 fetch_csindex_fallback，测试可注入；
+    - refresh_latest：收尾是否刷新 bp_index_valuation_latest 快照（迁移 80 未应用
+      的库会自动跳过，不报错）。
     """
     started_at = time.perf_counter()
     target_as_of = as_of.date() if isinstance(as_of, datetime) else as_of
@@ -709,7 +1301,47 @@ def run_valuation_ingest(
         except Exception as exc:  # noqa: BLE001
             errors.append(f"tracker_funds: {exc}")
 
-    return _summary(
+    # 中证官网 fallback：平安 universe 未覆盖的指数（000985 中证全指）。
+    # 默认只在真实抓取（fetch is fetch_all）时启用，测试注入 fake fetch 不联网。
+    fallback_summary: Optional[dict] = None
+    run_fallback = (
+        (fetch is fetch_all) if enable_fallback is None else bool(enable_fallback)
+    )
+    if run_fallback:
+        try:
+            with _savepoint(conn, "valuation_csindex_fallback"):
+                fallback_summary = _run_csindex_fallback(
+                    conn,
+                    set(valid_codes),
+                    summary_as_of,
+                    errors,
+                    fetch=fallback_fetch or fetch_csindex_fallback,
+                )
+        except Exception as exc:  # noqa: BLE001 - fallback 失败不拖垮主链路
+            errors.append(f"csindex_fallback: {exc}")
+
+    # 收尾：全量刷新估值最新快照（ddl/80），供 /api/v1/valuation/indices 只读。
+    latest_rows: Optional[int] = None
+    if refresh_latest:
+        try:
+            with _savepoint(conn, "valuation_latest_snapshot"):
+                latest_rows = refresh_valuation_latest(conn)
+        except psycopg.errors.UndefinedTable:
+            # 迁移 80 尚未应用的库（旧测试库/临时库）：跳过快照刷新，不影响主链路
+            latest_rows = None
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"latest_snapshot: {exc}")
+
+    # 全局数据新鲜度（be-data 的 bp_api.freshness / ddl/79）：从源表 MAX 推导写入。
+    # 函数自身吞异常，ddl/79 未应用的库也会静默跳过，不影响主链路。
+    try:
+        from bp_api.freshness import sync_derived_freshness
+
+        sync_derived_freshness(conn, ("index_valuation",))
+    except Exception:  # noqa: BLE001
+        pass
+
+    summary = _summary(
         summary_as_of,
         indices,
         valuation_rows,
@@ -718,3 +1350,6 @@ def run_valuation_ingest(
         errors,
         started_at,
     )
+    summary["latest_rows"] = latest_rows
+    summary["fallback"] = fallback_summary
+    return summary

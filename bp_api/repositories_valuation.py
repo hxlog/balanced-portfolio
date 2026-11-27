@@ -1361,9 +1361,17 @@ def upsert_market_valuation_index(conn: psycopg.Connection, rows: list[dict]) ->
             risk_factors = EXCLUDED.risk_factors,
             updated_at = now()
     """
+    records: list[dict] = []
+    for row in rows:
+        item = dict(row)
+        for key in ("factors", "weights", "contributions", "risk_factors"):
+            value = item.get(key)
+            if value is not None and not isinstance(value, str):
+                item[key] = _json_value(value)
+        records.append(item)
     with conn.cursor() as cur:
-        cur.executemany(sql, rows)
-    return len(rows)
+        cur.executemany(sql, records)
+    return len(records)
 
 
 def get_market_valuation_index(conn: psycopg.Connection, history_limit: int = 160) -> dict:
@@ -1473,6 +1481,14 @@ def get_index_tracker_funds(
         WITH latest AS (
             SELECT max(trade_date) AS d
             FROM bp_index_tracker_fund WHERE index_code = %(code)s
+        ), meta AS (
+            SELECT max(trade_date) AS data_as_of, max(captured_at) AS updated_at
+            FROM bp_index_tracker_fund WHERE index_code = %(code)s
+        ), risk_meta AS (
+            SELECT max(r.updated_at) AS risk_updated_at
+            FROM bp_index_tracker_fund t
+            JOIN bp_fund_risk r USING (fund_code)
+            WHERE t.index_code = %(code)s
         )
         SELECT t.fund_code, COALESCE(f.name, t.fund_code) AS name,
                f.company_name, f.risk_grade, t.aum, t.trade_date,
@@ -1481,8 +1497,11 @@ def get_index_tracker_funds(
                p.ret_1m, p.ret_3m, p.ret_6m, p.ret_12m,
                p.ret_2y, p.ret_3y, p.ret_5y, p.ytd,
                r.ann_vol_1y, r.max_dd_1y, r.tracking_error_1y, r.info_ratio_1y,
-               r.ret_3y_ann AS risk_ret_3y_ann, r.ret_5y_ann AS risk_ret_5y_ann
+               r.ret_3y_ann AS risk_ret_3y_ann, r.ret_5y_ann AS risk_ret_5y_ann,
+               meta.data_as_of, meta.updated_at, risk_meta.risk_updated_at
         FROM bp_index_tracker_fund t
+        CROSS JOIN meta
+        CROSS JOIN risk_meta
         LEFT JOIN bp_fund_master f USING (fund_code)
         LEFT JOIN LATERAL (
             SELECT * FROM bp_fund_performance perf
@@ -1510,6 +1529,633 @@ def get_index_tracker_funds(
             item[key] = _to_float(item.get(key))
         out.append(item)
     return out
+
+
+# ---------------------------------------------------------------------------
+# 估值最新快照（ddl/80 bp_index_valuation_latest）：刷新 + 快速读取
+# ---------------------------------------------------------------------------
+
+# 5 个分位窗口（与 bp_index_percentile.ck_pct_window 一致）
+LATEST_WINDOWS = ("1y", "3y", "5y", "10y", "all")
+# 快照刷新时 sparkline 取最近多少天（约 1 年）
+SPARK_DAYS = 365
+# 52 周涨跌/位置的行情观察下限（与旧 get_index_list 一致：>=200 个交易日才宣称 52 周）
+QUOTE_52W_MIN_OBS = 200
+
+
+def _window_percentile(
+    percentiles: dict, metric: str, window: str
+) -> Optional[float]:
+    """从快照 percentiles JSONB 取某指标某窗口的分位。"""
+    item = percentiles.get(metric) if isinstance(percentiles, dict) else None
+    if isinstance(item, dict):
+        return _to_float(item.get(window))
+    return None
+
+
+def _spark_series(rows: list[tuple[date, float]]) -> list[list[Any]]:
+    """把日/周频点压缩成周频 sparkline：每 ISO 周保留最后一个点，最多 60 个点。"""
+    weekly: dict[tuple[int, int], tuple[date, float]] = {}
+    for trade_date, value in rows:
+        iso = trade_date.isocalendar()
+        weekly[(iso[0], iso[1])] = (trade_date, value)
+    points = [
+        [day.isoformat(), round(value, 6)]
+        for _, (day, value) in sorted(weekly.items(), key=lambda item: item[1][0])
+    ]
+    return points[-60:]
+
+
+def refresh_valuation_latest(
+    conn: psycopg.Connection,
+    window_key: str = "5y",
+    index_codes: Optional[list[str]] = None,
+    spark_days: int = SPARK_DAYS,
+) -> int:
+    """全量/增量刷新 bp_index_valuation_latest，返回写入行数。
+
+    由估值任务收尾调用（bp_ingest.valuation_ingest.run_valuation_ingest 末尾）。
+    纯读请求路径不调用本函数。
+
+    刷新内容（每指数 1 行）：
+      - 最新 is_primary 估值日 4 指标当前值 + calc_src 口径标记；
+      - 4 指标 x 5 窗口预计算分位（percentiles JSONB）+ 5y 扁平列；
+      - 最近 1 年周频 sparkline（pe_spark JSONB，4 指标）；
+      - 行情预计算：最新收盘/1 日涨跌/52 周涨跌/52 周位置（bp_index_quote_daily bfq）；
+      - coverage_start（主口径估值序列最早日期）。
+
+    单个指数的行情/分位缺失都写 NULL，不插值、不造数。
+    """
+    window = window_key if window_key in PERCENTILE_WINDOWS else "5y"
+    spark_days = max(30, int(spark_days))
+    code_filter = ""
+    params: list[Any] = []
+    if index_codes is not None:
+        codes = [str(code) for code in index_codes if code]
+        if not codes:
+            return 0
+        code_filter = " AND d.index_code = ANY(%s)"
+        params.append(codes)
+
+    with conn.cursor() as cur:
+        # 1) 每个指数最新一条主口径估值
+        cur.execute(
+            """
+            SELECT DISTINCT ON (d.index_code)
+                   d.index_code, d.trade_date, d.calc_src, d.is_primary,
+                   d.pe_ttm, d.pb, d.dividend_yield_ttm, d.erp
+            FROM bp_index_valuation_daily d
+            WHERE d.is_primary
+            """
+            + code_filter
+            + """
+            ORDER BY d.index_code, d.trade_date DESC
+            """,
+            params,
+        )
+        daily_rows = cur.fetchall()
+
+    if not daily_rows:
+        return 0
+
+    codes = [row[0] for row in daily_rows]
+    latest_by_code: dict[str, dict] = {}
+    for (
+        index_code,
+        trade_date,
+        calc_src,
+        is_primary,
+        pe_ttm,
+        pb,
+        dividend_yield_ttm,
+        erp,
+    ) in daily_rows:
+        latest_by_code[index_code] = {
+            "index_code": index_code,
+            "trade_date": trade_date,
+            "calc_src": calc_src,
+            "is_primary": bool(is_primary),
+            "pe_ttm": pe_ttm,
+            "pb": pb,
+            "dividend_yield_ttm": dividend_yield_ttm,
+            "erp": erp,
+        }
+
+    with conn.cursor() as cur:
+        # 2) 多窗口分位（只取各指数最新 as_of 的那一批，且口径与日频一致）
+        cur.execute(
+            """
+            WITH latest_daily AS (
+                SELECT DISTINCT ON (index_code) index_code, calc_src
+                FROM bp_index_valuation_daily
+                WHERE is_primary AND index_code = ANY(%s)
+                ORDER BY index_code, trade_date DESC
+            )
+            SELECT DISTINCT ON (p.index_code, p.metric, p.window_key)
+                   p.index_code, p.metric, p.window_key, p.pct
+            FROM bp_index_percentile p
+            JOIN latest_daily ld USING (index_code)
+            WHERE p.calc_src = ld.calc_src
+            ORDER BY p.index_code, p.metric, p.window_key, p.as_of_date DESC
+            """,
+            (codes,),
+        )
+        percentile_rows = cur.fetchall()
+
+        # 3) coverage_start = 主口径估值序列最早日期
+        cur.execute(
+            """
+            WITH latest_daily AS (
+                SELECT DISTINCT ON (index_code) index_code, calc_src
+                FROM bp_index_valuation_daily
+                WHERE is_primary AND index_code = ANY(%s)
+                ORDER BY index_code, trade_date DESC
+            )
+            SELECT s.index_code, min(s.trade_date)
+            FROM bp_index_valuation_series s
+            JOIN latest_daily ld ON ld.index_code = s.index_code AND ld.calc_src = s.calc_src
+            GROUP BY s.index_code
+            """,
+            (codes,),
+        )
+        coverage_rows = cur.fetchall()
+
+        # 4) sparkline：最近 1 年（相对各指数最新估值日）4 指标序列
+        cur.execute(
+            """
+            WITH latest_daily AS (
+                SELECT DISTINCT ON (index_code) index_code, calc_src, trade_date
+                FROM bp_index_valuation_daily
+                WHERE is_primary AND index_code = ANY(%s)
+                ORDER BY index_code, trade_date DESC
+            )
+            SELECT s.index_code, s.metric, s.trade_date, s.value
+            FROM bp_index_valuation_series s
+            JOIN latest_daily ld
+              ON ld.index_code = s.index_code AND ld.calc_src = s.calc_src
+            WHERE s.metric = ANY(%s)
+              AND s.trade_date >= ld.trade_date - (%s || ' days')::interval
+            ORDER BY s.index_code, s.metric, s.trade_date
+            """,
+            (codes, list(SERIES_METRICS), str(spark_days)),
+        )
+        spark_rows = cur.fetchall()
+
+        # 5) 行情预计算：最近 400 天收盘（去重：同 (symbol,date) 多源时取最新更新的一行）
+        cur.execute(
+            """
+            SELECT DISTINCT ON (symbol, trade_date)
+                   symbol, trade_date, close
+            FROM bp_index_quote_daily
+            WHERE adjust = 'bfq' AND close IS NOT NULL
+              AND symbol = ANY(%s)
+              AND trade_date >= current_date - 400
+            ORDER BY symbol, trade_date, updated_at DESC,
+                CASE source
+                    WHEN 'csindex_perf' THEN 0
+                    WHEN 'cn_index_em' THEN 1
+                    WHEN 'cn_index_sina' THEN 2
+                    ELSE 9
+                END
+            """,
+            (codes,),
+        )
+        quote_rows = cur.fetchall()
+
+    percentiles: dict[str, dict[str, dict[str, Optional[float]]]] = {}
+    for index_code, metric, window_key, pct in percentile_rows:
+        percentiles.setdefault(index_code, {}).setdefault(metric, {})[window_key] = _to_float(pct)
+
+    coverage: dict[str, Optional[date]] = {
+        index_code: trade_date for index_code, trade_date in coverage_rows
+    }
+
+    spark_raw: dict[str, dict[str, list[tuple[date, float]]]] = {}
+    for index_code, metric, trade_date, value in spark_rows:
+        number = _to_float(value)
+        if trade_date is None or number is None:
+            continue
+        spark_raw.setdefault(index_code, {}).setdefault(metric, []).append(
+            (trade_date, number)
+        )
+
+    quotes: dict[str, list[tuple[date, float]]] = {}
+    for symbol, trade_date, close in quote_rows:
+        number = _to_float(close)
+        if trade_date is None or number is None:
+            continue
+        quotes.setdefault(symbol, []).append((trade_date, number))
+
+    records: list[tuple] = []
+    for index_code, item in latest_by_code.items():
+        metric_pct = percentiles.get(index_code, {})
+        spark_payload = {
+            metric: _spark_series(points)
+            for metric, points in spark_raw.get(index_code, {}).items()
+            if points
+        }
+        flat = {
+            metric: _window_percentile(metric_pct, metric, window)
+            for metric in ("pe_ttm", "pb", "dividend_yield_ttm", "erp")
+        }
+
+        close_price = None
+        change_pct = None
+        change_52w_pct = None
+        position_52w_pct = None
+        price_trade_date = None
+        points = quotes.get(index_code) or []
+        if points:
+            points.sort(key=lambda point: point[0])
+            price_trade_date = points[-1][0]
+            close_price = points[-1][1]
+            if len(points) >= 2 and points[-2][1]:
+                change_pct = (close_price / points[-2][1] - 1.0) * 100.0
+            if len(points) >= QUOTE_52W_MIN_OBS:
+                high = max(value for _, value in points)
+                low = min(value for _, value in points)
+                if len(points) > 252:
+                    base = points[-252][1]
+                    if base:
+                        change_52w_pct = (close_price / base - 1.0) * 100.0
+                if high > low:
+                    position_52w_pct = (close_price - low) / (high - low) * 100.0
+
+        records.append(
+            (
+                index_code,
+                item["trade_date"],
+                item["calc_src"],
+                item["is_primary"],
+                _to_float(item["pe_ttm"]),
+                _to_float(item["pb"]),
+                _to_float(item["dividend_yield_ttm"]),
+                _to_float(item["erp"]),
+                flat["pe_ttm"],
+                flat["pb"],
+                flat["dividend_yield_ttm"],
+                flat["erp"],
+                _json_value(metric_pct or None),
+                _json_value(spark_payload or None),
+                close_price,
+                change_pct,
+                change_52w_pct,
+                position_52w_pct,
+                price_trade_date,
+                coverage.get(index_code),
+            )
+        )
+
+    sql = """
+        INSERT INTO bp_index_valuation_latest (
+            index_code, trade_date, calc_src, is_primary,
+            pe_ttm, pb, dividend_yield_ttm, erp,
+            pe_percentile, pb_percentile, dividend_percentile, erp_percentile,
+            percentiles, pe_spark,
+            close_price, change_pct, change_52w_pct, position_52w_pct,
+            price_trade_date, coverage_start
+        ) VALUES (
+            %s, %s, %s, %s,
+            %s, %s, %s, %s,
+            %s, %s, %s, %s,
+            %s, %s,
+            %s, %s, %s, %s,
+            %s, %s
+        )
+        ON CONFLICT (index_code) DO UPDATE SET
+            trade_date = EXCLUDED.trade_date,
+            calc_src = EXCLUDED.calc_src,
+            is_primary = EXCLUDED.is_primary,
+            pe_ttm = EXCLUDED.pe_ttm,
+            pb = EXCLUDED.pb,
+            dividend_yield_ttm = EXCLUDED.dividend_yield_ttm,
+            erp = EXCLUDED.erp,
+            pe_percentile = EXCLUDED.pe_percentile,
+            pb_percentile = EXCLUDED.pb_percentile,
+            dividend_percentile = EXCLUDED.dividend_percentile,
+            erp_percentile = EXCLUDED.erp_percentile,
+            percentiles = EXCLUDED.percentiles,
+            pe_spark = EXCLUDED.pe_spark,
+            close_price = EXCLUDED.close_price,
+            change_pct = EXCLUDED.change_pct,
+            change_52w_pct = EXCLUDED.change_52w_pct,
+            position_52w_pct = EXCLUDED.position_52w_pct,
+            price_trade_date = EXCLUDED.price_trade_date,
+            coverage_start = EXCLUDED.coverage_start,
+            updated_at = now()
+    """
+    with conn.cursor() as cur:
+        cur.executemany(sql, records)
+        if index_codes is None:
+            # 全量刷新时清掉已无主口径估值的指数，避免快照残留旧行
+            cur.execute(
+                "DELETE FROM bp_index_valuation_latest WHERE NOT (index_code = ANY(%s))",
+                (codes,),
+            )
+    return len(records)
+
+
+def get_valuation_latest_list(
+    conn: psycopg.Connection, window: str = "5y"
+) -> list[dict]:
+    """读取估值最新快照（一条 SQL，<50ms），返回全部指数 4 指标当前值/分位/涨跌。
+
+    不含 sparkline（payload 控制；前端需要时用详情/历史接口）。分位按 window
+    从 percentiles JSONB 取；5 个窗口都已预计算，单次响应按入参挑选一个窗口。
+    """
+    window = window if window in PERCENTILE_WINDOWS else "5y"
+    sql = """
+        SELECT
+            l.index_code,
+            m.name,
+            m.short_name,
+            m.index_type,
+            m.industry,
+            m.market,
+            m.publisher,
+            l.trade_date,
+            l.calc_src,
+            l.is_primary,
+            l.pe_ttm,
+            l.pb,
+            l.dividend_yield_ttm,
+            l.erp,
+            l.pe_percentile,
+            l.pb_percentile,
+            l.dividend_percentile,
+            l.erp_percentile,
+            l.percentiles,
+            l.close_price,
+            l.change_pct,
+            l.change_52w_pct,
+            l.position_52w_pct,
+            l.price_trade_date,
+            l.coverage_start,
+            l.updated_at,
+            fs.fund_count,
+            fs.aum_sum AS fund_aum,
+            h.status AS quote_status,
+            h.lag_trading_days AS quote_lag_days
+        FROM bp_index_valuation_latest l
+        JOIN bp_index_master m ON m.index_code = l.index_code
+        LEFT JOIN bp_index_fund_scale fs ON fs.index_code = l.index_code
+        LEFT JOIN bp_index_quote_health h ON h.symbol = l.index_code
+        ORDER BY l.index_code
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql)
+        columns = [desc.name for desc in cur.description]
+        records = cur.fetchall()
+
+    numeric_fields = {
+        "pe_ttm",
+        "pb",
+        "dividend_yield_ttm",
+        "erp",
+        "pe_percentile",
+        "pb_percentile",
+        "dividend_percentile",
+        "erp_percentile",
+        "close_price",
+        "change_pct",
+        "change_52w_pct",
+        "position_52w_pct",
+        "fund_aum",
+    }
+    out: list[dict] = []
+    for record in records:
+        item = dict(zip(columns, record))
+        raw_percentiles = item.pop("percentiles", None)
+        percentiles = raw_percentiles if isinstance(raw_percentiles, dict) else {}
+        for key in numeric_fields:
+            item[key] = _to_float(item.get(key))
+        item["fund_count"] = _to_int(item.get("fund_count"))
+        item["quote_lag_days"] = _to_int(item.get("quote_lag_days"))
+        item["is_primary"] = bool(item.get("is_primary"))
+        for metric, field in (
+            ("pe_ttm", "pe_percentile"),
+            ("pb", "pb_percentile"),
+            ("dividend_yield_ttm", "dividend_percentile"),
+            ("erp", "erp_percentile"),
+        ):
+            # P2：请求窗口的分位缺失时必须置 None，不能沿用 5y 扁平列（否则前端
+            # 把「5y 分位」误标成所选窗口，制造假数据）。5y 也只在 JSONB 有值时才给。
+            item[field] = _window_percentile(percentiles, metric, window)
+        item["has_valuation"] = True
+        item["window"] = window
+        out.append(item)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# MVI（bp_market_valuation_index）：区间序列 / overlay
+# ---------------------------------------------------------------------------
+
+MVI_RANGES = {"1y": 1, "3y": 3, "5y": 5, "10y": 10, "all": None}
+# overlay 支持 4 只宽基（需求 3：沪深300 / 中证A500 / 上证50 / 中证全指）
+OVERLAY_INDEX_CODES = ("000300", "000510", "000016", "000985")
+
+
+def _mvi_row(raw: tuple, columns: list[str]) -> dict:
+    item = dict(zip(columns, raw))
+    for key in ("mvi", "cheap_score", "risk_score"):
+        item[key] = _to_float(item.get(key))
+    as_of = item.get("as_of")
+    item["as_of"] = as_of.isoformat() if isinstance(as_of, date) else as_of
+    return item
+
+
+def get_market_valuation_index_range(
+    conn: psycopg.Connection, range_key: str = "5y"
+) -> dict:
+    """MVI 最新值 + 区间周频序列（range: 1y/3y/5y/10y/all）。"""
+    years = MVI_RANGES.get(range_key, 5)
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT as_of, mvi, cheap_score, risk_score, zone, factors, weights,"
+            " contributions, risk_factors"
+            " FROM bp_market_valuation_index ORDER BY as_of DESC LIMIT 1"
+        )
+        row = cur.fetchone()
+        columns = [desc.name for desc in cur.description] if cur.description else []
+        latest = _mvi_row(row, columns) if row else None
+
+        start = None
+        if latest and years is not None:
+            start = _shift_years(date.fromisoformat(latest["as_of"]), -years)
+
+        sql = (
+            "SELECT as_of, mvi, risk_score FROM bp_market_valuation_index"
+            + (" WHERE as_of >= %s" if start is not None else "")
+            + " ORDER BY as_of"
+        )
+        cur.execute(sql, (start,) if start is not None else ())
+        history = [
+            {
+                "as_of": as_of.isoformat() if isinstance(as_of, date) else as_of,
+                "mvi": _to_float(mvi),
+                "risk": _to_float(risk),
+            }
+            for as_of, mvi, risk in cur.fetchall()
+        ]
+    return {"latest": latest, "history": history, "range": range_key, "start": start}
+
+
+def get_market_mvi_overlay(
+    conn: psycopg.Connection, index_code: str, range_key: str = "5y"
+) -> dict:
+    """MVI 周频序列 + 指定指数的收盘价序列（双轴图 overlay）。
+
+    价格来源 bp_index_quote_daily（bfq，原币口径，多源同 (symbol,date) 取最新更新行）。
+    指数无行情时返回 missing=True 且不造数；未知/未支持指数由 API 层 404。
+    """
+    years = MVI_RANGES.get(range_key, 5)
+    mvi = get_market_valuation_index_range(conn, range_key)
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT name FROM bp_index_master WHERE index_code = %s",
+            (index_code,),
+        )
+        name_row = cur.fetchone()
+
+        # 价格覆盖起点（全历史最早一行）——前端用于标注「数据仅从 X 起」
+        cur.execute(
+            "SELECT min(trade_date), max(trade_date) FROM bp_index_quote_daily"
+            " WHERE symbol = %s AND adjust = 'bfq' AND close IS NOT NULL",
+            (index_code,),
+        )
+        coverage_start, coverage_end = cur.fetchone()
+
+        # overlay 价格窗口：MVI 区间起点（无 MVI 时用 range 起点），保证双轴对齐
+        history = mvi.get("history") or []
+        if history:
+            price_start: Optional[date] = date.fromisoformat(history[0]["as_of"])
+        elif coverage_end is not None and years is not None:
+            price_start = _shift_years(coverage_end, -years)
+        else:
+            price_start = coverage_start
+
+        series: list[dict] = []
+        if price_start is not None:
+            cur.execute(
+                """
+                SELECT trade_date, close FROM (
+                    SELECT DISTINCT ON (trade_date) trade_date, close, updated_at
+                    FROM bp_index_quote_daily
+                    WHERE symbol = %s AND adjust = 'bfq' AND close IS NOT NULL
+                      AND trade_date >= %s
+                    ORDER BY trade_date, updated_at DESC,
+                        CASE source
+                            WHEN 'csindex_perf' THEN 0
+                            WHEN 'cn_index_em' THEN 1
+                            WHEN 'cn_index_sina' THEN 2
+                            ELSE 9
+                        END
+                ) t
+                ORDER BY trade_date
+                """,
+                (index_code, price_start),
+            )
+            series = [
+                {"trade_date": trade_date, "close": _to_float(close)}
+                for trade_date, close in cur.fetchall()
+            ]
+
+    return {
+        "index_code": index_code,
+        "name": name_row[0] if name_row else index_code,
+        "series": series,
+        "mvi": history,
+        "range": range_key,
+        "coverage_start": coverage_start,
+        "coverage_end": coverage_end,
+        "mvi_start": history[0]["as_of"] if history else None,
+        "mvi_end": history[-1]["as_of"] if history else None,
+        "missing": not series,
+        "reason": None if series else "no_price_data_for_overlay",
+    }
+
+
+def get_index_price_series(
+    conn: psycopg.Connection, index_code: str, years: int = 10
+) -> list[dict]:
+    """指数日线收盘（bfq，原币），近 N 年。用于详情页估值-点位双轴图。"""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT max(trade_date) FROM bp_index_quote_daily"
+            " WHERE symbol = %s AND adjust = 'bfq'",
+            (index_code,),
+        )
+        row = cur.fetchone()
+        last_date = row[0] if row else None
+        if last_date is None:
+            return []
+        start = _shift_years(last_date, -max(1, int(years)))
+        cur.execute(
+            """
+            SELECT trade_date, close FROM (
+                SELECT DISTINCT ON (trade_date) trade_date, close, updated_at
+                FROM bp_index_quote_daily
+                WHERE symbol = %s AND adjust = 'bfq' AND close IS NOT NULL
+                  AND trade_date >= %s
+                ORDER BY trade_date, updated_at DESC,
+                    CASE source
+                        WHEN 'csindex_perf' THEN 0
+                        WHEN 'cn_index_em' THEN 1
+                        WHEN 'cn_index_sina' THEN 2
+                        ELSE 9
+                    END
+            ) t
+            ORDER BY trade_date
+            """,
+            (index_code, start),
+        )
+        return [
+            {"trade_date": trade_date, "close": _to_float(close)}
+            for trade_date, close in cur.fetchall()
+        ]
+
+
+def get_index_tracker_funds_meta(
+    conn: psycopg.Connection, index_code: str
+) -> dict:
+    """跟踪基金数据截止/更新时间元信息（HSI 页右上角展示）。
+
+    - data_as_of：bp_index_tracker_fund 最新 trade_date（基金规模/业绩数据截止日）；
+    - updated_at：tracker 行最新 captured_at（本次入库/更新时间）；
+    - risk_updated_at：bp_fund_risk 最新 updated_at（TE/波动等风险指标计算时间）；
+    - fund_count：跟踪基金只数。
+    """
+    sql = """
+        SELECT
+            (SELECT max(trade_date) FROM bp_index_tracker_fund
+              WHERE index_code = %(code)s) AS data_as_of,
+            (SELECT max(captured_at) FROM bp_index_tracker_fund
+              WHERE index_code = %(code)s) AS updated_at,
+            (SELECT max(r.updated_at)
+               FROM bp_index_tracker_fund t
+               JOIN bp_fund_risk r USING (fund_code)
+              WHERE t.index_code = %(code)s) AS risk_updated_at,
+            (SELECT count(DISTINCT fund_code) FROM bp_index_tracker_fund
+              WHERE index_code = %(code)s) AS fund_count
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql, {"code": index_code})
+        record = cur.fetchone()
+        columns = [desc.name for desc in cur.description]
+    item = dict(zip(columns, record)) if record else {}
+    item["fund_count"] = _to_int(item.get("fund_count")) or 0
+    return item
+
+
+def replace_market_valuation_index(
+    conn: psycopg.Connection, rows: list[dict]
+) -> int:
+    """全量重算 MVI：先清空再写入（周频序列口径变更后避免残留旧点）。"""
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM bp_market_valuation_index")
+    return upsert_market_valuation_index(conn, rows)
 
 
 def upsert_macro_series(conn: psycopg.Connection, rows: list[dict]) -> int:

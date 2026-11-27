@@ -12,7 +12,7 @@
 
 - **不 commit**：git 由用户自己操作；每任务以「测试/构建通过」为完成检查点。
 - 改动直接落主 checkout `D:\balanced-portfolio`（无 worktree）。
-- DB：`PGHOST=81.71.158.239 PGPORT=5432 PGDATABASE=postgres PGUSER=postgres`，密码见 `.env`（`Lxyblbq2233@`，`@` 属于密码本身）。**含中文的 SQL 必须写 utf-8 文件后 `psql -f`**。
+- DB：`PGHOST=81.71.158.239 PGPORT=5432 PGDATABASE=postgres PGUSER=postgres`，密码见 `.env`（**已从文档移除；2026-11-27 安全审计发现该密码曾以明文提交，需轮换后由 `.env` 注入**）。**含中文的 SQL 必须写 utf-8 文件后 `psql -f`**。
 - DDL 纪律：新迁移编号从 **43** 起；同步合并进 `ddl/schema.sql` 基线；不重跑历史迁移。
 - 颜色：sky 主色、`text-up`/`text-down` 仅用于方向性涨跌、滞后用 warning/amber、四象限色保留；图表色经 `web/lib/chart-theme.ts`。
 - 禁止 `window.alert/confirm`；确认用 Radix AlertDialog；反馈用 sonner toast。

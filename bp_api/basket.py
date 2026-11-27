@@ -12,7 +12,7 @@ main.py 的路由注册由主控完成，本模块只提供 `register_routes(app
 from __future__ import annotations
 
 import math
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Optional
 
 import numpy as np
@@ -146,6 +146,86 @@ def _split_key(key: str) -> tuple[str, str]:
     if not sep:
         return key, ""
     return symbol, source
+
+
+# ---------------------------------------------------------------------------
+# 服务端重算（供 POST /api/baskets/{id}/recompute 与 seed 脚本共用）
+# ---------------------------------------------------------------------------
+def build_latest_result(
+    panel: pd.DataFrame,
+    *,
+    method: str,
+    lookback_days: int,
+    rebalance_band: float = 0.05,
+    risk_free: float = 0.0,
+    risk_budget: Optional[dict] = None,
+    start: Optional[date] = None,
+    end: Optional[date] = None,
+    trading_days: int = 244,
+    min_window: int = 60,
+) -> dict:
+    """对已保存的篮子定义做一次同步回测，生成可落库的 latest_result 摘要。
+
+    口径与 POST /api/basket/backtest 完全一致（复用 run_basket_backtest）：净值、
+    年化收益/波动/回撤/夏普/换手、最近一次调仓目标权重与逐日净值。latest_result
+    只能由本函数（服务端 recompute / seed --recompute）生成，避免前端伪造示例指标。
+    """
+    if method not in METHODS:
+        raise ValueError(f"未知优化方法 method={method}")
+    if panel is None or panel.empty:
+        raise ValueError("所选区间无清洗行情数据")
+    frame = panel.loc[:end] if end is not None else panel
+    if frame.empty:
+        raise ValueError("所选区间无清洗行情数据")
+    try:
+        lookback = int(lookback_days)
+    except (TypeError, ValueError):
+        lookback = 156
+    lookback = max(2, lookback)
+    result = run_basket_backtest(
+        frame,
+        method=method,
+        lookback=lookback,
+        min_window=min(int(min_window), lookback),
+        rebalance_band=float(rebalance_band),
+        risk_free=float(risk_free),
+        risk_budget=risk_budget or None,
+        trading_days=int(trading_days),
+        user_start=start,
+    )
+
+    keys = list(frame.columns)
+    pairs = [_split_key(str(key)) for key in keys]
+    weights = _weight_rows(pairs, keys, np.array([result.latest_target.get(k, 0.0) for k in keys]))
+    nav_rows = [
+        {
+            "trade_date": _iso_date(index),
+            "nav": float(row["nav"]),
+            "ret": float(row["ret"]),
+        }
+        for index, row in result.nav.iterrows()
+    ]
+    summary = {
+        "method": method,
+        "as_of": nav_rows[-1]["trade_date"] if nav_rows else None,
+        "computed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "effective_start": _iso_date(result.effective_start),
+        "lookback_days": lookback,
+        "rebalance_band": float(rebalance_band),
+        "risk_free": float(risk_free),
+        "n_obs": int(result.n_obs),
+        "annualized_return": float(result.metrics["annualized_return"]),
+        "annualized_vol": float(result.metrics["annualized_vol"]),
+        "max_drawdown": float(result.metrics["max_drawdown"]),
+        "sharpe": float(result.metrics["sharpe"]),
+        "turnover": float(result.annualized_turnover),
+        "turnover_total": float(result.total_turnover),
+        "rebalance_count": len(result.rebalances),
+        "assets": [{"symbol": symbol, "source": source} for symbol, source in pairs],
+        "weights": weights,
+        "nav": nav_rows,
+    }
+    return _json_safe(summary)
 
 
 # ---------------------------------------------------------------------------

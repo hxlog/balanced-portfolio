@@ -5,7 +5,11 @@
   直到 `bp_etl_dataset_state.last_success_date` 追平最新确认交易日；
 - 目标时点只用于升级告警（管理页红黄绿），不用于停止；
 - 幂等：同 dataset 用 Postgres advisory lock 防重入；重复波次 UPSERT 安全；
-- 收盘确认：A 15:10 / HK 16:15 / FUND 20:00（CST），未确认不写当日。
+- 收盘确认：A 15:10 / HK 16:15 / FUND 20:00（CST），未确认不写当日；
+- **backlog 默认无限重试**：跨交易日的历史缺口默认永不过期（长假/源故障 >5 天
+  造成的缺口必须最终补齐）。只有显式设置 `BP_ETL_BACKLOG_MAX_AGE_DAYS=<正整数>`
+  才会丢弃超期历史日期，且丢弃时写 `bp_etl_quality_issue` 告警（管理端
+  data-health issues 可见），绝不静默丢数；`0`/未设置/非法值均视为关闭。
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ from bp_etl.health import (
     due_backlog,
     due_backlog_dates,
     finish_run,
+    prune_backlog_symbols,
     record_issues,
     record_source_health,
     start_run,
@@ -119,6 +124,23 @@ class Orchestrator:
         self._write_enabled = config.write_enabled if write_enabled is None else write_enabled
         self._last_retry: dict[tuple[str, str], datetime] = {}
         self._legacy_clean_last: datetime | None = None
+        # backlog 历史日期保留上限（自然日）：**默认关闭 = 永不丢弃**（None）。
+        # 长假/源故障导致缺口 >5 天时，静默丢弃会留下永久空洞，必须保持跨日无限
+        # 重试语义。仅当显式设置 BP_ETL_BACKLOG_MAX_AGE_DAYS>0 才丢弃超期日期，
+        # 且丢弃时写 bp_etl_quality_issue 告警（见 _record_backlog_expired）。
+        raw_age = (os.getenv("BP_ETL_BACKLOG_MAX_AGE_DAYS") or "").strip()
+        self._backlog_max_age_days: int | None = None
+        if raw_age:
+            try:
+                parsed = int(raw_age)
+            except ValueError:
+                logger.warning(
+                    "BP_ETL_BACKLOG_MAX_AGE_DAYS=%r 非法（需正整数），保持默认关闭（不丢弃历史缺口）",
+                    raw_age,
+                )
+            else:
+                # 0 / 负数 = 明确关闭；正整数 = 显式开启超期丢弃
+                self._backlog_max_age_days = parsed if parsed > 0 else None
 
     # -- calendar -----------------------------------------------------
     def latest_trading_day(self, conn: Any, reference: date) -> date | None:
@@ -228,22 +250,53 @@ class Orchestrator:
             finally:
                 self._unlock(conn, dataset)
 
-    def _db_coverage(self, conn: Any, spec: DatasetSpec, trade_date: date, adjust: str, expected: int) -> float:
-        """覆盖率以**库内当日已落库行数**为口径（增量波次只写少量缺口，不能按本波 bars 计算）。"""
+    def _db_coverage(
+        self,
+        conn: Any,
+        spec: DatasetSpec,
+        trade_date: date,
+        adjust: str,
+        expected: int,
+        codes: Sequence[str] | None = None,
+    ) -> float:
+        """覆盖率以**库内当日已落库行数**为口径（增量波次只写少量缺口，不能按本波 bars 计算）。
+
+        codes 非空时只统计**当前 universe** 内的标的（backlog 对账口径）：
+        旧 universe 遗留在表里的其它 symbol 不得把覆盖率抬高，避免把真正缺的
+        当前标的误判为已补齐。
+        """
         if not expected:
+            return 0.0
+        keys = list(dict.fromkeys(codes)) if codes is not None else None
+        if keys is not None and not keys:
             return 0.0
         with conn.cursor() as cur:
             if spec.value_kind == "nav":
-                cur.execute(
-                    "SELECT count(DISTINCT fund_code) FROM bp_fund_nav_daily WHERE trade_date = %s",
-                    (trade_date,),
-                )
+                if keys is None:
+                    cur.execute(
+                        "SELECT count(DISTINCT fund_code) FROM bp_fund_nav_daily WHERE trade_date = %s",
+                        (trade_date,),
+                    )
+                else:
+                    cur.execute(
+                        "SELECT count(DISTINCT fund_code) FROM bp_fund_nav_daily"
+                        " WHERE trade_date = %s AND fund_code = ANY(%s)",
+                        (trade_date, keys),
+                    )
             else:
-                cur.execute(
-                    f"SELECT count(DISTINCT {spec.key_column}) FROM {spec.table}"
-                    " WHERE trade_date = %s AND adjust = %s",
-                    (trade_date, adjust),
-                )
+                if keys is None:
+                    cur.execute(
+                        f"SELECT count(DISTINCT {spec.key_column}) FROM {spec.table}"
+                        " WHERE trade_date = %s AND adjust = %s",
+                        (trade_date, adjust),
+                    )
+                else:
+                    cur.execute(
+                        f"SELECT count(DISTINCT {spec.key_column}) FROM {spec.table}"
+                        " WHERE trade_date = %s AND adjust = %s"
+                        f" AND {spec.key_column} = ANY(%s)",
+                        (trade_date, adjust, keys),
+                    )
             row = cur.fetchone()
         achieved = int(row[0]) if row and row[0] is not None else 0
         return min(1.0, achieved / expected)
@@ -286,7 +339,9 @@ class Orchestrator:
         if spec.value_kind == "nav":
             written = write_navs(conn, rows) if self._write_enabled else 0
             coverage = (
-                self._db_coverage(conn, spec, trade_date, result.adjust, expected)
+                self._db_coverage(
+                    conn, spec, trade_date, result.adjust, expected, codes=codes
+                )
                 if self._write_enabled
                 else 0.0
             )
@@ -305,7 +360,7 @@ class Orchestrator:
                 # evaluate 的 coverage issue 反映的是本波取数比例，不是库内实况，剔除。
                 wave_issues = [issue for issue in report.issues if issue.kind != "coverage"]
                 coverage = self._db_coverage(
-                    conn, spec, trade_date, result.adjust, expected
+                    conn, spec, trade_date, result.adjust, expected, codes=codes
                 )
                 # 追平判定只看库内覆盖率：被质量门拒绝的行已不入库、且 issue 已落库审计，
                 # 不应因个别源脏行把整个 dataset 永远卡在未追平。
@@ -363,6 +418,7 @@ class Orchestrator:
                 )
         conn.commit()
         self._maybe_refresh_legacy_clean(conn, spec, now, result, report)
+        self._record_dataset_freshness(conn, spec, trade_date, result, report)
         return result
 
     def _maybe_refresh_legacy_clean(
@@ -398,6 +454,93 @@ class Orchestrator:
             self._legacy_clean_last = now
         except Exception:  # noqa: BLE001
             logger.warning("旧链清洗刷新失败（下一轮再试）", exc_info=True)
+
+    def _record_dataset_freshness(
+        self,
+        conn: Any,
+        spec: DatasetSpec,
+        trade_date: date,
+        result: WaveResult,
+        report: QualityReport,
+    ) -> None:
+        """数据集收尾同步全局新鲜度（P0-6）。
+
+        只记录新链 4 类（旧链 index_quotes 由 scripts/index_quotes_free.py 负责）；
+        未追平波次写 status=lagging（as_of 仍取本轮目标日），追平写 ok。
+        失败只告警：新鲜度是增强信号，不得影响 ETL 波次结果。
+        """
+        if not self._write_enabled:
+            return
+        mapping = {"a_stock": "a_stock", "hk_stock": "hk_stock", "etf": "etf", "fund_nav": "fund_nav"}
+        key = mapping.get(spec.name)
+        if key is None:
+            return
+        try:
+            from bp_api.freshness import record_freshness  # noqa: PLC0415 - 惰性导入
+
+            record_freshness(
+                conn,
+                key,
+                trade_date,
+                status="ok" if report.ok else "lagging",
+                source="bp_etl",
+                meta={
+                    "dataset": spec.name,
+                    "adjust": result.adjust,
+                    "coverage": round(float(report.coverage or 0.0), 6),
+                    "written": int(result.written or 0),
+                    "wave": result.wave,
+                },
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("写入数据新鲜度失败 dataset=%s", spec.name, exc_info=True)
+
+    def _record_backlog_expired(
+        self,
+        conn: Any,
+        dataset: str,
+        adjust: str,
+        trade_date: date,
+        age_days: int,
+        dropped: int,
+    ) -> None:
+        """显式开启超期丢弃时写质量/健康告警（绝不静默丢数）。
+
+        - `bp_etl_quality_issue` 落一行 kind=backlog_expired/severity=error，
+          管理端 /api/admin/data-health/issues 可见；
+        - 同时 warning 日志（进程日志告警）。
+        写告警失败只记日志，不阻断 backlog 清理（清理本身由调用方提交）。
+        """
+        logger.warning(
+            "backlog 历史日期超期放弃 %s/%s %s (age=%dd, max=%dd, dropped=%d) —— "
+            "已写 bp_etl_quality_issue 告警",
+            dataset, adjust, trade_date, age_days,
+            self._backlog_max_age_days or 0, dropped,
+        )
+        try:
+            record_issues(
+                conn,
+                [
+                    QualityIssue(
+                        dataset=dataset,
+                        kind="backlog_expired",
+                        severity="error",
+                        trade_date=trade_date,
+                        detail={
+                            "adjust": adjust,
+                            "age_days": age_days,
+                            "max_age_days": self._backlog_max_age_days,
+                            "dropped_rows": dropped,
+                            "reason": "BP_ETL_BACKLOG_MAX_AGE_DAYS 显式开启，超期日期不再重放",
+                        },
+                    )
+                ],
+            )
+        except Exception:  # noqa: BLE001 - 告警失败不得阻断 backlog 清理
+            logger.warning(
+                "写入 backlog 超期告警失败 dataset=%s/%s %s",
+                dataset, adjust, trade_date, exc_info=True,
+            )
 
     def _record_source_health(
         self, conn: Any, spec: DatasetSpec, trade_date: date, coverage: float
@@ -485,8 +628,31 @@ class Orchestrator:
                 for adjust in keys:
                     if limit is not None and len(outcomes) >= limit:
                         break
+                    # --- 对账 1/3：以「当前 universe」收敛旧 universe 的 backlog symbol 行 ---
+                    # 旧链 universe 口径收敛（9,600 -> 可交易子集）后，旧 universe 的
+                    # symbol 行永远不会被重放（9,434/9,496 条空转的根因），每轮先按
+                    # 当前 universe 删除这些行；universe 为空（异常态）时不动 backlog。
+                    try:
+                        codes = runner.universe(conn)
+                    except Exception:  # noqa: BLE001 - universe 异常不影响其它 dataset
+                        logger.warning("backlog 对账取 universe 失败 dataset=%s", name, exc_info=True)
+                        codes = []
+                    expected = len(codes)
+                    if codes:
+                        try:
+                            pruned = prune_backlog_symbols(conn, name, adjust, codes)
+                        except Exception:  # noqa: BLE001
+                            logger.warning("backlog 旧 universe 清理失败 dataset=%s", name, exc_info=True)
+                            pruned = 0
+                        if pruned:
+                            conn.commit()
+                            logger.info(
+                                "backlog 旧 universe 条目收敛 %s/%s: 删除 %d 条（当前 universe=%d）",
+                                name, adjust, pruned, len(codes),
+                            )
+                    # --- 对账 2/3：逐 backlog trade_date 按当前 universe 覆盖率判定 ---
                     # 关键：以 backlog 自身 trade_date 重放（此前误用"当前确认日"，
-                    # 导致历史缺口条目永不清理、每小时重复空跑）
+                    # 导致历史缺口条目永不清理、每小时重复空跑）。
                     backlog_dates = due_backlog_dates(conn, name, adjust, now, limit=5)
                     for trade_date in backlog_dates:
                         if limit is not None and len(outcomes) >= limit:
@@ -494,15 +660,10 @@ class Orchestrator:
                         # 先按库内覆盖对账：历史缺口可能已被回退/因子路径补齐，
                         # 无需再发慢请求，直接清 backlog（避免每小时重复空跑）。
                         try:
-                            codes = runner.universe(conn)
-                            expected = len(codes)
-                            expected_fn = getattr(runner, "expected_count", None)
-                            if callable(expected_fn):
-                                try:
-                                    expected = int(expected_fn(conn, trade_date, adjust) or expected)
-                                except TypeError:
-                                    expected = int(expected_fn(conn, trade_date) or expected)
-                            coverage = self._db_coverage(conn, runner.spec, trade_date, adjust, expected)
+                            coverage = self._db_coverage(
+                                conn, runner.spec, trade_date, adjust, expected,
+                                codes=codes or None,
+                            )
                         except Exception:  # noqa: BLE001
                             coverage = 0.0
                         if coverage >= runner.spec.coverage_min:
@@ -512,6 +673,21 @@ class Orchestrator:
                                 "backlog 对账已达标，清理 %s/%s %s (%d 条, coverage=%.4f)",
                                 name, adjust, trade_date, cleared, coverage,
                             )
+                            continue
+                        # --- 对账 3/3：**仅显式开启**时才放弃超期历史日期 ---
+                        # 默认（None）不丢弃：长假/源故障 >5 天的真实缺口会继续跨日
+                        # 无限重试，直到补齐，绝不静默留下永久空洞。显式开启时丢弃
+                        # 必须落 bp_etl_quality_issue/health 告警，可审计。
+                        age_days = (now.date() - trade_date).days
+                        if (
+                            self._backlog_max_age_days is not None
+                            and age_days > self._backlog_max_age_days
+                        ):
+                            dropped = clear_backlog(conn, name, trade_date, adjust)
+                            self._record_backlog_expired(
+                                conn, name, adjust, trade_date, age_days, dropped
+                            )
+                            conn.commit()
                             continue
                         outcomes.append(
                             self.run_wave(

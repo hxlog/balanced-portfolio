@@ -211,3 +211,109 @@ def clear_backlog(
     with conn.cursor() as cur:
         cur.execute(sql, params)
         return int(cur.rowcount or 0)
+
+
+# ---------------------------------------------------------------------------
+# backlog 对账/清理（旧 universe 的历史空转条目收敛）
+# ---------------------------------------------------------------------------
+def prune_backlog_symbols(
+    conn,
+    dataset: str,
+    adjust: str,
+    keep_symbols: Sequence[str],
+    *,
+    trade_date: date | None = None,
+) -> int:
+    """删除 backlog 中不在当前 universe 的 symbol 行（旧 universe 遗留条目）。
+
+    背景：legacy 旧链 universe 经历过口径收敛（9,600 -> ~747 可交易），
+    旧 universe 的 backlog symbol 行永远不会被重放，导致 backlog 长期 >30k 且
+    每小时空转。对账时以**当前 universe** 为准，把这些行直接收敛掉。
+
+    keep_symbols 为空表示当前 universe 为空（异常态）：此时不删除任何行，返回 0，
+    避免把 backlog 全清了却无任何数据。
+    返回删除行数。
+    """
+    keep = list(dict.fromkeys(keep_symbols))
+    if not keep:
+        return 0
+    sql = (
+        "DELETE FROM bp_etl_backlog WHERE dataset=%s AND adjust=%s"
+        " AND scope='symbol' AND NOT (symbol = ANY(%s))"
+    )
+    params: list = [dataset, adjust, keep]
+    if trade_date is not None:
+        sql += " AND trade_date = %s"
+        params.append(trade_date)
+    with conn.cursor() as cur:
+        cur.execute(sql, tuple(params))
+        return int(cur.rowcount or 0)
+
+
+def purge_backlog_dates(
+    conn,
+    dataset: str,
+    adjust: str,
+    trade_dates: Sequence[date],
+) -> int:
+    """按日期整批删除 backlog（一次性清理旧口径历史条目用；调用方需先 dry-run）。"""
+    dates = list(dict.fromkeys(trade_dates))
+    if not dates:
+        return 0
+    sql = (
+        "DELETE FROM bp_etl_backlog WHERE dataset=%s AND adjust=%s"
+        " AND trade_date = ANY(%s)"
+    )
+    with conn.cursor() as cur:
+        cur.execute(sql, (dataset, adjust, dates))
+        return int(cur.rowcount or 0)
+
+
+def purge_backlog_before(
+    conn,
+    dataset: str,
+    adjust: str,
+    before_date: date,
+) -> int:
+    """删除早于 before_date 的 backlog（超期历史日期，避免永久卡住当日 SLA）。"""
+    sql = (
+        "DELETE FROM bp_etl_backlog WHERE dataset=%s AND adjust=%s"
+        " AND trade_date < %s"
+    )
+    with conn.cursor() as cur:
+        cur.execute(sql, (dataset, adjust, before_date))
+        return int(cur.rowcount or 0)
+
+
+def backlog_summary(
+    conn, dataset: str | None = None, adjust: str | None = None
+) -> list[dict]:
+    """backlog 分布（供 CLI/巡检脚本输出；只读）。"""
+    sql = (
+        "SELECT dataset, adjust, trade_date, count(*) AS pending,"
+        " count(*) FILTER (WHERE scope='dataset') AS dataset_scope"
+        " FROM bp_etl_backlog"
+    )
+    params: list = []
+    conditions: list[str] = []
+    if dataset:
+        conditions.append("dataset = %s")
+        params.append(dataset)
+    if adjust:
+        conditions.append("adjust = %s")
+        params.append(adjust)
+    if conditions:
+        sql += " WHERE " + " AND ".join(conditions)
+    sql += " GROUP BY dataset, adjust, trade_date ORDER BY trade_date DESC, dataset, adjust"
+    with conn.cursor() as cur:
+        cur.execute(sql, tuple(params))
+        return [
+            {
+                "dataset": row[0],
+                "adjust": row[1],
+                "trade_date": row[2],
+                "pending": int(row[3]),
+                "dataset_scope": int(row[4]),
+            }
+            for row in cur.fetchall()
+        ]

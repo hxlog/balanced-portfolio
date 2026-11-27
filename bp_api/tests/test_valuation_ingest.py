@@ -7,42 +7,19 @@
 from __future__ import annotations
 
 from datetime import date
-from pathlib import Path
 
 import psycopg
 import pytest
 
+from bp_api.tests._mig_db import connect_mig_test
 from bp_ingest.valuation_ingest import run_valuation_ingest
 
 TEST_PREFIX = "T3ING"
-TEST_DB = {
-    "host": "81.71.158.239",
-    "port": 5432,
-    "dbname": "bp_mig_test",
-    "user": "postgres",
-}
-
-
-def _password() -> str:
-    env_path = Path(__file__).resolve().parents[2] / ".env"
-    if not env_path.exists():
-        pytest.skip(".env 不存在，跳过 bp_mig_test 集成测试")
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        if line.startswith("PGPASSWORD="):
-            return line.split("=", 1)[1].strip()
-    pytest.skip("PGPASSWORD 不在 .env 中，跳过 bp_mig_test 集成测试")
 
 
 def _connect() -> psycopg.Connection:
-    try:
-        return psycopg.connect(
-            **TEST_DB,
-            password=_password(),
-            connect_timeout=8,
-            autocommit=False,
-        )
-    except psycopg.Error as exc:  # pragma: no cover - 环境不可达时走 skip
-        pytest.skip(f"bp_mig_test 不可达: {exc}")
+    # P1-4：显式 BP_MIG_TEST_DSN / BP_MIG_TEST=1 才连接，绝不读 .env / 硬编码 host
+    return connect_mig_test()
 
 
 def _purge(conn: psycopg.Connection) -> None:

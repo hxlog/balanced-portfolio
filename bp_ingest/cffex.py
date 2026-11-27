@@ -768,6 +768,7 @@ def cffex_sync(
                 logger.warning("失效 CFFEX 看板缓存失败: %s", exc)
         else:
             logger.info("无新数据, 已是最新")
+        _record_cffex_freshness(conn)
         return stats
 
     conn.commit()
@@ -803,7 +804,32 @@ def cffex_sync(
 
     logger.info("=== 同步完成: contracts=%d premium_days=%d ===",
                 stats["contracts"], stats["premium_days"])
+    _record_cffex_freshness(conn)
     return stats
+
+
+def _record_cffex_freshness(conn: psycopg.Connection) -> None:
+    """同步收尾写入全局数据新鲜度（P0-6）：cffex 类，as_of=合约表最大交易日。
+
+    失败只告警：新鲜度是增强信号，不得让 CFFEX 同步失败/回滚。
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT max(trade_date) FROM bp_cffex_contract_daily")
+            row = cur.fetchone()
+        as_of = row[0] if row and row[0] is not None else None
+        from bp_api.freshness import record_freshness  # noqa: PLC0415 - 惰性导入
+
+        record_freshness(
+            conn,
+            "cffex",
+            as_of,
+            source="bp_ingest.cffex",
+            meta={"varieties": len(CFFEX_VARIETIES)},
+        )
+        conn.commit()
+    except Exception:  # noqa: BLE001
+        logger.warning("写入 CFFEX 数据新鲜度失败（不影响同步结果）", exc_info=True)
 
 
 # ======================================================================

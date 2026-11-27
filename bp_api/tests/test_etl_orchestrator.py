@@ -147,7 +147,10 @@ def _orchestrator(conn: FakeConn, runner: FakeRunner, *, now: datetime, lock: bo
     monkeypatch_attr(orch, "_try_lock", lambda c, d: lock)
     monkeypatch_attr(orch, "_unlock", lambda c, d: None)
 
-    def _db_coverage(conn: object, spec: object, trade_date: object, adjust: str, expected: int) -> float:
+    def _db_coverage(
+        conn: object, spec: object, trade_date: object, adjust: str, expected: int,
+        codes: object = None,
+    ) -> float:
         if not expected:
             return 0.0
         bars = runner.bars_by_adjust.get(adjust, [])

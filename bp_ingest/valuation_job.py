@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 from .config import AppConfig
 from .db import connect
-from .valuation_ingest import run_valuation_ingest
+from .valuation_ingest import FALLBACK_INDEX_CODES, run_valuation_ingest
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +39,14 @@ def theoretical_latest_trade_date(conn, now: datetime | None = None) -> date | N
     return row[0] if row else None
 
 
-def coverage(conn, as_of: date) -> tuple[int, int]:
-    """(已有主口径的跟踪指数数, 跟踪指数总数)。"""
+def coverage(conn, as_of: date) -> tuple[int, int, bool]:
+    """(已有主口径的跟踪指数数, 跟踪指数总数, fallback 指数是否缺当日数据)。
+
+    平安估值 universe 不覆盖的 fallback 指数（中证全指 000985 等）不参与 521 只的
+    is_tracked 主口径覆盖率，单独判定：只要它在 master 里 is_tracked 但当日没有
+    主口径行，门控就视为未完备，触发下一轮抓取（由 valuation_ingest 的中证官网
+    fallback 补数），否则 521/522 已 >= 99% 会让门控提前跳过、000985 永远补不上。
+    """
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM bp_index_master WHERE is_tracked")
         total = int(cur.fetchone()[0])
@@ -54,7 +60,21 @@ def coverage(conn, as_of: date) -> tuple[int, int]:
             (as_of,),
         )
         done = int(cur.fetchone()[0])
-    return done, total
+        cur.execute(
+            "SELECT index_code FROM bp_index_master"
+            " WHERE is_tracked AND index_code = ANY(%s)",
+            (list(FALLBACK_INDEX_CODES),),
+        )
+        required = [row[0] for row in cur.fetchall()]
+        fallback_missing = False
+        if required:
+            cur.execute(
+                "SELECT count(DISTINCT index_code) FROM bp_index_valuation_daily"
+                " WHERE trade_date = %s AND is_primary AND index_code = ANY(%s)",
+                (as_of, required),
+            )
+            fallback_missing = int(cur.fetchone()[0]) < len(required)
+    return done, total, fallback_missing
 
 
 def gate(app: AppConfig, now: datetime | None = None) -> dict:
@@ -65,9 +85,9 @@ def gate(app: AppConfig, now: datetime | None = None) -> dict:
         if as_of is None:
             logger.warning("估值门控：无法确定理论最新交易日")
             return {"status": "no_calendar"}
-        done, total = coverage(conn, as_of)
+        done, total, fallback_missing = coverage(conn, as_of)
         ratio = (done / total) if total else 0.0
-        if total and ratio >= COVERAGE_TARGET:
+        if total and ratio >= COVERAGE_TARGET and not fallback_missing:
             logger.info("估值门控：%s 已完备 %d/%d (%.1f%%)", as_of, done, total, ratio * 100)
             return {"status": "complete", "as_of": as_of, "done": done, "total": total}
 

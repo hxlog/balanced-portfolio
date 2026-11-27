@@ -249,3 +249,99 @@ python -m pytest bp_api/tests/test_basket.py -q
 空窗口/单行窗口、lookback 只取尾部、风险预算比例与非法预算、最小方差/最大夏普的
 经济含义、回测日汇总一致性、无未来函数、再平衡带语义、换手率与逐资产贡献、
 成分逐步纳入、两个路由的 400/404/权限依赖与 schema 校验。
+
+## 6. 持久化与示例篮子（ddl/70 + ddl/78）
+
+> 实现：`bp_api/baskets.py`（CRUD + 服务端重算）、`bp_api/basket.py:build_latest_result`（重算核心，
+> 与 `POST /api/basket/backtest` 同一引擎）、`ddl/78_basket_demo.sql`（is_demo/display_order）、
+> `scripts/seed_demo_basket.py`（12 只 A 股示例，幂等）。
+> 前端客户端：`web/lib/basket-api.ts` / `web/lib/basket-demo.ts`（字段与权限口径需保持一致）。
+
+### 6.1 示例篮子语义（与 bp_portfolio demo 组合一致）
+
+| 操作 | 匿名 | 登录普通用户 | 管理员 |
+|---|---|---|---|
+| 列表示例（is_demo=TRUE） | ✅ | ✅ | ✅ |
+| 列表自己的非示例篮子 | — | ✅ | ✅ |
+| 列表全部篮子 | — | — | ✅ |
+| 查看示例详情 | ✅ | ✅ | ✅ |
+| 查看他人私有篮子 | 403 | 403 | ✅ |
+| 复制（POST /copy） | 401 | ✅ 得到自己的非示例副本 | ✅ |
+| 编辑/删除示例 | 403 | 403（即使 owner 也不行） | ✅ |
+| 编辑/删除自己的非示例 | — | ✅ | ✅ |
+| 服务端重算（POST /recompute） | 401 | 403 | ✅ |
+
+- `GET /api/baskets` 支持可选 `?scope=demo|mine`：匿名 scope=demo 返回示例、scope=mine 返回空数组
+  （不 401，便于前端并行拉取合并）；登录用户不传 scope = 示例 + 自己的（兼容旧行为）。
+- 列表行新增 `is_demo`（bool）与 `display_order`（int|null）；示例按 display_order 升序
+  （NULLS LAST）、自己按 updated_at 倒序，示例恒排在前。
+- 示例篮子的 `latest_result` **只能由服务端 recompute 生成**：PATCH 带 latest_result 会 400；
+  非示例篮子保持原有行为（保存时可直接带 latest_result 摘要）。
+- `POST /api/baskets/{id}/recompute`（仅 `require_super_admin`）：同步读取 `bp_quote_clean`
+  重算，写 latest_result 并刷新 updated_at；数据缺失返回 404、参数/方法非法返回 400，不写库、不伪造。
+
+latest_result 结构（由 `build_latest_result` 生成；前端列表摘要读顶层
+`annualized_return / max_drawdown / sharpe`）：
+
+~~~json
+{
+  "method": "risk_parity",
+  "as_of": "2026-11-27",
+  "computed_at": "2026-11-27T21:10:00+08:00",
+  "effective_start": "2021-02-05",
+  "lookback_days": 156,
+  "rebalance_band": 0.05,
+  "risk_free": 0.0,
+  "n_obs": 1400,
+  "annualized_return": 0.141,
+  "annualized_vol": 0.21,
+  "max_drawdown": -0.32,
+  "sharpe": 0.55,
+  "turnover": 0.4,
+  "turnover_total": 2.3,
+  "rebalance_count": 12,
+  "assets": [{"symbol": "600519", "source": "etl_a_stock"}],
+  "weights": [{"symbol": "600519", "source": "etl_a_stock", "weight": 0.08}],
+  "nav": [{"trade_date": "2021-02-05", "nav": 1.0, "ret": 0.0}]
+}
+~~~
+
+### 6.2 12 只 A 股示例（seed）
+
+`scripts/seed_demo_basket.py` 幂等写入「A股核心资产 12 只（示例）」（is_demo=TRUE、display_order=0、
+owner_user_id=NULL、method=risk_parity、默认参数 lookback_days=156 / rebalance_band=0.05 / risk_free=0）：
+
+贵州茅台 600519、宁德时代 300750、招商银行 600036、中国平安 601318、五粮液 000858、美的集团 000333、
+长江电力 600900、紫金矿业 601899、比亚迪 002594、恒瑞医药 600276、隆基绿能 601012、海天味业 603288
+（source=`etl_a_stock`，后复权 hfq，2020-11 起）。
+
+~~~bash
+# 前置：ddl/78（已部署环境）
+psql -h <host> -U postgres -d balanced_portfolio -f ddl/78_basket_demo.sql
+
+# seed（默认随后用服务端同一实现重算 latest_result，绝不伪造）
+python scripts/seed_demo_basket.py
+
+# 只 seed、稍后由管理员调 recompute
+python scripts/seed_demo_basket.py --no-recompute
+# 只打印现状不写库
+python scripts/seed_demo_basket.py --dry-run
+~~~
+
+幂等：按 (is_demo=TRUE, name) 查找，存在则更新定义（assets/params/method/description/display_order），
+重复执行不产生重复行；缺失 `bp_index_config(etl_a_stock)` 资产或缺失 ddl/78 列时会给出明确报错。
+
+### 6.3 测试与迁移
+
+~~~bash
+python -m pytest bp_api/tests/test_baskets_api.py bp_api/tests/test_basket.py -q
+~~~
+
+覆盖：_can_view/_can_edit 权限矩阵、匿名只读示例、登录示例+自己、admin 全部、scope 筛选、
+复制需登录且得到非示例副本、示例仅 admin 可编辑/删除、PATCH latest_result 防伪造、
+recompute 写 latest_result（成功/404/400 分支与依赖声明）、ddl/78 幂等、seed 定义与幂等。
+
+迁移（已部署环境只跑未应用的编号；全新环境按 schema.sql 基线流程）：
+`ddl/78_basket_demo.sql`（2 × ADD COLUMN IF NOT EXISTS + 1 × CREATE INDEX IF NOT EXISTS，
+可重复执行）。`deploy/deploy.sh` 不会执行迁移，需手动执行后再重启 bp-api / bp-web。
+

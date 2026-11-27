@@ -128,7 +128,7 @@ def test_infinite_catch_up_across_rounds(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(orch, "_unlock", lambda c, d: None)
     monkeypatch.setattr(
         orch, "_db_coverage",
-        lambda conn, spec, td, adjust, expected: (
+        lambda conn, spec, td, adjust, expected, codes=None: (
             min(1.0, len(getattr(runner, "last_rows", [])) / expected) if expected else 0.0
         ),
     )

@@ -174,6 +174,11 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", type=date.fromisoformat, default=None)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument(
+        "--reconcile-backlog",
+        action="store_true",
+        help="同时按当前 universe 收敛 bp_etl_backlog 的旧 universe symbol 行（dry-run 只统计）",
+    )
     args = ap.parse_args()
     conn = connect()
     td = args.date or trade_date(conn, date.today())
@@ -197,9 +202,14 @@ def main() -> int:
                 print("FIXED", symbol, source, flush=True)
         except Exception as exc:  # noqa: BLE001
             print("FAIL", symbol, source, type(exc).__name__, exc, flush=True)
+    # dry-run 必须严格只读：不写行情、不重建 clean、不刷新状态、不 record_freshness，
+    # 也绝不 commit（以下非 dry-run 分支才允许写库）。
     fixed_hkd = False if args.dry_run else fill_hkd(conn, td)
     if args.dry_run:
         print("WOULD_FIX_HKDCNY", flush=True)
+        if args.reconcile_backlog:
+            _reconcile_backlog(conn, dry_run=True)
+        conn.close()
         return 0
     symbols = sorted({s for s, _ in fixed})
     if fixed_hkd:
@@ -217,8 +227,67 @@ def main() -> int:
         print("CLEAN", len(symbols), written, "QUEUED", [q["portfolio_id"] for q in queued], flush=True)
     else:
         print("NO_GAP", flush=True)
+    if args.reconcile_backlog:
+        _reconcile_backlog(conn, dry_run=args.dry_run)
+    _record_freshness(conn)
     conn.close()
     return 0
+
+
+def _reconcile_backlog(conn, *, dry_run: bool) -> None:
+    """按当前 legacy universe 收敛 backlog 旧 symbol 行（11-25/26 的 9,434/9,496 空转）。
+
+    当前 universe 口径与 bp_etl LegacyIndexRunner.universe 对齐；dry-run 只打印计数，
+    不影响现有 backlog。完整的一键对账（含 clean 重建）见 scripts/repair_quote_clean.py。
+    """
+    from bp_etl.health import prune_backlog_symbols
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT DISTINCT symbol FROM bp_index_config"
+            " WHERE is_deleted=0 AND managed_by IS NULL ORDER BY symbol"
+        )
+        universe = [row[0] for row in cur.fetchall()]
+    if not universe:
+        print("BACKLOG_SKIP empty_universe", flush=True)
+        return
+    total = 0
+    for adjust in ("bfq", "hfq"):
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT count(*) FROM bp_etl_backlog"
+                " WHERE dataset='legacy_index' AND adjust=%s"
+                " AND scope='symbol' AND NOT (symbol = ANY(%s))",
+                (adjust, universe),
+            )
+            pending = int(cur.fetchone()[0] or 0)
+        total += pending
+        print("BACKLOG_STALE", adjust, pending, "dry_run" if dry_run else "apply", flush=True)
+        if not dry_run and pending:
+            removed = prune_backlog_symbols(conn, "legacy_index", adjust, universe)
+            conn.commit()
+            print("BACKLOG_PRUNED", adjust, removed, flush=True)
+    print("BACKLOG_STALE_TOTAL", total, flush=True)
+
+
+def _record_freshness(conn) -> None:
+    """回写 index_quotes 全局新鲜度（按库内 bfq 行情最大交易日）；失败不阻断。"""
+    try:
+        from bp_api.freshness import record_freshness
+
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT max(q.trade_date) FROM bp_index_quote_daily q"
+                " JOIN bp_index_config c ON c.symbol=q.symbol AND c.is_deleted=0"
+                " WHERE q.adjust='bfq' AND c.category='index' AND q.trade_date >= current_date - 30"
+            )
+            row = cur.fetchone()
+        as_of = row[0] if row else None
+        if as_of is not None:
+            record_freshness(conn, "index_quotes", as_of, source="scripts/repair_quote_gaps.py")
+            conn.commit()
+    except Exception:  # noqa: BLE001 - 新鲜度增强信号，失败不影响补数
+        print("FRESHNESS_SKIP", flush=True)
 
 
 if __name__ == "__main__":
