@@ -333,9 +333,17 @@ class BasketOptimizeIn(BaseModel):
 
 
 class BasketBacktestIn(BasketOptimizeIn):
-    """POST /api/basket/backtest 请求体：优化参数 + 再平衡漂移带。"""
+    """POST /api/basket/backtest 请求体：优化参数 + 再平衡漂移带 + 交易成本。
+
+    交易成本默认与 `quant/basket.py` 的 DEFAULT_* 常量一致（佣金 0.03%、滑点 0.10%、
+    卖出印花税 0.10%），保证回测/服务端重算/前端展示都是「扣费后」口径。
+    """
 
     rebalance_band: float = Field(default=0.05, ge=0.0, le=1.0)
+    # 手续费/滑点（双边，按换手）；印花税（卖出单边）。
+    fee_rate: float = Field(default=0.0003, ge=0.0, le=0.1)
+    slippage_rate: float = Field(default=0.001, ge=0.0, le=0.1)
+    stamp_duty_rate: float = Field(default=0.001, ge=0.0, le=0.01)
 
 
 # ---------------------------------------------------------------------------

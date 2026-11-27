@@ -238,3 +238,61 @@ def register_routes(app: FastAPI) -> None:
             return {"data": None, "meta": {}, "error": {"code": "invalid_dataset", "message": payload.dataset}}
         background.add_task(_run_replay, payload.dataset, payload.date, payload.adjust)
         return {"data": {"accepted": True, "dataset": payload.dataset}, "meta": {}, "error": None}
+
+    # ------------------------------------------------------------------
+    # 公开只读：每日 09:30 数据体检结果（scripts/daily_data_audit.py 写入）
+    # 与 /api/v1/market/data-freshness 一样匿名可读：全局数据健康状态不是敏感信息。
+    # ------------------------------------------------------------------
+    @app.get("/api/v1/market/data-health")
+    def market_data_health(
+        _user: auth.UserContext | None = Depends(auth.optional_user),
+    ) -> dict:
+        """最近一次每日体检（bp_data_audit_daily）：逐条 metric 的 value/threshold/status。"""
+        try:
+            with db.get_conn() as conn, conn.cursor() as cur:
+                cur.execute("SELECT max(stat_date) FROM bp_data_audit_daily")
+                row = cur.fetchone()
+                stat_date = row[0] if row else None
+                checks: list[dict[str, Any]] = []
+                if stat_date is not None:
+                    cur.execute(
+                        "SELECT dataset, metric, value, threshold, status, detail, created_at"
+                        " FROM bp_data_audit_daily WHERE stat_date = %s"
+                        " ORDER BY dataset, metric",
+                        (stat_date,),
+                    )
+                    columns = [desc.name for desc in cur.description]
+                    for record in cur.fetchall():
+                        item = dict(zip(columns, record))
+                        for key in ("value", "threshold"):
+                            item[key] = (
+                                float(item[key]) if item.get(key) is not None else None
+                            )
+                        item["stat_date"] = _iso(stat_date)
+                        item["created_at"] = _iso(item.get("created_at"))
+                        checks.append(item)
+        except Exception:  # noqa: BLE001 - 迁移未应用/表缺失时返回不可用而不是 500
+            logger.warning("读取 bp_data_audit_daily 失败（ddl/82 可能未应用）", exc_info=True)
+            return {
+                "data": None,
+                "meta": {"available": False, "reason": "audit_table_unavailable"},
+                "error": None,
+            }
+        summary = {
+            "ok": sum(1 for item in checks if item.get("status") == "ok"),
+            "warn": sum(1 for item in checks if item.get("status") == "warn"),
+            "error": sum(1 for item in checks if item.get("status") == "error"),
+            "total": len(checks),
+        }
+        return {
+            "data": {
+                "stat_date": _iso(stat_date) if stat_date is not None else None,
+                "checks": checks,
+            },
+            "meta": {
+                "available": stat_date is not None,
+                "summary": summary,
+                "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            },
+            "error": None,
+        }

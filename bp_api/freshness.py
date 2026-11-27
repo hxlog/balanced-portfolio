@@ -84,6 +84,105 @@ EXTRA_LABELS: dict[str, str] = {key: spec.label for key, spec in EXTRA_SPECS.ite
 
 STATUS_VALUES = frozenset({"ok", "lagging", "stale", "missing", "unavailable", "error"})
 
+#: 状态严重度：读取侧取「写入方状态 / 按应到日重算状态 / 覆盖率判定」三者中最严重者。
+#: 覆盖不足时写入方可能仍报 ok（如指数行情仅补了 59% 的跟踪指数），不能只按 lag 判绿。
+STATUS_SEVERITY: dict[str, int] = {
+    "ok": 0, "lagging": 1, "stale": 2, "missing": 3, "unavailable": 4, "error": 5,
+}
+
+#: 覆盖率达标线：低于该比例即使 as_of 追平也应显示 lagging（用户反馈 P0）。
+COVERAGE_OK_MIN = 0.99
+
+#: meta 里可能出现的覆盖率字段（各写方历史口径不同，按优先级尝试）。
+_COVERAGE_RATIO_KEYS = ("ratio", "coverage")
+_COVERAGE_TOTAL_KEYS = ("total", "universe")
+_COVERAGE_COVERED_KEYS = ("covered", "db_covered")
+
+
+def worst_status(*statuses: Optional[str]) -> str:
+    """返回若干状态中最严重的一个（忽略 None/非法值；全空按 ok）。"""
+    candidates = [item for item in statuses if item in STATUS_SEVERITY]
+    if not candidates:
+        return "ok"
+    return max(candidates, key=lambda item: STATUS_SEVERITY[item])
+
+
+def _iso_cst(value: Any) -> Optional[str]:
+    """日期/时间 -> Asia/Shanghai(+08:00) ISO 字符串。
+
+    - datetime：aware 转 CN；naive 视为已是 CN（DB timestamptz 通常 aware）。
+    - date：只回日期字符串（date 无时区）。
+    - 其它：原样转字符串（None 保留）。
+    """
+    if value is None:
+        return None
+    if isinstance(value, dt.datetime):
+        moment = value.astimezone(CN) if value.tzinfo is not None else value.replace(tzinfo=CN)
+        return moment.isoformat()
+    if isinstance(value, dt.date):
+        return value.isoformat()
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return text
+        # ISO datetime 字符串（如写方把 meta.completed_at 存成 "…+00:00"）同样转 +08:00；
+        # 纯日期字符串保持日期语义，不补成午夜时间。
+        if "T" in text or " " in text:
+            try:
+                parsed = dt.datetime.fromisoformat(text)
+            except ValueError:
+                return text
+            moment = (
+                parsed.astimezone(CN)
+                if parsed.tzinfo is not None
+                else parsed.replace(tzinfo=CN)
+            )
+            return moment.isoformat()
+        return text
+    return str(value)
+
+
+def meta_coverage(meta: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """从 bp_data_freshness.meta 提取覆盖率 {covered,total,ratio}（缺失返回 None）。"""
+    if not isinstance(meta, dict):
+        return None
+    ratio: Optional[float] = None
+    for key in _COVERAGE_RATIO_KEYS:
+        value = meta.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            ratio = float(value)
+            break
+    total: Optional[int] = None
+    for key in _COVERAGE_TOTAL_KEYS:
+        value = meta.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            total = int(value)
+            break
+    covered: Optional[int] = None
+    for key in _COVERAGE_COVERED_KEYS:
+        value = meta.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            covered = int(value)
+            break
+    if ratio is None and covered is not None and total:
+        ratio = covered / total
+    if covered is None and ratio is not None and total:
+        covered = int(round(ratio * total))
+    if ratio is None and covered is None and total is None:
+        return None
+    return {"covered": covered, "total": total, "ratio": ratio}
+
+
+def _normalize_meta(meta: Optional[dict[str, Any]]) -> dict[str, Any]:
+    """meta 原样透传，但把其中的 completed_at 统一转成 +08:00 的 ISO 字符串。"""
+    if not isinstance(meta, dict):
+        return {}
+    normalized = dict(meta)
+    if "completed_at" in normalized:
+        normalized["completed_at"] = _iso_cst(normalized.get("completed_at"))
+    return normalized
+
+
 # ---------------------------------------------------------------------------
 # 进程内 60s 缓存（Redis 只是可选增强，这里不依赖它）
 # ---------------------------------------------------------------------------
@@ -371,6 +470,42 @@ def _json_dumps(value: dict[str, Any]) -> str:
     return json.dumps(value, ensure_ascii=False, default=str)
 
 
+def merge_freshness_meta(conn: Any, dataset: str, patch: dict[str, Any]) -> bool:
+    """只合并 meta（不动 as_of/status），供写方补「已知限制/覆盖起点」等说明。
+
+    事务安全：使用 SAVEPOINT，失败只回滚本段，绝不回滚调用方（估值落库）主事务。
+    """
+    key = (dataset or "").strip()
+    if not key or not isinstance(patch, dict) or not patch:
+        return False
+    if not _table_exists(conn):
+        logger.warning("bp_data_freshness 不存在，跳过 meta 合并 dataset=%s（请先执行 ddl/79）", key)
+        return False
+    cur = conn.cursor()
+    try:
+        cur.execute("SAVEPOINT bp_data_freshness_meta")
+        cur.execute(
+            "UPDATE bp_data_freshness"
+            " SET meta = COALESCE(meta, '{}'::jsonb) || %s::jsonb, updated_at = now()"
+            " WHERE dataset = %s",
+            (_json_dumps(patch), key),
+        )
+        cur.execute("RELEASE SAVEPOINT bp_data_freshness_meta")
+        return True
+    except Exception:  # noqa: BLE001 - meta 说明是增强信息，失败不阻断主任务
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT bp_data_freshness_meta")
+        except Exception:  # noqa: BLE001
+            pass
+        logger.warning("合并 bp_data_freshness.meta 失败 dataset=%s", key, exc_info=True)
+        return False
+    finally:
+        try:
+            cur.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def sync_derived_freshness(
     conn: Any,
     datasets: Optional[Sequence[str]] = None,
@@ -407,10 +542,10 @@ def load_stored_rows(conn: Any) -> dict[str, dict[str, Any]]:
     # 只读查询也用 SAVEPOINT：失败不得回滚调用方事务（错误/空表按无数据处理）
     fetched = _derive_rows(
         conn,
-        "SELECT dataset, label, as_of, expected_date, status, note, source, updated_at"
+        "SELECT dataset, label, as_of, expected_date, status, note, source, updated_at, meta"
         " FROM bp_data_freshness",
     )
-    for dataset, label, as_of, expected_date, status, note, source, updated_at in fetched:
+    for dataset, label, as_of, expected_date, status, note, source, updated_at, meta in fetched:
         rows[dataset] = {
             "label": label,
             "as_of": as_of,
@@ -419,6 +554,7 @@ def load_stored_rows(conn: Any) -> dict[str, dict[str, Any]]:
             "note": note,
             "source": source,
             "updated_at": updated_at,
+            "meta": meta if isinstance(meta, dict) else {},
         }
     return rows
 
@@ -515,18 +651,38 @@ def _build_item(
     expected: Optional[dt.date],
     trading_days: list[dt.date],
 ) -> dict[str, Any]:
-    stored_as_of = row.get("as_of") if row else None
+    stored = row or {}
+    stored_as_of = stored.get("as_of")
     as_of = stored_as_of
     if derived_as_of is not None and (as_of is None or derived_as_of > as_of):
         as_of = derived_as_of
+    meta = _normalize_meta(stored.get("meta"))
+    coverage = meta_coverage(meta)
     state = classify_status(
         as_of,
         expected,
         trading_days,
-        stored_status=(row or {}).get("status"),
-        stored_note=(row or {}).get("note"),
+        stored_status=stored.get("status"),
+        stored_note=stored.get("note"),
     )
-    updated_at = (row or {}).get("updated_at")
+    # 状态取「写入方状态 / 按应到日重算 / 覆盖率」三者中最严重者：
+    # 覆盖率不足时即使 as_of 追平也应显示 lagging（不能只按 lag 判绿）。
+    coverage_lagging = bool(
+        coverage and coverage.get("ratio") is not None
+        and float(coverage["ratio"]) < COVERAGE_OK_MIN
+    )
+    status = worst_status(state["status"], stored.get("status"),
+                          "lagging" if coverage_lagging else None)
+    is_stale = status != "ok"
+    note = state["note"] or stored.get("note")
+    if note is None and coverage_lagging:
+        note = _coverage_note(spec, coverage)
+    if note is None and is_stale:
+        note = f"数据状态 {status}"
+    updated_at = stored.get("updated_at")
+    completed_at = meta.get("completed_at") if meta else None
+    if completed_at is None:
+        completed_at = updated_at
     # 前端契约同时给自然日差 lag_days 与交易日差 lag_trading_days（后者供排查）；
     # as_of 超前于应到日（例如估值任务人工补跑）时钳到 0，避免 UI 出现负滞后。
     lag_days = (
@@ -539,8 +695,8 @@ def _build_item(
         "label": spec.label,
         "as_of": as_of.isoformat() if as_of else None,
         "expected_date": expected.isoformat() if expected else None,
-        "status": state["status"],
-        "is_stale": state["is_stale"],
+        "status": status,
+        "is_stale": is_stale,
         "lag_days": lag_days,
         "lag_trading_days": state["lag_trading_days"],
         "updated_at": (
@@ -548,9 +704,117 @@ def _build_item(
             if isinstance(updated_at, (dt.datetime, dt.date))
             else updated_at
         ),
-        "source": (row or {}).get("source") or spec.source,
-        "note": state["note"],
+        # 完成时间统一 +08:00（CI/服务器时区无关）；优先 meta.completed_at，回退写入时间
+        "completed_at": _iso_cst(completed_at),
+        "source": stored.get("source") or spec.source,
+        "note": note,
+        "meta": meta,
+        "coverage": coverage,
     }
+
+
+def _coverage_note(spec: DatasetSpec, coverage: dict[str, Any]) -> str:
+    """覆盖率不足时的 note（如「覆盖 284/481（59%）」）。"""
+    covered = coverage.get("covered")
+    total = coverage.get("total")
+    ratio = coverage.get("ratio")
+    if covered is not None and total:
+        return f"覆盖 {int(covered)}/{int(total)}（{float(ratio or 0) * 100:.0f}%）"
+    if ratio is not None:
+        return f"覆盖 {float(ratio) * 100:.0f}%（低于 {COVERAGE_OK_MIN:.0%}）"
+    return "覆盖率不足"
+
+
+def _load_index_coverage(
+    conn: Any,
+    stored_row: Optional[dict[str, Any]],
+    expected: Optional[dt.date],
+) -> dict[str, Any]:
+    """指数行情覆盖率 {covered,total,ratio}（用户反馈：覆盖不足必须可见/显示 lagging）。
+
+    优先读写入方 index_quotes_free.py 写入的 bp_data_freshness.meta（覆盖统计
+    与实际采集同口径）；缺失时退化为两条轻量只读聚合（60s 缓存内每进程最多一次）。
+    """
+    meta = meta_coverage((stored_row or {}).get("meta"))
+    if meta and meta.get("ratio") is not None and meta.get("total"):
+        return {
+            "covered": meta.get("covered"),
+            "total": meta.get("total"),
+            "ratio": round(float(meta["ratio"]), 4),
+            "as_of": _iso_cst((stored_row or {}).get("as_of")),
+            "source": "bp_data_freshness.meta",
+        }
+    total = _scalar_or_none(
+        conn, "SELECT count(*) FROM bp_index_master WHERE is_tracked = TRUE"
+    )
+    total_int = int(total) if total else 0
+    covered: Optional[int] = None
+    if expected is not None and total_int:
+        value = _scalar_or_none(
+            conn,
+            "SELECT count(DISTINCT q.symbol) FROM bp_index_quote_daily q"
+            " JOIN bp_index_master m ON m.index_code = q.symbol AND m.is_tracked = TRUE"
+            " WHERE q.adjust = 'bfq' AND q.trade_date = %s",
+            (expected,),
+        )
+        covered = int(value) if value is not None else None
+    if covered is None or not total_int:
+        return {
+            "covered": covered,
+            "total": total_int or None,
+            "ratio": None,
+            "as_of": expected.isoformat() if expected else None,
+            "source": "unavailable",
+        }
+    return {
+        "covered": covered,
+        "total": total_int,
+        "ratio": round(covered / total_int, 4),
+        "as_of": expected.isoformat() if expected else None,
+        "source": "bp_index_quote_daily",
+    }
+
+
+def _load_source_health(conn: Any) -> dict[str, Any]:
+    """bp_etl_source_health 最近 stat_date 的聚合（按 dataset 汇总 attempts/ok/failed）。"""
+    latest_rows = _derive_rows(
+        conn, "SELECT max(stat_date) FROM bp_etl_source_health"
+    )
+    latest = latest_rows[0][0] if latest_rows and latest_rows[0] else None
+    if latest is None:
+        return {}
+    fetched = _derive_rows(
+        conn,
+        "SELECT dataset, source, channel, attempts, ok, failed, banned_count, coverage_today"
+        " FROM bp_etl_source_health WHERE stat_date = %s ORDER BY dataset, source, channel",
+        (latest,),
+    )
+    datasets: dict[str, dict[str, Any]] = {}
+    for dataset, source, channel, attempts, ok, failed, banned, coverage in fetched:
+        item = datasets.setdefault(
+            str(dataset),
+            {"attempts": 0, "ok": 0, "failed": 0, "banned_count": 0,
+             "success_rate": None, "sources": []},
+        )
+        item["attempts"] += int(attempts or 0)
+        item["ok"] += int(ok or 0)
+        item["failed"] += int(failed or 0)
+        item["banned_count"] += int(banned or 0)
+        item["sources"].append(
+            {
+                "source": source,
+                "channel": channel,
+                "attempts": int(attempts or 0),
+                "ok": int(ok or 0),
+                "failed": int(failed or 0),
+                "banned_count": int(banned or 0),
+                "coverage_today": float(coverage) if coverage is not None else None,
+            }
+        )
+    for item in datasets.values():
+        if item["attempts"]:
+            item["success_rate"] = round(item["ok"] / item["attempts"], 4)
+    return {"stat_date": _iso_cst(latest), "datasets": datasets}
 
 
 def build_payload(
@@ -579,13 +843,16 @@ def build_payload(
     dated = [dt.date.fromisoformat(item["as_of"]) for item in items if item["as_of"]]
     latest_complete = min(dated) if dated else None
     expected_global = expected_trade_date(DATASETS[0], current, trading_days)
-    all_complete = bool(dated) and all(
-        item["as_of"] is not None
-        and item["expected_date"] is not None
-        and item["as_of"] >= item["expected_date"]
-        for item in items
-    )
+    # 用户反馈：all_complete 必须要求每类 status == ok（覆盖不足/滞后/陈旧都不算齐套），
+    # 不能只比较 as_of >= expected_date（否则 index_quotes 覆盖 59% 也被判 complete）。
+    all_complete = bool(dated) and all(item["status"] == "ok" for item in items)
     missing = [item["dataset"] for item in items if item["as_of"] is None]
+    index_coverage = _load_index_coverage(
+        conn,
+        stored.get("index_quotes"),
+        expected_trade_date(_SPEC_BY_KEY["index_quotes"], current, trading_days),
+    )
+    source_health = _load_source_health(conn)
     extra: dict[str, Any] = {}
     for key in EXTRA_DATASETS:
         spec = EXTRA_SPECS[key]
@@ -617,6 +884,10 @@ def build_payload(
             "cached": cached,
             "generated_at": current.isoformat(),
             "extra": extra,
+            # 指数行情覆盖率（覆盖不足时对应 item 显示 lagging + note）
+            "index_coverage": index_coverage,
+            # 最近一个 stat_date 的源健康聚合（bp_etl_source_health）
+            "source_health": source_health,
         },
         "error": None,
     }

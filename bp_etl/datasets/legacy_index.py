@@ -130,6 +130,35 @@ class LegacyIndexRunner:
             cur.execute(base, params)
             return [row[0] for row in cur.fetchall()]
 
+    def expected_count(self, conn: Any, trade_date: Any, adjust: str = "bfq") -> int:
+        """覆盖率分母：当前 universe 中**声明了该口径**的配置数（按 adjust_modes 过滤）。
+
+        根因（2026-11-27 审查）：旧链 universe 287 只，但只有 124 只配置了 hfq；
+        若分母仍用全 universe，hfq 覆盖率恒为 124/287≈0.43 < 0.90，state 永不推进、
+        backlog 持续积压（632 条）。按口径分母后 hfq=124，补平即可追平。
+        与 universe() 的 scope / BP_ETL_LEGACY_SYMBOLS 过滤保持一致。
+        """
+        symbols_filter = [
+            item.strip()
+            for item in (os.getenv("BP_ETL_LEGACY_SYMBOLS") or "").split(",")
+            if item.strip()
+        ]
+        scope = (os.getenv("BP_ETL_LEGACY_SCOPE") or "all").strip().lower()
+        sql = (
+            "SELECT count(DISTINCT symbol) FROM bp_index_config"
+            " WHERE is_deleted = 0 AND managed_by IS NULL AND %s = ANY(adjust_modes)"
+        )
+        params: list = [adjust]
+        if scope == "selectable":
+            sql += " AND (is_selectable = TRUE OR source = 'fx_sina')"
+        if symbols_filter:
+            sql += " AND symbol = ANY(%s)"
+            params.append(symbols_filter)
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+        return int(row[0]) if row and row[0] else 0
+
     def fetch(
         self,
         adjust: str,

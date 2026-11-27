@@ -20,6 +20,11 @@ import pytest
 from fastapi import FastAPI, HTTPException
 
 from bp_api import auth, baskets
+from bp_api.quant.basket import (
+    DEFAULT_FEE_RATE,
+    DEFAULT_SLIPPAGE_RATE,
+    DEFAULT_STAMP_DUTY_RATE,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -99,7 +104,12 @@ class _FakeCursor:
     def _select(self, sql: str, params) -> None:
         state = self.conn.state
         match = re.search(r"SELECT (.+?) FROM bp_basket", sql, re.S)
-        columns = [c.strip() for c in match.group(1).split(",")] if match else list(_COLUMNS)
+        select = match.group(1) if match else ", ".join(_COLUMNS)
+        raw_columns = [c.strip() for c in select.split(",")]
+        # 列表查询用 `latest_result - 'nav' AS latest_result` 裁剪体积：
+        # 列名取 AS 后的别名，并在取行值时去掉 nav（模拟 PG 的 JSONB 运算符）。
+        columns = [c.rsplit(" AS ", 1)[-1].strip() for c in raw_columns]
+        strip_nav = "latest_result - 'nav'" in select
         self.description = [SimpleNamespace(name=col) for col in columns]
         if "WHERE basket_id = %s" in sql:
             target = next((row for row in state.rows if row["basket_id"] == params[0]), None)
@@ -131,7 +141,13 @@ class _FakeCursor:
             )
         elif "ORDER BY updated_at DESC" in sql:
             selected = sorted(selected, key=lambda r: (-r["updated_at"].timestamp(), -r["basket_id"]))
-        self._rows = [tuple(row.get(col) for col in columns) for row in selected]
+        def value_for(row, col):
+            value = row.get(col)
+            if strip_nav and col == "latest_result" and isinstance(value, dict):
+                return {k: v for k, v in value.items() if k != "nav"}
+            return value
+
+        self._rows = [tuple(value_for(row, col) for col in columns) for row in selected]
 
     def execute(self, sql: str, params=None) -> None:
         text = " ".join(str(sql).split())
@@ -345,6 +361,27 @@ def test_list_rows_include_is_demo_and_display_order(routes, monkeypatch):
     assert demo["display_order"] == 0
 
 
+def test_list_strips_nav_but_detail_keeps_full_latest_result(routes, monkeypatch):
+    """列表接口 SELECT latest_result - 'nav' 减小体积；详情保留完整 nav 供还原曲线。"""
+    result = {
+        "annualized_return": 0.1,
+        "sharpe": 1.2,
+        "nav": [{"trade_date": "2026-11-26", "nav": 1.0, "ret": 0.0}],
+    }
+    state = _State(
+        [_row(1, owner=None, name="示例A", is_demo=True, latest_result=dict(result))]
+    )
+    _bind(monkeypatch, state)
+
+    listed = routes[("/api/baskets", "GET")](None, None)["data"][0]["latest_result"]
+    assert "nav" not in listed
+    assert listed["annualized_return"] == 0.1
+    assert any("latest_result - 'nav'" in sql for sql, _ in state.queries)
+
+    detail = routes[("/api/baskets/{basket_id}", "GET")](1, None)["data"]
+    assert detail["latest_result"]["nav"] == result["nav"]
+
+
 # ---------------------------------------------------------------------------
 # 3. 详情 / 复制
 # ---------------------------------------------------------------------------
@@ -493,6 +530,21 @@ def test_recompute_writes_latest_result_from_server_side_backtest(routes, monkey
     assert summary["method"] == "risk_parity"
     assert summary["n_obs"] > 100
     assert len(summary["nav"]) > 100
+    # 7 项诊断指标（扣费后口径）+ 费用参数随 latest_result 落库
+    for key in (
+        "annualized_return",
+        "max_drawdown",
+        "turnover",
+        "n_obs",
+        "sharpe",
+        "sortino",
+        "calmar",
+    ):
+        assert isinstance(summary[key], (int, float))
+    assert summary["trading_days"] == 244
+    assert summary["fees"]["fee_rate"] == pytest.approx(DEFAULT_FEE_RATE)
+    assert summary["fees"]["total_cost"] > 0.0
+    assert summary["nav"][0]["nav"] < 1.0  # 建仓成本已扣除
     assert abs(sum(weight["weight"] for weight in summary["weights"]) - 1.0) < 1e-6
     stored = state.rows[0]["latest_result"]
     assert stored is not None and stored["annualized_return"] == summary["annualized_return"]
@@ -522,6 +574,51 @@ def test_recompute_unknown_basket_404(routes, monkeypatch):
     with pytest.raises(HTTPException) as exc:
         routes[("/api/baskets/{basket_id}/recompute", "POST")](42, ADMIN)
     assert exc.value.status_code == 404
+
+
+def test_recompute_params_fee_defaults_and_clamp():
+    """params 缺费用字段时使用引擎默认值；非法/越界值回退默认并裁剪。"""
+    defaults = baskets._recompute_params({})
+    assert defaults["fee_rate"] == pytest.approx(DEFAULT_FEE_RATE)
+    assert defaults["slippage_rate"] == pytest.approx(DEFAULT_SLIPPAGE_RATE)
+    assert defaults["stamp_duty_rate"] == pytest.approx(DEFAULT_STAMP_DUTY_RATE)
+
+    bad = baskets._recompute_params(
+        {"fee_rate": "oops", "slippage_rate": float("nan"), "stamp_duty_rate": 9.0}
+    )
+    assert bad["fee_rate"] == pytest.approx(DEFAULT_FEE_RATE)
+    assert bad["slippage_rate"] == pytest.approx(DEFAULT_SLIPPAGE_RATE)
+    assert bad["stamp_duty_rate"] == pytest.approx(0.01)  # 上界裁剪
+
+    zero = baskets._recompute_params(
+        {"fee_rate": 0, "slippage_rate": 0, "stamp_duty_rate": 0}
+    )
+    assert (zero["fee_rate"], zero["slippage_rate"], zero["stamp_duty_rate"]) == (
+        0.0,
+        0.0,
+        0.0,
+    )
+
+
+def test_recompute_honors_saved_fee_params(routes, monkeypatch, panel):
+    """示例篮子重算沿用 bp_basket.params 里保存的费用口径（含 0 费用的兼容场景）。"""
+    state = _recompute_state()
+    state.rows[0]["params"] = {
+        "lookback_days": 60,
+        "rebalance_band": 0.05,
+        "fee_rate": 0.0,
+        "slippage_rate": 0.0,
+        "stamp_duty_rate": 0.0,
+    }
+    _bind(monkeypatch, state, panel)
+    summary = routes[("/api/baskets/{basket_id}/recompute", "POST")](1, ADMIN)["data"][
+        "latest_result"
+    ]
+    assert summary["fees"]["fee_rate"] == 0.0
+    assert summary["fees"]["slippage_rate"] == 0.0
+    assert summary["fees"]["stamp_duty_rate"] == 0.0
+    assert summary["fees"]["total_cost"] == 0.0
+    assert summary["nav"][0]["nav"] == pytest.approx(1.0)
 
 
 # ---------------------------------------------------------------------------

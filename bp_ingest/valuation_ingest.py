@@ -577,6 +577,8 @@ def _build_percentiles(
 # ---------------------------------------------------------------------------
 
 FALLBACK_INDEX_CODES = ("000985",)
+#: fallback 指数行情「历史不足」判定：< 3 年即触发全史回补（2017 起 index-perf JSON）。
+FALLBACK_FULL_HISTORY_MIN_DAYS = 3 * 365
 CSINDEX_OSS_BASE = (
     "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/file/autofile"
 )
@@ -639,7 +641,16 @@ def _csindex_column(frame, *candidates: str) -> Optional[str]:
 
 
 def _parse_csindex_indicator(content: bytes) -> list[dict]:
-    """解析 indicator.xls：columns = 日期/市盈率1/市盈率2/股息率1/股息率2。"""
+    """解析 indicator.xls：日期/市盈率1（总股本）/市盈率2（计算用股本）/股息率1/2。
+
+    **PE 口径修正（2026-11-27 交叉校验）**：中证官网文件的两列不是「静态/滚动」，
+    而是「总股本 / 计算用股本」两种股本口径：
+      - 市盈率1（总股本）≈ 平安 peRatio 主口径（000300 实测 13.96 vs 平安 13.37，
+        相对差 4.4%<5%），因此映射为 pe_ttm（与主源可交叉校验）；
+      - 市盈率2（计算用股本）与平安口径差 ~14%（000300 15.30 vs 13.37），不是静态
+        PE。为避免「把计算用股本口径标成静态 PE」的伪造，pe_static 留 NULL，
+        原始值保留在 pe2_calc_share 仅供审计，待后续出现可授权的静态 PE 源再补。
+    """
     import io
 
     import pandas as pd
@@ -660,8 +671,9 @@ def _parse_csindex_indicator(content: bytes) -> list[dict]:
         rows.append(
             {
                 "trade_date": trade_date,
-                "pe_static": _positive(raw.get(pe1_col)) if pe1_col else None,
-                "pe_ttm": _positive(raw.get(pe2_col)) if pe2_col else None,
+                "pe_ttm": _positive(raw.get(pe1_col)) if pe1_col else None,
+                "pe_static": None,
+                "pe2_calc_share": _positive(raw.get(pe2_col)) if pe2_col else None,
                 "dividend_yield_lyr": _bounded(raw.get(div1_col), -100.0, 100.0)
                 if div1_col
                 else None,
@@ -835,22 +847,20 @@ def fetch_csindex_fallback(code: str, full_history: bool = False) -> dict:
     """抓取一只中证官网 fallback 指数的估值/行情原始数据（不写库；测试可替换）。
 
     返回 {"indicator": [...], "quotes": [...], "name": str, "errors": [...]}；
-    quotes 元素是 {"row": QuoteRow, "name": str}，full_history=True 时回补 2017 以来日线。
-    行情主源为腾讯 fqkline（source=cn_index_tx），中证官网 JSON/OSS 仅作降级。
+    quotes 元素是 {"row": QuoteRow, "name": str}。
+
+    行情口径（2026-11-27 修正）：
+      - full_history=True：**先中证官网 index-perf JSON**（2017 起全历史，实测 000985
+        可返 2400+ 行 OHLC）；此前先抓腾讯导致「只要腾讯有近期行就永不回补全史」，
+        是 000985 只有 34 行的根因。JSON 失败再腾讯全史，最后 OSS perf.xls。
+      - 增量：腾讯 fqkline 主源（与 P0-3 指数行情链路同源同口径）-> index-perf JSON
+        -> OSS perf.xls（近 24 日；实测可能停留在 2021 年，只收近 45 天行）。
     """
     result: dict = {"indicator": [], "quotes": [], "name": "", "errors": []}
     today = date.today()
-    # 1) 行情主源：腾讯 fqkline（与 P0-3 指数行情链路同源同口径，source=cn_index_tx）
     quote_start = date(2017, 1, 1) if full_history else today - timedelta(days=45)
-    try:
-        tencent_rows = _fetch_tencent_quotes(code, quote_start, today)
-        if tencent_rows:
-            result["quotes"].extend(tencent_rows)
-    except Exception as exc:  # noqa: BLE001
-        result["errors"].append(f"{code}: tencent_quotes: {type(exc).__name__}: {exc}")
 
-    # 2) 行情降级：中证官网 index-perf JSON（全历史；WAF 拦截时跳过）
-    if not result["quotes"]:
+    def _try_history_json() -> None:
         try:
             response = _csindex_get(
                 CSINDEX_PERF_API,
@@ -862,14 +872,20 @@ def fetch_csindex_fallback(code: str, full_history: bool = False) -> dict:
             )
             response.raise_for_status()
             name, rows = _parse_csindex_perf_json(response.json())
-            result["name"] = name
+            result["name"] = result["name"] or name
             result["quotes"].extend(rows)
         except Exception as exc:  # noqa: BLE001 - 单源失败只记录
             result["errors"].append(f"{code}: csindex_history: {type(exc).__name__}: {exc}")
 
-    # 3) 行情降级：中证官网 OSS perf.xls（实测可能停留在 2021 年，只收近期行，
-    #    避免把陈旧价格写进行情表；全历史场景由腾讯/JSON 负责）
-    if not result["quotes"]:
+    def _try_tencent() -> None:
+        try:
+            tencent_rows = _fetch_tencent_quotes(code, quote_start, today)
+            if tencent_rows:
+                result["quotes"].extend(tencent_rows)
+        except Exception as exc:  # noqa: BLE001
+            result["errors"].append(f"{code}: tencent_quotes: {type(exc).__name__}: {exc}")
+
+    def _try_oss_recent() -> None:
         try:
             response = _csindex_get(f"{CSINDEX_OSS_BASE}/perf/{code}perf.xls")
             response.raise_for_status()
@@ -883,6 +899,16 @@ def fetch_csindex_fallback(code: str, full_history: bool = False) -> dict:
             result["quotes"].extend(recent)
         except Exception as exc:  # noqa: BLE001
             result["errors"].append(f"{code}: perf_xls: {type(exc).__name__}: {exc}")
+
+    # 1) 全史：index-perf JSON（唯一免费全历史源）优先；增量：腾讯优先
+    if full_history:
+        _try_history_json()
+    if not result["quotes"]:
+        _try_tencent()
+    if not result["quotes"] and not full_history:
+        _try_history_json()
+    if not result["quotes"]:
+        _try_oss_recent()
 
     # 4) 估值：中证官网 indicator.xls（PE 静态/滚动 + 股息率 LYR/TTM；无 PB）
     try:
@@ -939,6 +965,10 @@ def _build_csindex_rows(
             erp_value = quant_erp(dividend / 100.0, bond)
         raw = {
             "source": "csindex_official_indicator",
+            # PE 口径：中证官网只有「总股本(PE1)/计算用股本(PE2)」两种股本口径，不是
+            # 静态/滚动。PE1 与平安主口径可比（<5%），映射 pe_ttm；PE2 只留审计原始值。
+            "pe_basis": "official_pe1_total_share",
+            "pe2_calc_share": row.get("pe2_calc_share"),
             "pb_available": False,
             "bond10y_same_day": bond,
         }
@@ -1035,6 +1065,81 @@ def _refresh_quote_health(conn: psycopg.Connection, symbols: Sequence[str]) -> N
             )
 
 
+def _record_fallback_limitation(
+    conn: psycopg.Connection,
+    index_code: str,
+    coverage_start: Optional[date],
+) -> None:
+    """记录 fallback 指数的已知限制（不伪造）：估值仅滚动约 20 日、无 PB。
+
+    三处落点（全部增强信号，失败不影响主链路）：
+      1. bp_etl_quality_issue（kind=coverage_limit/severity=info，未解决时只写一次）
+         —— 管理端 data-health issues 可见；
+      2. bp_data_freshness.meta.fallback_limits —— freshness 读侧原样透出给前端；
+      3. bp_index_valuation_latest.coverage_start 显式回写（全量快照刷新也会写同样
+         的值，这里保证 refresh_latest=False/快照未重建时也不会缺覆盖起点）。
+    """
+    detail = {
+        "coverage_start": coverage_start.isoformat() if coverage_start else None,
+        "pb_available": False,
+        "pe_basis": "official_pe1_total_share",
+        "source": "csindex_official_indicator",
+        "note": "中证官网 indicator.xls 仅滚动约 20 个交易日且无 PB；"
+                "历史由每日快照积累，不插值、不伪造、不用 PEG 反推 PE",
+    }
+    try:
+        from bp_etl.health import record_issues  # noqa: PLC0415
+        from bp_etl.quality import QualityIssue  # noqa: PLC0415
+
+        with _savepoint(conn, "valuation_fallback_issue"):
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM bp_etl_quality_issue"
+                    " WHERE dataset = 'index_valuation' AND symbol = %s"
+                    " AND kind = 'coverage_limit' AND resolved_at IS NULL LIMIT 1",
+                    (index_code,),
+                )
+                exists = cur.fetchone() is not None
+            if not exists:
+                record_issues(
+                    conn,
+                    [
+                        QualityIssue(
+                            dataset="index_valuation",
+                            kind="coverage_limit",
+                            severity="info",
+                            symbol=index_code,
+                            trade_date=coverage_start,
+                            detail=detail,
+                        )
+                    ],
+                )
+    except Exception:  # noqa: BLE001 - 限制说明是增强信号
+        logger.warning("记录 fallback 已知限制 issue 失败 code=%s", index_code, exc_info=True)
+    try:
+        from bp_api.freshness import merge_freshness_meta  # noqa: PLC0415
+
+        merge_freshness_meta(
+            conn, "index_valuation", {"fallback_limits": {index_code: detail}}
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("写入 fallback 限制 freshness meta 失败 code=%s", index_code, exc_info=True)
+    if coverage_start is None:
+        return
+    try:
+        with _savepoint(conn, "valuation_latest_coverage_start"):
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE bp_index_valuation_latest"
+                    " SET coverage_start = LEAST(COALESCE(coverage_start, %s), %s),"
+                    "     updated_at = now()"
+                    " WHERE index_code = %s",
+                    (coverage_start, coverage_start, index_code),
+                )
+    except Exception:  # noqa: BLE001 - 迁移 80 未应用/行不存在时跳过
+        logger.warning("回写 coverage_start 失败 code=%s", index_code, exc_info=True)
+
+
 def _run_csindex_fallback(
     conn: psycopg.Connection,
     covered_codes: set[str],
@@ -1066,11 +1171,25 @@ def _run_csindex_fallback(
                 continue
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT count(*) FROM bp_index_quote_daily"
+                    "SELECT count(*), min(trade_date) FROM bp_index_quote_daily"
                     " WHERE symbol = %s AND adjust = 'bfq'",
                     (index_code,),
                 )
-                need_full = int(cur.fetchone()[0] or 0) == 0
+                stats_row = cur.fetchone() or (0, None)
+                quote_count = int(stats_row[0] or 0)
+                first_quote = stats_row[1] if len(stats_row) > 1 else None
+                # 「行情 < 3 年」即补全历史：旧逻辑以 count==0 判定，导致 000985
+                # 只有 34 行近期行情后再也永不触发全史回补（2017 起 index-perf JSON）。
+                span_days = (
+                    (date.today() - first_quote).days
+                    if isinstance(first_quote, date)
+                    else 0
+                )
+                need_full = (
+                    quote_count == 0
+                    or first_quote is None
+                    or span_days < FALLBACK_FULL_HISTORY_MIN_DAYS
+                )
                 cur.execute(
                     "SELECT count(*) FROM bp_index_master WHERE index_code = %s",
                     (index_code,),
@@ -1114,6 +1233,20 @@ def _run_csindex_fallback(
                     ),
                 )
             _refresh_quote_health(conn, [index_code])
+
+            # 已知限制（000985 等）：中证官网估值仅滚动约 20 日且无 PB。记录
+            # coverage_start + 限制说明（freshness meta / issue / latest 快照），不伪造。
+            coverage_start = min(
+                (
+                    item.get("trade_date")
+                    for item in (payload.get("indicator") or [])
+                    if isinstance(item.get("trade_date"), date)
+                ),
+                default=None,
+            )
+            _record_fallback_limitation(conn, index_code, coverage_start)
+            if coverage_start is not None:
+                summary.setdefault("coverage_start", {})[index_code] = coverage_start.isoformat()
 
             # 最新日频估值是 oracle：fallback 写入后按 as_of 对齐（不回写未来日期）
             if as_of is not None:

@@ -156,6 +156,20 @@ def test_fund_nav_runner_expected_count() -> None:
     assert FundNavRunner().expected_count(conn, D2) == 25000
 
 
+def test_legacy_index_expected_count_filters_by_adjust() -> None:
+    """hfq 分母只算声明了 hfq 的配置（287 universe 中仅 124 只），否则永不追平。"""
+    from bp_etl.datasets.legacy_index import LegacyIndexRunner
+
+    conn = FakeConn(one=(124,))
+    assert LegacyIndexRunner().expected_count(conn, D2, "hfq") == 124
+    sql, params = conn.queries[-1]
+    assert "ANY(adjust_modes)" in sql
+    assert params[0] == "hfq"
+    # bfq 口径分母仍是同一条 SQL，仅参数不同
+    conn2 = FakeConn(one=(287,))
+    assert LegacyIndexRunner().expected_count(conn2, D2, "bfq") == 287
+
+
 def test_fund_nav_runner_rank_plus_gap_fill(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_rank(channel: object, page: int = 1, **kw: object):
         if page == 1:

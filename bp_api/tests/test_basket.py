@@ -311,7 +311,10 @@ def test_backtest_daily_nav_statistics_are_consistent():
     nav = res.nav["nav"]
     ret = res.nav["ret"]
     assert (nav > 0).all()
-    assert nav.iloc[0] == pytest.approx(1.0)
+    # 默认扣费：建仓成本 = 佣金 + 滑点（买入单边，无印花税），建仓日净值 < 1
+    inception = res.fees["fee_rate"] + res.fees["slippage_rate"]
+    assert nav.iloc[0] == pytest.approx(1.0 - inception)
+    assert ret.iloc[0] == pytest.approx(-inception)
     # 日汇总：nav_t = nav_{t-1} * (1 + ret_t)
     implied = nav.shift(1) * (1.0 + ret)
     assert np.allclose(nav.iloc[1:].values, implied.iloc[1:].values, atol=1e-12)
@@ -359,7 +362,15 @@ def test_backtest_rebalance_band_semantics():
 
 def test_backtest_turnover_and_asset_contributions():
     prices = _panel(seed=41)
-    res = _bt(prices, rebalance_band=0.0)
+    # 归因的逐资产贡献是税前口径：这里显式关掉费用，验证 Carino 链接本身；
+    # 扣费对净值/指标的影响由下面的费用用例覆盖。
+    res = _bt(
+        prices,
+        rebalance_band=0.0,
+        fee_rate=0.0,
+        slippage_rate=0.0,
+        stamp_duty_rate=0.0,
+    )
 
     assert res.total_turnover >= 1.0  # 建仓 0→目标 = 100% 换手
     assert res.annualized_turnover >= 0.0
@@ -390,7 +401,79 @@ def test_backtest_partial_asset_inclusion_does_not_delay_start():
 
 
 # ---------------------------------------------------------------------------
-# 6. /api/basket 路由
+# 6. 交易成本（默认扣费后口径）
+# ---------------------------------------------------------------------------
+def test_backtest_default_fees_reduce_nav_and_charge_on_rebalance():
+    prices = _panel(seed=47)
+    with_cost = _bt(prices, rebalance_band=0.0)
+    without_cost = _bt(
+        prices,
+        rebalance_band=0.0,
+        fee_rate=0.0,
+        slippage_rate=0.0,
+        stamp_duty_rate=0.0,
+    )
+
+    # 零费用时引擎行为与旧版一致：建仓日净值 = 1，累计成本 = 0
+    assert without_cost.nav["nav"].iloc[0] == pytest.approx(1.0)
+    assert without_cost.total_cost == 0.0
+
+    fees = with_cost.fees
+    commission, slip, stamp = (
+        fees["fee_rate"],
+        fees["slippage_rate"],
+        fees["stamp_duty_rate"],
+    )
+    assert (commission, slip, stamp) == (0.0003, 0.001, 0.001)
+    assert with_cost.total_cost > 0.0
+    assert with_cost.nav["nav"].iloc[-1] < without_cost.nav["nav"].iloc[-1]
+    # 建仓成本：0 → target 视作买入周转 1，只计佣金+滑点
+    assert with_cost.rebalances[0]["cost"] == pytest.approx(commission + slip)
+    # 每次再平衡的 cost 严格等于换手×（佣金+滑点）+ 卖出换手×印花税
+    for rb in with_cost.rebalances[1:]:
+        prev = rb["prev_weights"] or {}
+        target = rb["target_weights"] or {}
+        keys = set(prev) | set(target)
+        buy = sum(max(target.get(k, 0.0) - prev.get(k, 0.0), 0.0) for k in keys)
+        sell = sum(max(prev.get(k, 0.0) - target.get(k, 0.0), 0.0) for k in keys)
+        assert rb["turnover"] == pytest.approx(buy + sell, abs=1e-9)
+        assert rb["cost"] == pytest.approx(
+            (buy + sell) * (commission + slip) + sell * stamp, abs=1e-9
+        )
+    # 必有卖出侧再平衡：印花税真实参与成本
+    assert any(
+        rb["cost"] > rb["turnover"] * (commission + slip) + 1e-12
+        for rb in with_cost.rebalances[1:]
+    )
+
+
+def test_build_latest_result_includes_seven_diagnostics_and_fees():
+    summary = basket.build_latest_result(
+        _panel(),
+        method="risk_parity",
+        lookback_days=156,
+        trading_days=244,
+        min_window=60,
+    )
+    for key in (
+        "annualized_return",
+        "max_drawdown",
+        "turnover",
+        "n_obs",
+        "sharpe",
+        "sortino",
+        "calmar",
+    ):
+        assert math.isfinite(float(summary[key]))
+    assert summary["trading_days"] == 244
+    assert summary["fees"]["fee_rate"] == pytest.approx(0.0003)
+    assert summary["fees"]["total_cost"] > 0.0
+    assert len(summary["nav"]) > 10
+    assert summary["nav"][0]["nav"] == pytest.approx(1.0 - 0.0013)
+
+
+# ---------------------------------------------------------------------------
+# 7. /api/basket 路由
 # ---------------------------------------------------------------------------
 def test_optimize_endpoint_returns_weights_and_diagnostics(
     endpoints, monkeypatch
@@ -488,13 +571,23 @@ def test_backtest_endpoint_returns_curve_and_stats(endpoints, monkeypatch):
     assert body["method"] == "min_variance"
     assert body["effective_start"]
     assert len(body["nav"]) > 10
-    assert body["nav"][0]["nav"] == pytest.approx(1.0)
-    assert body["nav"][0]["ret"] == pytest.approx(0.0)
+    # 默认扣费：建仓日净值 = 1 − (佣金 + 滑点)，ret = −(佣金 + 滑点)
+    inception = body["fees"]["fee_rate"] + body["fees"]["slippage_rate"]
+    assert body["fees"]["fee_rate"] == pytest.approx(0.0003)
+    assert body["fees"]["slippage_rate"] == pytest.approx(0.001)
+    assert body["fees"]["stamp_duty_rate"] == pytest.approx(0.001)
+    assert body["nav"][0]["nav"] == pytest.approx(1.0 - inception)
+    assert body["nav"][0]["ret"] == pytest.approx(-inception)
     assert math.isfinite(body["annualized_return"])
     assert body["annualized_vol"] >= 0.0
     assert body["max_drawdown"] <= 0.0
     assert body["turnover"] >= 0.0
     assert body["turnover_total"] >= 1.0
+    # 7 项诊断指标（扣费后）随回测返回
+    for key in ("sharpe", "sortino", "calmar"):
+        assert math.isfinite(body[key])
+    assert body["trading_days"] == 244
+    assert body["fees"]["total_cost"] > 0.0
     assert {c["symbol"] for c in body["contributions"]} == {"A", "B", "C"}
     assert abs(sum(w["weight"] for w in body["weights"]) - 1.0) < 1e-8
     assert isinstance(body["rebalances"], list)

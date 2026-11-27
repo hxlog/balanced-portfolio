@@ -3,9 +3,13 @@
 数据文件：https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/file/autofile/indicator/{code}indicator.xls
 列：日期 / 指数代码 / 名称 / 市盈率1 / 市盈率2 / 股息率1 / 股息率2（仅滚动 20 个交易日，需日积月累）。
 
-口径假设（写库时以 pe_basis 标注）：
-- 市盈率1 -> pe_static（静态），市盈率2 -> pe_ttm（滚动）
-- 股息率1 -> dividend_yield_lyr，股息率2 -> dividend_yield_ttm
+口径（2026-11-27 交叉校验修正）：
+- 中证官网两列是「市盈率1（总股本）/市盈率2（计算用股本）」，不是静态/滚动：
+  市盈率1 ≈ 平安 peRatio 主口径（000300 实测相对差 4.4%<5%），映射 pe_ttm；
+  市盈率2 与主口径差 ~14%，不冒充 pe_static（pe_static 留空，PE2 仅审计保留）。
+- 股息率1/2 仍按 LYR/TTM 假设落 bp_data_quality_log 交叉校验。
+- 日期列整数日（20261127）必须按 %Y%m%d 解析，禁止 pd.to_datetime 直接吃整数
+  （会被当 ns 时间戳产出 1970-01-01 脏行）。
 差异 > 20% 时写 bp_data_quality_log（warn），供 UI 角标与人工复核。
 """
 from __future__ import annotations
@@ -13,7 +17,7 @@ from __future__ import annotations
 import io
 import logging
 import time
-from datetime import date
+from datetime import date, datetime
 from typing import Iterable
 
 import pandas as pd
@@ -42,20 +46,55 @@ def fetch_indicator(code: str, session: requests.Session | None = None) -> pd.Da
     return frame
 
 
+def _parse_trade_date(value) -> date | None:
+    """中证 indicator.xls 日期列归一化。
+
+    坑（2026-11-27 审查）：Excel 里的整数日（如 20261127）被 pd.to_datetime 当成
+    ns 时间戳，产出 1970-01-01 脏行（实测 376 行）。这里先按 YYYYMMDD 整数/字符串
+    解析，再回退通用解析；1970 等早于 1990 的伪日期一律丢弃。
+    """
+    if isinstance(value, datetime):
+        return value.date() if value.year >= 1990 else None
+    if isinstance(value, date):
+        return value if value.year >= 1990 else None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        text = str(int(value))
+        if len(text) == 8:
+            try:
+                day = date(int(text[:4]), int(text[4:6]), int(text[6:8]))
+            except ValueError:
+                return None
+            return day if day.year >= 1990 else None
+    text = str(value or "").strip()
+    if len(text) == 8 and text.isdigit():
+        try:
+            day = date(int(text[:4]), int(text[4:6]), int(text[6:8]))
+        except ValueError:
+            return None
+        return day if day.year >= 1990 else None
+    try:
+        parsed = pd.to_datetime(text, errors="coerce")
+    except (ValueError, TypeError):
+        return None
+    if pd.isna(parsed):
+        return None
+    day = parsed.date()
+    return day if day.year >= 1990 else None
+
+
 def _rows(frame: pd.DataFrame, days: int = 20) -> list[dict]:
     out: list[dict] = []
     for _, row in frame.head(days).iterrows():
-        raw = row.get("date")
-        try:
-            trade_date = pd.to_datetime(raw, errors="coerce")
-        except (ValueError, TypeError):
-            continue
-        if pd.isna(trade_date):
+        trade_date = _parse_trade_date(row.get("date"))
+        if trade_date is None:
             continue
         out.append({
-            "trade_date": trade_date.date(),
-            "pe_static": _num(row.get("pe1")),
-            "pe_ttm": _num(row.get("pe2")),
+            "trade_date": trade_date,
+            # 与 valuation_ingest._parse_csindex_indicator 同口径：PE1=总股本（映射
+            # pe_ttm，与平安主口径可比），PE2=计算用股本不是静态 PE，仅审计保留。
+            "pe_static": None,
+            "pe_ttm": _num(row.get("pe1")),
+            "pe2_calc_share": _num(row.get("pe2")),
             "dividend_yield_lyr": _num(row.get("div1")),
             "dividend_yield_ttm": _num(row.get("div2")),
         })

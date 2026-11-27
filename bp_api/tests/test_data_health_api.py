@@ -151,3 +151,59 @@ def test_replay_rejects_unknown_dataset(monkeypatch: pytest.MonkeyPatch) -> None
     response = client.post("/api/admin/data-health/replay", json={"dataset": "nope"})
     assert response.status_code == 200
     assert response.json()["error"]["code"] == "invalid_dataset"
+
+
+# ---------------------------------------------------------------------------
+# 公开只读：/api/v1/market/data-health（每日体检结果）
+# ---------------------------------------------------------------------------
+def test_public_data_health_returns_latest_audit(monkeypatch: pytest.MonkeyPatch) -> None:
+    conn = FakeConn(
+        [
+            [(date(2026, 11, 27),)],
+            [("index_quotes", "coverage", 0.9832, 0.99, "error",
+              {"covered": 473, "total": 481}, "2026-11-27T09:30:00+08:00")],
+        ],
+        columns=["dataset", "metric", "value", "threshold", "status", "detail", "created_at"],
+    )
+    client = _client(monkeypatch, conn)
+    response = client.get("/api/v1/market/data-health")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["error"] is None
+    data = body["data"]
+    assert data["stat_date"] == "2026-11-27"
+    check = data["checks"][0]
+    assert check["dataset"] == "index_quotes"
+    assert check["metric"] == "coverage"
+    assert check["value"] == pytest.approx(0.9832)
+    assert check["status"] == "error"
+    assert check["detail"]["covered"] == 473
+    assert body["meta"]["summary"] == {"ok": 0, "warn": 0, "error": 1, "total": 1}
+
+
+def test_public_data_health_unavailable_when_table_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _BrokenConn:
+        def cursor(self):
+            raise RuntimeError("relation bp_data_audit_daily does not exist")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc) -> bool:
+            return False
+
+    @contextmanager
+    def _provide_conn():
+        yield _BrokenConn()
+
+    monkeypatch.setattr(data_health.db, "get_conn", _provide_conn)
+    app = FastAPI()
+    data_health.register_routes(app)
+    response = TestClient(app).get("/api/v1/market/data-health")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["data"] is None
+    assert body["meta"]["available"] is False
+    assert body["error"] is None

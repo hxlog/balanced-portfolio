@@ -162,6 +162,8 @@ def _wire_run(monkeypatch: pytest.MonkeyPatch, universe, fetchers, writer):
     monkeypatch.setattr(iqf, "count_covered", lambda conn, symbols, trade_date, adjust: len(symbols))
     recorded: list = []
     monkeypatch.setattr(iqf, "_record_freshness", lambda target, payload: recorded.append((target, payload)))
+    # 收尾（健康表/clean）需要真实 DB，纯 mock 单测里跳过（单独测 _postprocess）
+    monkeypatch.setattr(iqf, "_postprocess", lambda *args, **kwargs: {"health_rows": 0})
     return recorded
 
 
@@ -353,3 +355,187 @@ def test_load_last_dates_uses_date_window() -> None:
     assert "trade_date >=" in sql
     assert params[0] == "bfq"
     assert params[1] == TARGET - timedelta(days=30)
+
+
+# ---------------------------------------------------------------------------
+# 第二轮：中证 OSS perf.xls 兜底 / 显式 --start 补全历史 / 收尾健康表+clean
+# ---------------------------------------------------------------------------
+def _xlsx_bytes(frame) -> bytes:
+    import io
+
+    import pandas as pd
+
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        frame.to_excel(writer, index=False)
+    return buffer.getvalue()
+
+
+def test_parse_csindex_perf_xls_oss() -> None:
+    import pandas as pd
+
+    frame = pd.DataFrame(
+        {
+            "日期Date": ["2026-11-26", "2026-11-27"],
+            "指数代码Index Code": ["930641", "930641"],
+            "指数中文简称Index Chinese Name": ["中证芯片", "中证芯片"],
+            "开盘Open": [1000.0, 1010.0],
+            "最高High": [1015.0, 1025.0],
+            "最低Low": [995.0, 1005.0],
+            "收盘Close": [1010.0, 1020.0],
+            "涨跌幅(%)Change(%)": [1.0, 0.99],
+            "成交量（股）Volume(share)": [1e8, 1.1e8],
+            "成交金额（元）Turnover": [1e10, 1.2e10],
+        }
+    )
+    bars = iqf.parse_csindex_perf_xls(_xlsx_bytes(frame))
+    assert [bar["trade_date"] for bar in bars] == [date(2026, 11, 26), TARGET]
+    assert bars[-1]["close"] == pytest.approx(1020.0)
+    assert bars[-1]["high"] == pytest.approx(1025.0)
+    assert bars[-1]["volume"] == 110000000
+    # 缺列/空内容不抛异常
+    assert iqf.parse_csindex_perf_xls(b"not-an-xls") == []
+
+
+def test_fetch_csindex_oss_uses_waf_immune_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    import pandas as pd
+    import requests
+
+    frame = pd.DataFrame(
+        {
+            "日期Date": ["2026-11-25", "2026-11-26"],
+            "收盘Close": [100.0, 101.0],
+        }
+    )
+    content = _xlsx_bytes(frame)
+    calls: list = []
+
+    class _Resp:
+        status_code = 200
+
+        def __init__(self, payload: bytes) -> None:
+            self.content = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url, **kwargs):
+        calls.append(url)
+        return _Resp(content)
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    bars = iqf.fetch_csindex_oss("930641", "CSI", date(2026, 11, 26), TARGET)
+    assert calls and "perf/930641perf.xls" in calls[0]
+    # start 过滤：只保留窗口内
+    assert [bar["trade_date"] for bar in bars] == [date(2026, 11, 26)]
+
+
+def test_source_chain_includes_csindex_oss_before_em() -> None:
+    meta = iqf.IndexMeta("930641", "CSI")
+    chain = iqf._source_chain(
+        meta, {"cn_index_tx", "cn_index_sina", "csindex_perf", "csindex_oss", "cn_index_em"},
+        None,
+    )
+    assert chain.index("csindex_oss") < chain.index("cn_index_em")
+    assert iqf.FETCHERS["csindex_oss"] is iqf.fetch_csindex_oss
+
+
+def test_explicit_start_backfills_even_if_symbol_already_current(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """显式 --start 是回填语义：库内已有最新日期也不能跳过（000985 全史补全）。"""
+    universe = [iqf.IndexMeta("000985", "CSI")]
+    fetcher = _FakeFetcher([_bar(date(2017, 1, 3), 100.0), _bar(TARGET, 101.0)])
+    fetchers = {"cn_index_tx": fetcher}
+    writes: list = []
+    _wire_run(monkeypatch, universe, fetchers, writes)
+    monkeypatch.setattr(iqf, "load_last_dates", lambda conn, adjust, **kw: {"000985": TARGET})
+
+    result = iqf.run(
+        target_date=TARGET,
+        start_date=date(2017, 1, 1),
+        now=datetime(2026, 11, 27, 23, 30, tzinfo=CN),
+        conn_factory=lambda: object(),
+        fetchers=fetchers,
+        writer=lambda conn, rows: writes.append(rows) or len(rows),
+        sleep_seconds=0,
+    )
+    assert result["covered"] == 1
+    assert fetcher.calls, "显式 --start 不得因 last>=target 跳过抓取"
+    assert fetcher.calls[0][2] == date(2017, 1, 1)
+    flat = [row for batch in writes for row in batch]
+    assert {row.trade_date for row in flat} == {date(2017, 1, 3), TARGET}
+
+
+def test_quote_health_rows_status_and_lag() -> None:
+    universe = [
+        iqf.IndexMeta("000300", "SH"),
+        iqf.IndexMeta("930641", "CSI"),
+        iqf.IndexMeta("000985", "CSI"),
+    ]
+    trading_days = [date(2026, 11, 24), date(2026, 11, 25), date(2026, 11, 26), TARGET]
+    latest = {"000300": TARGET, "930641": date(2026, 11, 25)}
+    rows = iqf._quote_health_rows(universe, latest, TARGET, trading_days)
+    by_symbol = {row["symbol"]: row for row in rows}
+    assert by_symbol["000300"]["status"] == "ok"
+    assert by_symbol["930641"]["status"] == "stale"
+    assert by_symbol["930641"]["lag_trading_days"] == 2
+    assert by_symbol["000985"]["status"] == "missing"
+    assert by_symbol["000985"]["has_quote"] is False
+
+
+def test_postprocess_upserts_quote_health_and_rebuilds_clean(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import bp_api.daily_update as daily
+    import bp_api.quant.cleaning as cleaning
+    import bp_api.repositories_valuation as rv
+    import bp_etl.cleaning_hook as cleaning_hook
+
+    recorded: dict = {}
+
+    class _Conn:
+        def commit(self) -> None:
+            recorded["commits"] = recorded.get("commits", 0) + 1
+
+    def _upsert(conn, rows):
+        recorded["health_rows"] = list(rows)
+        return len(rows)
+
+    def _rebuild(conn, symbols, cal):
+        recorded["clean_symbols"] = list(symbols)
+        return 1
+
+    monkeypatch.setattr(rv, "upsert_quote_health", _upsert)
+    monkeypatch.setattr(iqf, "_load_recent_trading_days", lambda conn, end, limit=120: [TARGET])
+    monkeypatch.setattr(cleaning, "rebuild_clean", _rebuild)
+    monkeypatch.setattr(cleaning_hook, "DbTradingCalendar", lambda conn: None)
+    monkeypatch.setattr(
+        daily, "refresh_all_asset_status", lambda conn, with_count=False: 0
+    )
+
+    universe = [iqf.IndexMeta("000300", "SH"), iqf.IndexMeta("930641", "CSI")]
+    outcomes = [
+        iqf.SymbolOutcome("000300", "SH", "covered", latest_date=TARGET, rows=2),
+        iqf.SymbolOutcome("930641", "CSI", "missing"),
+    ]
+    summary = iqf._postprocess(_Conn(), TARGET, universe, {}, outcomes)
+    assert summary["health_rows"] == 2
+    assert summary["health_ok"] == 1
+    health = {row["symbol"]: row for row in recorded["health_rows"]}
+    assert health["000300"]["status"] == "ok"
+    assert health["930641"]["status"] == "missing"
+    # 只有本轮有新行情的 symbol 需要 rebuild clean
+    assert recorded["clean_symbols"] == ["000300"]
+
+
+def test_postprocess_failure_does_not_raise(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*args, **kwargs):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(iqf, "_load_recent_trading_days", boom)
+    summary = iqf._postprocess(
+        object(), TARGET, [iqf.IndexMeta("000300", "SH")], {},
+        [iqf.SymbolOutcome("000300", "SH", "covered", latest_date=TARGET, rows=1)],
+    )
+    assert summary["health_rows"] == 0

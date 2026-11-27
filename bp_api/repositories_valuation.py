@@ -1265,6 +1265,47 @@ def compare_funds(
     }
 
 
+BENCHMARK_HISTOGRAM_BINS = 30
+HISTOGRAM_MIN_OBS = 10
+
+
+def build_return_histograms(
+    target_returns: Any,
+    benchmark_returns: Any,
+    bins: int = BENCHMARK_HISTOGRAM_BINS,
+) -> tuple[list[dict], list[dict]]:
+    """指数 / 基准日收益直方图：同一时间窗口 + 公共 bins，保证前端双系列可对比。
+
+    - 入参是同一收益窗口（近 1 年日收益，百分数点前的小数收益）；
+    - 公共 bins 由两者合并后的取值范围决定，两侧 bin 中心完全一致；
+    - 样本不足（<= HISTOGRAM_MIN_OBS）或全为 NaN 时返回两个空列表，绝不构造数据。
+
+    返回 (histogram, benchmark_histogram)，元素形如 {"bin": 中心值%, "count": 天数}。
+    """
+    target = np.asarray(pd.Series(target_returns).dropna(), dtype=float) * 100.0
+    bench = np.asarray(pd.Series(benchmark_returns).dropna(), dtype=float) * 100.0
+    target = target[np.isfinite(target)]
+    bench = bench[np.isfinite(bench)]
+    if len(target) <= HISTOGRAM_MIN_OBS or len(bench) <= HISTOGRAM_MIN_OBS:
+        return [], []
+    edges = np.histogram_bin_edges(np.concatenate([target, bench]), bins=bins)
+    target_counts, _ = np.histogram(target, bins=edges)
+    bench_counts, _ = np.histogram(bench, bins=edges)
+    centers = [
+        round(float((edges[index] + edges[index + 1]) / 2.0), 3)
+        for index in range(len(edges) - 1)
+    ]
+    histogram = [
+        {"bin": centers[index], "count": int(target_counts[index])}
+        for index in range(len(centers))
+    ]
+    benchmark_histogram = [
+        {"bin": centers[index], "count": int(bench_counts[index])}
+        for index in range(len(centers))
+    ]
+    return histogram, benchmark_histogram
+
+
 def get_index_benchmark_stats(
     conn: psycopg.Connection, index_code: str, benchmark_code: str = "000300"
 ) -> dict:
@@ -1304,14 +1345,10 @@ def get_index_benchmark_stats(
     rank_bench = tail[benchmark_code].rank()
     spearman = float(rank_idx.corr(rank_bench))
     window = target.iloc[-252:] if len(target) > 252 else target
-    if len(window) > 10:
-        counts, bins = np.histogram(window.to_numpy() * 100, bins=30)
-        histogram = [
-            {"bin": round(float((bins[i] + bins[i + 1]) / 2), 3), "count": int(counts[i])}
-            for i in range(len(counts))
-        ]
-    else:
-        histogram = []
+    # 基准取同一批交易日的收益（target/bench 来自同一 wide 面板，索引一致），
+    # 与指数共用公共 bins，前端才能把两条分布叠在同一 x 轴上对比。
+    bench_window = bench.reindex(window.index)
+    histogram, benchmark_histogram = build_return_histograms(window, bench_window)
     mean = float(window.mean() * 100)
     std = float(window.std() * 100)
     skew = None
@@ -1335,6 +1372,8 @@ def get_index_benchmark_stats(
         "skew": None if skew is None else round(skew, 3),
         "kurtosis": None if kurt is None else round(kurt, 3),
         "histogram": histogram,
+        # 同窗口/公共 bins 的基准直方图；样本不足时为空数组（前端退回单系列）。
+        "benchmark_histogram": benchmark_histogram,
     }
 
 
@@ -1566,6 +1605,72 @@ def _spark_series(rows: list[tuple[date, float]]) -> list[list[Any]]:
     return points[-60:]
 
 
+
+
+def refresh_quote_health_from_quotes(
+    conn: psycopg.Connection,
+    quotes: dict[str, list[tuple[date, float]]],
+) -> int:
+    """用本次快照刷新已读取的 bfq 行情 + 交易日历批量校准 bp_index_quote_health。
+
+    背景：行情补数（index_quotes_free / repair_quote_clean）可能晚于行情健康看护任务
+    写库；旧的 quote_health 一旦写入就不会自动更新，列表会把「行情已补齐」的指数
+    持续误标为 stale。这里在估值快照刷新收尾时用同一批行情重算，health 与最新行情
+    保持一致。单条日历区间查询 + 内存计 lag，不给每个指数单独发 SQL。
+
+    ddl/79 之前的库没有 bp_index_quote_health 表时静默跳过（不影响快照刷新）。
+    """
+    if not quotes:
+        return 0
+    last_dates = {
+        code: points[-1][0]
+        for code, points in quotes.items()
+        if points and points[-1][0] is not None
+    }
+    if not last_dates:
+        return 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT max(cal_date) FROM bp_trading_calendar"
+                " WHERE is_trading AND cal_date <= current_date"
+            )
+            row = cur.fetchone()
+            expected = row[0] if row else None
+            if expected is not None:
+                cur.execute(
+                    "SELECT cal_date FROM bp_trading_calendar"
+                    " WHERE is_trading AND cal_date > %s AND cal_date <= %s"
+                    " ORDER BY cal_date",
+                    (min(last_dates.values()), expected),
+                )
+                trading_days = [item[0] for item in cur.fetchall()]
+            else:
+                trading_days = []
+        rows: list[dict] = []
+        for code, last_date in last_dates.items():
+            if expected is None or last_date >= expected:
+                lag = 0
+                status = "ok"
+            else:
+                lag = sum(1 for day in trading_days if day > last_date)
+                status = "stale" if lag <= 5 else "dead"
+            rows.append(
+                {
+                    "symbol": code,
+                    "last_trade_date": last_date,
+                    "expected_trade_date": expected,
+                    "lag_trading_days": lag,
+                    "has_quote": True,
+                    "status": status,
+                }
+            )
+        return upsert_quote_health(conn, rows)
+    except psycopg.errors.UndefinedTable:
+        # 旧库（ddl/79 未应用）没有交易日历/health 表：跳过，不影响估值快照。
+        return 0
+
+
 def refresh_valuation_latest(
     conn: psycopg.Connection,
     window_key: str = "5y",
@@ -1603,7 +1708,7 @@ def refresh_valuation_latest(
             """
             SELECT DISTINCT ON (d.index_code)
                    d.index_code, d.trade_date, d.calc_src, d.is_primary,
-                   d.pe_ttm, d.pb, d.dividend_yield_ttm, d.erp
+                   d.pe_ttm, d.pb, d.dividend_yield_ttm, d.erp, d.roe_ttm
             FROM bp_index_valuation_daily d
             WHERE d.is_primary
             """
@@ -1629,6 +1734,7 @@ def refresh_valuation_latest(
         pb,
         dividend_yield_ttm,
         erp,
+        roe_ttm,
     ) in daily_rows:
         latest_by_code[index_code] = {
             "index_code": index_code,
@@ -1639,6 +1745,8 @@ def refresh_valuation_latest(
             "pb": pb,
             "dividend_yield_ttm": dividend_yield_ttm,
             "erp": erp,
+            # ROE 快照列（ddl/81）：ROE×PE 矩阵数据源，缺失写 NULL 不造数。
+            "roe_ttm": roe_ttm,
         }
 
     with conn.cursor() as cur:
@@ -1791,6 +1899,7 @@ def refresh_valuation_latest(
                 _to_float(item["pb"]),
                 _to_float(item["dividend_yield_ttm"]),
                 _to_float(item["erp"]),
+                _to_float(item.get("roe_ttm")),
                 flat["pe_ttm"],
                 flat["pb"],
                 flat["dividend_yield_ttm"],
@@ -1809,14 +1918,14 @@ def refresh_valuation_latest(
     sql = """
         INSERT INTO bp_index_valuation_latest (
             index_code, trade_date, calc_src, is_primary,
-            pe_ttm, pb, dividend_yield_ttm, erp,
+            pe_ttm, pb, dividend_yield_ttm, erp, roe_ttm,
             pe_percentile, pb_percentile, dividend_percentile, erp_percentile,
             percentiles, pe_spark,
             close_price, change_pct, change_52w_pct, position_52w_pct,
             price_trade_date, coverage_start
         ) VALUES (
             %s, %s, %s, %s,
-            %s, %s, %s, %s,
+            %s, %s, %s, %s, %s,
             %s, %s, %s, %s,
             %s, %s,
             %s, %s, %s, %s,
@@ -1830,6 +1939,7 @@ def refresh_valuation_latest(
             pb = EXCLUDED.pb,
             dividend_yield_ttm = EXCLUDED.dividend_yield_ttm,
             erp = EXCLUDED.erp,
+            roe_ttm = EXCLUDED.roe_ttm,
             pe_percentile = EXCLUDED.pe_percentile,
             pb_percentile = EXCLUDED.pb_percentile,
             dividend_percentile = EXCLUDED.dividend_percentile,
@@ -1852,6 +1962,8 @@ def refresh_valuation_latest(
                 "DELETE FROM bp_index_valuation_latest WHERE NOT (index_code = ANY(%s))",
                 (codes,),
             )
+    # 收尾：用本次已读取的行情批量校准 quote health（详情见函数 docstring）。
+    refresh_quote_health_from_quotes(conn, quotes)
     return len(records)
 
 
@@ -1880,6 +1992,7 @@ def get_valuation_latest_list(
             l.pb,
             l.dividend_yield_ttm,
             l.erp,
+            l.roe_ttm,
             l.pe_percentile,
             l.pb_percentile,
             l.dividend_percentile,
@@ -1912,6 +2025,7 @@ def get_valuation_latest_list(
         "pb",
         "dividend_yield_ttm",
         "erp",
+        "roe_ttm",
         "pe_percentile",
         "pb_percentile",
         "dividend_percentile",

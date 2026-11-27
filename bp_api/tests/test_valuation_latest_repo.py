@@ -28,6 +28,7 @@ def _purge(conn: psycopg.Connection) -> None:
     with conn.cursor() as cur:
         cur.execute("DELETE FROM bp_index_master WHERE index_code LIKE %s", (PREFIX + "%",))
         cur.execute("DELETE FROM bp_index_quote_daily WHERE position('T80' in symbol) > 0")
+        cur.execute("DELETE FROM bp_index_quote_health WHERE position('T80' in symbol) > 0")
         cur.execute("DELETE FROM bp_fund_master WHERE fund_code LIKE %s", (PREFIX + "%",))
         cur.execute("DELETE FROM bp_fund_risk WHERE fund_code LIKE %s", (PREFIX + "%",))
         cur.execute("DELETE FROM bp_market_valuation_index WHERE as_of >= DATE '2099-01-01'")
@@ -86,6 +87,7 @@ def _seed_valuation(conn, code: str, base: date, days: int = 10) -> None:
                     "pb": 2.0 + offset * 0.01,
                     "dividend_yield_ttm": 3.0,
                     "erp": 1.5,
+                    "roe_ttm": 11.0 + offset * 0.1,
                     "is_primary": True,
                     "raw": {"etf_fund": []},
                 }
@@ -202,6 +204,8 @@ def test_refresh_and_read_snapshot(conn):
     assert first["fund_count"] == 3
     assert first["fund_aum"] == pytest.approx(123456.0)
     assert first["quote_status"] == "ok"
+    # ddl/81：ROE(TTM) 随快照返回，ROE×PE 矩阵数据源（不造数，缺失为 None）。
+    assert first["roe_ttm"] == pytest.approx(11.0)
     assert first["close_price"] == pytest.approx(4000.0)
     assert first["change_pct"] == pytest.approx((4000.0 / 4001.0 - 1) * 100, abs=1e-6)
     assert first["coverage_start"] is not None
@@ -505,7 +509,7 @@ class _ListConn:
 _LIST_COLUMNS = [
     "index_code", "name", "short_name", "index_type", "industry", "market",
     "publisher", "trade_date", "calc_src", "is_primary", "pe_ttm", "pb",
-    "dividend_yield_ttm", "erp", "pe_percentile", "pb_percentile",
+    "dividend_yield_ttm", "erp", "roe_ttm", "pe_percentile", "pb_percentile",
     "dividend_percentile", "erp_percentile", "percentiles", "close_price",
     "change_pct", "change_52w_pct", "position_52w_pct", "price_trade_date",
     "coverage_start", "updated_at", "fund_count", "fund_aum", "quote_status",
@@ -529,6 +533,7 @@ def _latest_row(index_code: str, percentiles: dict, *, pe_flat=99.0, pb_flat=88.
         "pb": 1.38,
         "dividend_yield_ttm": 3.2,
         "erp": 5.1,
+        "roe_ttm": 10.2,
         "pe_percentile": pe_flat,
         "pb_percentile": pb_flat,
         "dividend_percentile": None,

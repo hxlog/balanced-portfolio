@@ -20,7 +20,15 @@ import pandas as pd
 from fastapi import Depends, FastAPI, HTTPException
 
 from . import auth, db, repositories as repo
-from .quant.basket import METHODS, optimize, run_basket_backtest, summarize_returns
+from .quant.basket import (
+    DEFAULT_FEE_RATE,
+    DEFAULT_SLIPPAGE_RATE,
+    DEFAULT_STAMP_DUTY_RATE,
+    METHODS,
+    optimize,
+    run_basket_backtest,
+    summarize_returns,
+)
 from .repositories import _json_safe
 from .schemas import BasketBacktestIn, BasketOptimizeIn
 from .settings import load_settings
@@ -163,6 +171,9 @@ def build_latest_result(
     end: Optional[date] = None,
     trading_days: int = 244,
     min_window: int = 60,
+    fee_rate: float = DEFAULT_FEE_RATE,
+    slippage_rate: float = DEFAULT_SLIPPAGE_RATE,
+    stamp_duty_rate: float = DEFAULT_STAMP_DUTY_RATE,
 ) -> dict:
     """对已保存的篮子定义做一次同步回测，生成可落库的 latest_result 摘要。
 
@@ -191,6 +202,9 @@ def build_latest_result(
         risk_free=float(risk_free),
         risk_budget=risk_budget or None,
         trading_days=int(trading_days),
+        fee_rate=float(fee_rate),
+        slippage_rate=float(slippage_rate),
+        stamp_duty_rate=float(stamp_duty_rate),
         user_start=start,
     )
 
@@ -214,13 +228,17 @@ def build_latest_result(
         "rebalance_band": float(rebalance_band),
         "risk_free": float(risk_free),
         "n_obs": int(result.n_obs),
+        "trading_days": int(trading_days),
         "annualized_return": float(result.metrics["annualized_return"]),
         "annualized_vol": float(result.metrics["annualized_vol"]),
         "max_drawdown": float(result.metrics["max_drawdown"]),
         "sharpe": float(result.metrics["sharpe"]),
+        "sortino": float(result.metrics["sortino"]),
+        "calmar": float(result.metrics["calmar"]),
         "turnover": float(result.annualized_turnover),
         "turnover_total": float(result.total_turnover),
         "rebalance_count": len(result.rebalances),
+        "fees": dict(result.fees),
         "assets": [{"symbol": symbol, "source": source} for symbol, source in pairs],
         "weights": weights,
         "nav": nav_rows,
@@ -338,6 +356,9 @@ def register_routes(app: FastAPI) -> None:
                 risk_free=payload.risk_free,
                 risk_budget=payload.risk_budget,
                 trading_days=trading_days,
+                fee_rate=payload.fee_rate,
+                slippage_rate=payload.slippage_rate,
+                stamp_duty_rate=payload.stamp_duty_rate,
                 user_start=payload.start,
             )
         except ValueError as exc:
@@ -422,9 +443,13 @@ def register_routes(app: FastAPI) -> None:
             "annualized_vol": float(result.metrics["annualized_vol"]),
             "max_drawdown": float(result.metrics["max_drawdown"]),
             "sharpe": float(result.metrics["sharpe"]),
+            "sortino": float(result.metrics["sortino"]),
+            "calmar": float(result.metrics["calmar"]),
+            "trading_days": int(trading_days),
             "turnover": float(result.annualized_turnover),
             "turnover_total": float(result.total_turnover),
             "rebalance_count": len(result.rebalances),
+            "fees": dict(result.fees),
             "weights": weight_rows,
             "contributions": contributions,
             "rebalances": rebalance_rows,

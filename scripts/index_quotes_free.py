@@ -11,7 +11,8 @@
 免费源优先级（免费源优先、失败换源、禁止伪造休市日数据）
 --------------------------------------------------------
 * A 股 / 中证指数：cn_index_tx（腾讯 fqkline）-> cn_index_sina（新浪日 K）
-  -> csindex_perf（中证官网 index-perf，930/931/932/H3/950 等中证系唯一可用源）
+  -> csindex_perf（中证官网 index-perf）-> csindex_oss（中证 OSS perf.xls，
+  滚动约 24 交易日、WAF 免疫；930/931/932/H3/950 等中证系无腾讯/新浪前缀时的稳定兜底）
   -> cn_index_em（东财 push2his，服务器 IP 长期封禁，仅最后手段）
 * 港股指数：hk_index_tx（腾讯 hkfqkline）-> hk_index_em（东财）
 * 非 CSI/SH/SZ/HK 市场（US/GLOBAL）：免费源不可用，跳过并在统计中单列。
@@ -31,7 +32,11 @@
     python scripts/index_quotes_free.py --date 2026-11-27
     python scripts/index_quotes_free.py --source cn_index_tx csindex_perf
     python scripts/index_quotes_free.py --start 2026-10-01  # 指定抓取起始日（回填）
+    python scripts/index_quotes_free.py --symbols 000985 --start 2017-01-01  # 补全历史
     python scripts/index_quotes_free.py --dry-run --json
+
+收尾（默认开启）：upsert bp_index_quote_health（列表页行情状态/滞后）+ 对本轮
+有新行情的 symbol 增量 rebuild clean；--no-postprocess 可关闭。
 
 退出码：0=执行完成（允许部分指数不可达）；1=无法确定目标交易日。
 """
@@ -72,7 +77,8 @@ TENCENT_PAGE_SIZE = 640
 
 #: 市场 -> 免费源降级链（顺序即优先级；实际使用时再按 bp_data_source 注册情况过滤）。
 SOURCE_CHAINS: dict[str, tuple[str, ...]] = {
-    "A": ("cn_index_tx", "cn_index_sina", "csindex_perf", "cn_index_em"),
+    # 中证系 930/931/932/H3/950 无腾讯/新浪前缀：csindex JSON -> OSS perf.xls -> 东财
+    "A": ("cn_index_tx", "cn_index_sina", "csindex_perf", "csindex_oss", "cn_index_em"),
     "HK": ("hk_index_tx", "hk_index_em"),
 }
 
@@ -86,6 +92,12 @@ SINA_KLINE_URL = (
     "CN_MarketData.getKLineData"
 )
 CSINDEX_URL = "https://www.csindex.com.cn/csindex-home/perf/index-perf"
+#: 中证官网 OSS 静态文件（不受 WAF 影响；滚动约 24 个交易日的 perf.xls）。
+#: 930/931/932/H3/950 等中证系指数无腾讯/新浪前缀，index-perf JSON 被 WAF
+#: 拦截时 OSS 是唯一稳定的免费兜底。
+CSINDEX_OSS_BASE = (
+    "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/file/autofile"
+)
 EM_KLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
 HTTP_HEADERS = {
     "User-Agent": (
@@ -293,6 +305,107 @@ def parse_csindex_perf(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
     return bars
 
 
+def _date_any(value: Any) -> Optional[date]:
+    """把 Excel/JSON 里的日期（Timestamp/date/YYYYMMDD/ISO）归一为 date。"""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if len(text) == 8 and text.isdigit():
+        try:
+            return date(int(text[:4]), int(text[4:6]), int(text[6:8]))
+        except ValueError:
+            return None
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
+def parse_csindex_perf_xls(content: bytes) -> list[dict[str, Any]]:
+    """解析中证官网 OSS perf.xls（滚动约 24 个交易日）为日线 bar。
+
+    中证系 930/931/932/H3/950 无腾讯/新浪前缀；index-perf JSON 被 WAF 拦截时
+    由本解析器提供稳定兜底（列名与 scripts/csindex_oss_sync.py 保持一致）。
+    """
+    import io  # noqa: PLC0415
+
+    import pandas as pd  # noqa: PLC0415 - 惰性导入，单测可只测纯解析
+
+    try:
+        frame = pd.read_excel(io.BytesIO(content))
+    except Exception:  # noqa: BLE001 - 非 xls/空响应按无数据处理
+        return []
+    if frame is None or frame.empty:
+        return []
+
+    def _col(*candidates: str) -> Optional[str]:
+        for name in frame.columns:
+            text = str(name)
+            if any(candidate in text for candidate in candidates):
+                return name
+        return None
+
+    date_col = _col("日期Date", "日期")
+    close_col = _col("收盘Close", "收盘")
+    if not date_col or not close_col:
+        return []
+    open_col = _col("开盘Open", "开盘")
+    high_col = _col("最高High", "最高")
+    low_col = _col("最低Low", "最低")
+    pct_col = _col("涨跌幅")
+    vol_col = _col("成交量")
+    amt_col = _col("成交金额")
+
+    def _value(row: Any, column: Optional[str]) -> Any:
+        if column is None:
+            return None
+        try:
+            return row.get(column)
+        except Exception:  # noqa: BLE001
+            return None
+
+    bars: list[dict[str, Any]] = []
+    for _, raw in frame.iterrows():
+        day = _date_any(_value(raw, date_col))
+        if day is None:
+            continue
+        bar = _bar(
+            day,
+            _value(raw, open_col),
+            _value(raw, high_col),
+            _value(raw, low_col),
+            _value(raw, close_col),
+            _value(raw, vol_col),
+            _value(raw, amt_col),
+        )
+        if bar is not None:
+            bars.append(bar)
+    bars.sort(key=lambda item: item["trade_date"])
+    return bars
+
+
+def fetch_csindex_oss(
+    symbol: str, market: str, start: date, end: date
+) -> list[dict[str, Any]]:
+    """中证官网 OSS perf.xls（滚动约 24 交易日；WAF 免疫，作 csindex JSON 之后兜底）。"""
+    import requests  # noqa: PLC0415
+
+    url = f"{CSINDEX_OSS_BASE}/perf/{symbol}perf.xls"
+    try:
+        response = requests.get(url, timeout=25, headers=HTTP_HEADERS)
+        response.raise_for_status()
+    except Exception as exc:  # noqa: BLE001 - 统一归为源不可用
+        raise SourceError(f"{type(exc).__name__}: {exc}") from exc
+    if len(response.content or b"") < 500:
+        raise SourceError("oss_perf_empty")
+    bars = parse_csindex_perf_xls(response.content)
+    return [bar for bar in bars if start <= bar["trade_date"] <= end]
+
+
 def parse_em_kline(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
     """东财 push2his：data.klines = [date,open,close,high,low,volume,amount,amplitude]。"""
     data = payload.get("data") if isinstance(payload, Mapping) else None
@@ -463,6 +576,7 @@ FETCHERS: dict[str, Callable[[str, str, date, date], list[dict[str, Any]]]] = {
     "hk_index_tx": fetch_tencent_hk,
     "cn_index_sina": fetch_sina,
     "csindex_perf": fetch_csindex,
+    "csindex_oss": fetch_csindex_oss,
     "cn_index_em": fetch_eastmoney,
     "hk_index_em": fetch_eastmoney,
 }
@@ -648,8 +762,15 @@ def run(
     writer: Optional[Callable[[Any, Sequence[Any]], int]] = None,
     now: Optional[datetime] = None,
     sleep_seconds: float = 0.15,
+    postprocess: bool = True,
 ) -> dict[str, Any]:
-    """执行一轮指数行情免费源采集，返回覆盖统计。"""
+    """执行一轮指数行情免费源采集，返回覆盖统计。
+
+    postprocess=True（默认，cron 用）：收尾批量 upsert bp_index_quote_health，
+    并对本轮有新行情的 symbol 增量 rebuild clean。
+    start_date 显式给出时按「回填」处理：**不跳过**库内已有最新日期的标的
+    （用于 000985 等缺全历史的标的，如 --symbols 000985 --start 2017-01-01）。
+    """
     wall = now_cn(now)
     fetch_map = dict(fetchers or FETCHERS)
     write = writer or write_rows
@@ -700,9 +821,11 @@ def run(
         by_source: dict[str, int] = {}
         failure_reasons: dict[str, int] = {}
         total_rows = 0
+        # 显式 --start 视为全量/补史回填：库内已有最新日期也不能跳过（000985 等）。
+        backfill = start_date is not None
         for index, meta in enumerate(universe):
             last = last_dates.get(meta.symbol)
-            if last is not None and last >= target:
+            if last is not None and last >= target and not backfill:
                 outcomes.append(
                     SymbolOutcome(meta.symbol, meta.market, "skipped", latest_date=last)
                 )
@@ -798,6 +921,10 @@ def run(
         }
         if not dry_run and universe:
             _record_freshness(target, payload)
+            if postprocess:
+                payload["postprocess"] = _postprocess(
+                    conn, target, universe, last_dates, outcomes
+                )
         return payload
 
 
@@ -814,14 +941,112 @@ def _record_freshness(target: date, payload: Mapping[str, Any]) -> None:
             status=status,
             source="scripts/index_quotes_free.py",
             meta={
-                "universe": payload.get("universe"),
+                "total": payload.get("universe"),
                 "covered": payload.get("db_covered"),
+                "ratio": ratio,
+                "universe": payload.get("universe"),
                 "coverage": ratio,
                 "by_source": payload.get("by_source"),
             },
         )
     except Exception:  # noqa: BLE001
         logger.warning("写入 index_quotes 数据新鲜度失败（不影响采集）", exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# 收尾：行情健康表（列表页行情状态/滞后） + 受影响 symbol 增量 clean
+# ---------------------------------------------------------------------------
+def _load_recent_trading_days(conn: Any, end: date, limit: int = 120) -> list[date]:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT cal_date FROM bp_trading_calendar"
+            " WHERE market = 'CN' AND is_trading AND cal_date <= %s"
+            " ORDER BY cal_date DESC LIMIT %s",
+            (end, max(1, int(limit))),
+        )
+        return [row[0] for row in cur.fetchall()]
+
+
+def _quote_health_rows(
+    universe: Sequence[IndexMeta],
+    latest: Mapping[str, date],
+    target: date,
+    trading_days: Sequence[date],
+) -> list[dict[str, Any]]:
+    """构造 bp_index_quote_health 行（与 scripts/quote_coverage_watch.py 同口径）。"""
+    rows: list[dict[str, Any]] = []
+    for meta in universe:
+        last = latest.get(meta.symbol)
+        if last is None:
+            status, lag = "missing", 0
+        elif last >= target:
+            status, lag = "ok", 0
+        else:
+            lag = len([day for day in trading_days if last < day <= target])
+            status = "stale" if lag <= 5 else "dead"
+        rows.append(
+            {
+                "symbol": meta.symbol,
+                "last_trade_date": last,
+                "expected_trade_date": target,
+                "lag_trading_days": lag,
+                "has_quote": last is not None,
+                "status": status,
+            }
+        )
+    return rows
+
+
+def _postprocess(
+    conn: Any,
+    target: date,
+    universe: Sequence[IndexMeta],
+    last_dates: Mapping[str, date],
+    outcomes: Sequence[SymbolOutcome],
+) -> dict[str, Any]:
+    """采集收尾：批量写行情健康表 + 对新增行情 symbol 增量 rebuild clean。
+
+    两步都吞异常（收尾是增强动作，失败不影响本轮采集结果）；dry-run 不调用。
+    """
+    summary: dict[str, Any] = {
+        "health_rows": 0,
+        "health_ok": 0,
+        "clean_symbols": 0,
+        "clean_written": 0,
+    }
+    latest: dict[str, date] = dict(last_dates)
+    for outcome in outcomes:
+        if outcome.latest_date is None:
+            continue
+        previous = latest.get(outcome.symbol)
+        if previous is None or outcome.latest_date > previous:
+            latest[outcome.symbol] = outcome.latest_date
+    try:
+        from bp_api.repositories_valuation import upsert_quote_health  # noqa: PLC0415
+
+        trading_days = _load_recent_trading_days(conn, target)
+        rows = _quote_health_rows(universe, latest, target, trading_days)
+        summary["health_rows"] = upsert_quote_health(conn, rows)
+        summary["health_ok"] = sum(1 for row in rows if row["status"] == "ok")
+        conn.commit()
+    except Exception:  # noqa: BLE001 - 健康表是增强信号
+        logger.warning("收尾写入 bp_index_quote_health 失败（不影响采集）", exc_info=True)
+    affected = sorted({outcome.symbol for outcome in outcomes if outcome.rows > 0})
+    if affected:
+        try:
+            from bp_api.daily_update import refresh_all_asset_status  # noqa: PLC0415
+            from bp_api.quant.cleaning import rebuild_clean  # noqa: PLC0415 - pandas 重
+            from bp_etl.cleaning_hook import DbTradingCalendar  # noqa: PLC0415
+
+            written = rebuild_clean(conn, symbols=affected, cal=DbTradingCalendar(conn))
+            conn.commit()
+            refresh_all_asset_status(conn, with_count=False)
+            conn.commit()
+            summary["clean_symbols"] = len(affected)
+            summary["clean_written"] = int(written or 0)
+        except Exception:  # noqa: BLE001 - clean 失败下一轮 repair_quote_clean 兜底
+            logger.warning("收尾增量 rebuild clean 失败（可用 repair_quote_clean 兜底）", exc_info=True)
+    return summary
 
 
 # ---------------------------------------------------------------------------
@@ -846,6 +1071,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help=f"无历史数据的 symbol 默认回看天数（默认 {DEFAULT_LOOKBACK_DAYS}）")
     parser.add_argument("--limit", type=int, default=0, help="仅处理前 N 只（冒烟）")
     parser.add_argument("--dry-run", action="store_true", help="只抓取与统计，不写库")
+    parser.add_argument(
+        "--no-postprocess",
+        action="store_true",
+        help="跳过收尾（行情健康表 upsert + 增量 clean）",
+    )
     parser.add_argument("--json", action="store_true", help="以 JSON 输出统计")
     parser.add_argument("--log-level", default="INFO")
     return parser
@@ -891,6 +1121,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         lookback_days=args.lookback_days,
         dry_run=args.dry_run,
         limit=args.limit or None,
+        postprocess=not args.no_postprocess,
     )
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, default=str, indent=1))

@@ -231,7 +231,7 @@ def register_routes(app: FastAPI) -> None:
 
     @app.get("/api/v1/market/mvi/overlay")
     def market_mvi_overlay(
-        index: str = Query("000985", description="000300/000510/000016/000985"),
+        index: str = Query("000300", description="000300/000510/000016/000985"),
         range: str = Query("5y", description="1y/3y/5y/10y/all"),
         _user: auth.UserContext | None = Depends(auth.optional_user),
     ) -> dict:
@@ -245,8 +245,10 @@ def register_routes(app: FastAPI) -> None:
         if hit is not None:
             return hit
         with db.get_conn() as conn:
+            # 参数名必须与 repositories_valuation.get_market_mvi_overlay 的
+            # range_key 一致；写成 range= 会抛 TypeError -> 500（overlay 一直失败）。
             data = repositories_valuation.get_market_mvi_overlay(
-                conn, code, range=range_key
+                conn, code, range_key=range_key
             )
         series = data.get("series") or []
         as_of = None

@@ -19,7 +19,9 @@
 回测引擎 `run_basket_backtest` 复用 `quant/backtest.py` 的再平衡语义：
   - 任一资产漂移权重偏离当日最优目标 > rebalance_band（绝对值）→ 整体回到目标；
   - 当日 NAV 用当日收益更新，次日才使用新权重（无未来函数）；
-  - 不足窗口的资产权重为 0，不拖后整体 effective_start。
+  - 不足窗口的资产权重为 0，不拖后整体 effective_start；
+  - 建仓/再平衡按换手扣除交易成本（默认佣金 0.03%、滑点 0.10%、卖出印花税 0.10%），
+    净值与全部指标为扣费后口径。
 """
 
 from __future__ import annotations
@@ -52,6 +54,13 @@ METHODS = (
 )
 
 DEFAULT_TRADING_DAYS = 244
+# 默认交易成本（与四象限组合 bp_portfolio 同量级，保证篮子回测展示扣费后净值）：
+# - 佣金 0.03%：买卖双边按换手收取；
+# - 滑点 0.10%：买卖双边按换手收取；
+# - 印花税 0.10%：仅卖出单边收取。
+DEFAULT_FEE_RATE = 0.0003
+DEFAULT_SLIPPAGE_RATE = 0.001
+DEFAULT_STAMP_DUTY_RATE = 0.001
 _BUDGET_TOL = 1e-6
 _MIN_RIDGE = 1e-12
 
@@ -371,6 +380,10 @@ class BasketBacktestResult:
     end_optimal_target: dict = field(default_factory=dict)
     equal_weight_nav: pd.Series = field(default_factory=lambda: pd.Series(dtype=float))
     equal_weight_metrics: dict = field(default_factory=dict)
+    # 交易成本：建仓日 + 再平衡日按换手扣除（占 NAV 比例）；daily_costs 供绩效归因。
+    total_cost: float = 0.0
+    fees: dict = field(default_factory=dict)
+    daily_costs: pd.Series = field(default_factory=lambda: pd.Series(dtype=float))
 
 
 def _safe_numeric_dict(d: dict, ndigits: int = 10) -> dict[str, float]:
@@ -419,12 +432,16 @@ def run_basket_backtest(
     risk_free: float = 0.0,
     risk_budget: Optional[dict[str, float]] = None,
     trading_days: int = DEFAULT_TRADING_DAYS,
+    fee_rate: float = DEFAULT_FEE_RATE,
+    slippage_rate: float = DEFAULT_SLIPPAGE_RATE,
+    stamp_duty_rate: float = DEFAULT_STAMP_DUTY_RATE,
     user_start: Optional[date] = None,
 ) -> BasketBacktestResult:
     """篮子模式逐日回测（无未来函数）。
 
     prices: index=交易日, columns=资产 key（`symbol@source`），NaN=非真实收盘日。
     再平衡语义与 `quant/backtest.py` 一致：任一资产漂移 > band → 整体回目标。
+    交易成本口径同 `quant/backtest.py`：建仓/再平衡按换手扣佣金+滑点，卖出另扣印花税。
     """
     if method not in METHODS:
         raise ValueError(f"未知优化方法: {method}")
@@ -449,6 +466,9 @@ def run_basket_backtest(
         band = max(0.0, float(rebalance_band))
     except (TypeError, ValueError):
         band = 0.05
+    commission_rate = max(float(fee_rate or 0.0), 0.0)
+    slip_rate = max(float(slippage_rate or 0.0), 0.0)
+    stamp_rate = max(float(stamp_duty_rate or 0.0), 0.0)
 
     price_dates = _union_calendar(prices)
     if len(price_dates) < min_window + 2:
@@ -526,6 +546,10 @@ def run_basket_backtest(
     eq_rows: list[dict] = [{"trade_date": effective_start, "nav": 1.0}]
 
     total_turnover = 1.0  # 建仓 0 → target
+    # 建仓成本：0 → target 视作买入周转=1，计佣金+滑点（无卖出则无印花税）。
+    inception_cost = 1.0 * (commission_rate + slip_rate)
+    total_cost = inception_cost
+    nav = max(0.0, 1.0 - inception_cost)
     rebalances: list[dict] = [
         {
             "trade_date": effective_start,
@@ -535,16 +559,21 @@ def run_basket_backtest(
             "delta": None,
             "max_deviation": 0.0,
             "turnover": 1.0,
+            "cost": inception_cost,
         }
     ]
 
     rows: list[dict] = [
-        {"trade_date": effective_start, "nav": 1.0, "ret": 0.0}
+        {
+            "trade_date": effective_start,
+            "nav": float(nav),
+            "ret": -float(inception_cost),
+        }
     ]
     weight_rows: list[dict] = [
         {"trade_date": effective_start, **target.to_dict()}
     ]
-    nav = 1.0
+    cost_list: list[float] = [float(inception_cost)]
 
     for k in range(k0 + 1, len(price_dates)):
         day = price_dates[k]
@@ -567,11 +596,21 @@ def run_basket_backtest(
         dev_s = (w_actual - target).abs()
         dev = float(dev_s.max())
 
+        cost_of_day = 0.0
         if dev > band:
             prev = w_actual.copy()
             delta = target - prev
-            turnover = float(delta.abs().sum())
+            buy_turnover = float(delta.clip(lower=0.0).sum())
+            sell_turnover = float((-delta.clip(upper=0.0)).sum())
+            turnover = buy_turnover + sell_turnover
             total_turnover += turnover
+            # 买卖双边缴佣金+滑点；卖出单边另缴印花税（与 quant/backtest.py 同口径）。
+            cost = turnover * (commission_rate + slip_rate) + sell_turnover * stamp_rate
+            if cost > 0:
+                nav *= max(0.0, 1.0 - cost)
+                port_ret = (1.0 + port_ret) * max(0.0, 1.0 - cost) - 1.0
+                total_cost += cost
+                cost_of_day = cost
             trigger = dev_s.idxmax()
             rebalances.append(
                 {
@@ -586,6 +625,7 @@ def run_basket_backtest(
                     "delta": _safe_numeric_dict(delta.to_dict(), ndigits=10),
                     "max_deviation": dev,
                     "turnover": turnover,
+                    "cost": cost,
                 }
             )
             w_actual = target.copy()
@@ -600,6 +640,7 @@ def run_basket_backtest(
             eq_weights = eq_grown / eq_total
         eq_rows.append({"trade_date": day, "nav": float(eq_nav)})
         rows.append({"trade_date": day, "nav": float(nav), "ret": float(port_ret)})
+        cost_list.append(float(cost_of_day))
 
     nav_df = pd.DataFrame(rows).set_index("trade_date")[["nav", "ret"]]
     daily_weights = (
@@ -608,6 +649,7 @@ def run_basket_backtest(
         .reindex(columns=assets)
         .fillna(0.0)
     )
+    daily_costs = pd.Series(cost_list, index=price_dates[k0:], dtype="float64")
 
     nav_series = nav_df["nav"]
     metrics = compute_metrics(nav_series, None, risk_free, trading_days)
@@ -627,6 +669,7 @@ def run_basket_backtest(
             None,
             nav_series,
             [{"trade_date": rb["trade_date"], "reason": rb["reason"]} for rb in rebalances],
+            daily_costs=daily_costs,
         )
         contributions = attribution.get("assets", [])
     except Exception:  # noqa: BLE001 - 归因失败不应让回测整体失败
@@ -654,4 +697,12 @@ def run_basket_backtest(
         end_optimal_target=_safe_dict(end_target.to_dict()),
         equal_weight_nav=eq_series,
         equal_weight_metrics={k: float(v) for k, v in eq_metrics.items() if isinstance(v, (int, float))},
+        total_cost=float(total_cost),
+        fees={
+            "fee_rate": float(commission_rate),
+            "slippage_rate": float(slip_rate),
+            "stamp_duty_rate": float(stamp_rate),
+            "total_cost": float(total_cost),
+        },
+        daily_costs=daily_costs,
     )

@@ -229,7 +229,36 @@ def test_v1_mvi_overlay_missing_price_data_is_explicit_not_fabricated(client, mo
     assert body["meta"]["reason"] == "no_price_data_for_overlay"
     repo.get_market_mvi_overlay.assert_called_once()
     assert repo.get_market_mvi_overlay.call_args.args[1] == "000985"
-    assert repo.get_market_mvi_overlay.call_args.kwargs == {"range": "5y"}
+    # 回归：仓储函数参数名是 range_key（曾误写成 range= 导致 TypeError/500）。
+    assert repo.get_market_mvi_overlay.call_args.kwargs == {"range_key": "5y"}
+
+
+def test_v1_mvi_overlay_calls_repository_with_matching_signature(client, monkeypatch):
+    """回归：路由必须用 range_key= 调用仓储；MagicMock 会吞掉错误参数名，
+    这里用真实签名的函数兜底，参数名不一致时会 TypeError -> 500。"""
+    test_client, _ = client
+    payload = {
+        "index_code": "000300",
+        "name": "沪深300",
+        "series": [{"trade_date": date(2026, 11, 27), "close": 4010.5}],
+        "mvi": [],
+        "range": "5y",
+        "missing": False,
+        "reason": None,
+    }
+    calls: list[tuple[str, str]] = []
+
+    def fake_overlay(conn, index_code, range_key="5y"):
+        calls.append((index_code, range_key))
+        return payload
+
+    repo = _install_repo(monkeypatch)
+    repo.get_market_mvi_overlay = fake_overlay  # type: ignore[assignment]
+
+    resp = test_client.get("/api/v1/market/mvi/overlay", params={"index": "000300", "range": "3y"})
+
+    assert resp.status_code == 200
+    assert calls == [("000300", "3y")]
 
 
 def test_v1_mvi_overlay_returns_index_price_series(client, monkeypatch):

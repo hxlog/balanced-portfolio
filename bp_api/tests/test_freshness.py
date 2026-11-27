@@ -390,3 +390,136 @@ def test_scalar_or_none_uses_savepoint_on_error() -> None:
     assert freshness._scalar_or_none(conn, "SELECT max(x) FROM missing") is None
     assert conn.rollbacks == 0
     assert any("ROLLBACK TO SAVEPOINT" in sql for sql in conn.statements)
+
+
+# ---------------------------------------------------------------------------
+# 第二轮反馈：读侧 meta / completed_at(+08:00) / 状态取较严重者 / 覆盖不足
+# ---------------------------------------------------------------------------
+def test_build_item_exposes_meta_and_completed_at_in_cst(monkeypatch) -> None:
+    stored = {
+        "a_stock": {
+            "as_of": dt.date(2026, 11, 27), "status": "ok", "note": None,
+            "source": "bp_etl",
+            "updated_at": dt.datetime(2026, 11, 27, 15, 30, tzinfo=dt.timezone.utc),
+            "meta": {
+                "coverage": 0.9975,
+                "completed_at": "2026-11-27T07:30:00+00:00",
+                "sources": ["tencent_qt", "sina_kline"],
+            },
+        }
+    }
+    _patch_payload_sources(monkeypatch, stored, {})
+    monkeypatch.setattr(freshness, "_load_source_health", lambda conn: {})
+    payload = freshness.build_payload(
+        SimpleNamespace(), now=dt.datetime(2026, 11, 27, 22, 0, tzinfo=CN)
+    )
+    item = next(row for row in payload["data"] if row["dataset"] == "a_stock")
+    assert item["meta"]["coverage"] == 0.9975
+    assert item["meta"]["sources"] == ["tencent_qt", "sina_kline"]
+    # meta.completed_at 优先，且统一 +08:00（UTC 07:30 -> CST 15:30）
+    assert item["completed_at"] == "2026-11-27T15:30:00+08:00"
+    assert item["source"] == "bp_etl"
+    assert item["status"] == "ok"
+
+
+def test_build_item_completed_at_falls_back_to_updated_at() -> None:
+    spec = freshness._SPEC_BY_KEY["a_stock"]
+    item = freshness._build_item(
+        spec,
+        {
+            "as_of": dt.date(2026, 11, 27), "status": "ok",
+            "updated_at": dt.datetime(2026, 11, 27, 15, 10, tzinfo=dt.timezone.utc),
+            "meta": {},
+        },
+        None,
+        dt.date(2026, 11, 27),
+        list(DAYS),
+    )
+    assert item["completed_at"] == "2026-11-27T23:10:00+08:00"
+
+
+def test_coverage_below_threshold_makes_stored_ok_lagging_with_note() -> None:
+    spec = freshness._SPEC_BY_KEY["index_quotes"]
+    item = freshness._build_item(
+        spec,
+        {
+            "as_of": dt.date(2026, 11, 27), "status": "ok",
+            "meta": {"covered": 284, "total": 481, "coverage": 0.59},
+            "updated_at": dt.datetime(2026, 11, 27, 23, 0, tzinfo=CN),
+        },
+        None,
+        dt.date(2026, 11, 27),
+        list(DAYS),
+    )
+    # 写入方报 ok 但覆盖不足：读侧必须降级为 lagging，并给出覆盖 note
+    assert item["status"] == "lagging"
+    assert item["is_stale"] is True
+    assert "284/481" in item["note"]
+    assert item["coverage"]["ratio"] == pytest.approx(0.59)
+
+
+def test_worst_status_and_meta_coverage() -> None:
+    assert freshness.worst_status("ok", "lagging") == "lagging"
+    assert freshness.worst_status("ok", None, "stale") == "stale"
+    assert freshness.worst_status("unavailable", "error") == "error"
+    assert freshness.worst_status("ok", "bogus") == "ok"
+    cov = freshness.meta_coverage({"covered": 284, "universe": 481})
+    assert cov == {"covered": 284, "total": 481, "ratio": pytest.approx(284 / 481)}
+
+
+def test_build_payload_all_complete_requires_status_ok(monkeypatch) -> None:
+    stored = {
+        key: {"as_of": dt.date(2026, 11, 27), "status": "ok", "meta": {}}
+        for key in freshness.DATASET_KEYS
+    }
+    # index_quotes 虽 as_of 追平，但覆盖率仅 59% -> status=lagging -> 不算齐套
+    stored["index_quotes"] = {
+        "as_of": dt.date(2026, 11, 27), "status": "ok",
+        "meta": {"covered": 284, "total": 481, "coverage": 0.59},
+    }
+    _patch_payload_sources(monkeypatch, stored, {})
+    monkeypatch.setattr(freshness, "_load_source_health", lambda conn: {})
+    payload = freshness.build_payload(
+        SimpleNamespace(), now=dt.datetime(2026, 11, 27, 23, 55, tzinfo=CN)
+    )
+    assert payload["meta"]["all_complete"] is False
+    by_key = {item["dataset"]: item for item in payload["data"]}
+    assert by_key["index_quotes"]["status"] == "lagging"
+    # 覆盖率信息同时暴露在 meta.index_coverage
+    assert payload["meta"]["index_coverage"]["covered"] == 284
+    assert payload["meta"]["index_coverage"]["total"] == 481
+    assert payload["meta"]["index_coverage"]["ratio"] == pytest.approx(0.59, abs=1e-4)
+
+
+def test_build_payload_index_coverage_and_source_health(monkeypatch) -> None:
+    stored = {
+        key: {"as_of": dt.date(2026, 11, 27), "status": "ok", "meta": {}}
+        for key in freshness.DATASET_KEYS
+    }
+    _patch_payload_sources(monkeypatch, stored, {})
+    health = {
+        "stat_date": "2026-11-27",
+        "datasets": {"a_stock": {"attempts": 10, "ok": 9, "failed": 1,
+                                 "banned_count": 0, "success_rate": 0.9, "sources": []}},
+    }
+    monkeypatch.setattr(freshness, "_load_source_health", lambda conn: health)
+    monkeypatch.setattr(
+        freshness, "_load_index_coverage",
+        lambda conn, row, expected: {"covered": 400, "total": 481, "ratio": 0.8316,
+                                     "as_of": "2026-11-27", "source": "bp_data_freshness.meta"},
+    )
+    payload = freshness.build_payload(
+        SimpleNamespace(), now=dt.datetime(2026, 11, 27, 23, 55, tzinfo=CN)
+    )
+    assert payload["meta"]["source_health"] == health
+    assert payload["meta"]["index_coverage"]["ratio"] == pytest.approx(0.8316)
+    assert payload["meta"]["all_complete"] is True
+
+
+def test_merge_freshness_meta_uses_savepoint() -> None:
+    conn = FakeConn(table=True, as_of=None)
+    assert freshness.merge_freshness_meta(conn, "index_valuation", {"note": "x"}) is True
+    sqls = [sql for sql, _ in conn.statements]
+    assert any("SAVEPOINT bp_data_freshness_meta" in sql for sql in sqls)
+    update = [params for sql, params in conn.statements if "UPDATE bp_data_freshness" in sql]
+    assert update and update[-1][1] == "index_valuation"

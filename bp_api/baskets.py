@@ -18,6 +18,7 @@ bp_portfolio 的 demo 组合一致：
 """
 from __future__ import annotations
 
+import math
 from datetime import date
 from typing import Any, Optional
 
@@ -26,7 +27,12 @@ from psycopg.types.json import Jsonb
 
 from . import auth, db, repositories as repo
 from .basket import build_latest_result
-from .quant.basket import METHODS
+from .quant.basket import (
+    DEFAULT_FEE_RATE,
+    DEFAULT_SLIPPAGE_RATE,
+    DEFAULT_STAMP_DUTY_RATE,
+    METHODS,
+)
 from .repositories import _json_safe
 from .schemas import BasketCopyIn, BasketSaveIn, BasketUpdateIn
 from .settings import load_settings
@@ -34,6 +40,13 @@ from .settings import load_settings
 _BASKET_COLUMNS = (
     "basket_id, owner_user_id, name, description, method, assets, params,"
     " latest_result, is_demo, display_order, created_at, updated_at"
+)
+# 列表只读摘要：latest_result 含完整 nav 时单行可达数百 KB，列表接口裁掉 nav
+# （详情接口仍返回完整 latest_result，供构建器还原净值曲线）。
+_BASKET_LIST_COLUMNS = (
+    "basket_id, owner_user_id, name, description, method, assets, params,"
+    " latest_result - 'nav' AS latest_result, is_demo, display_order,"
+    " created_at, updated_at"
 )
 _DEMO_ORDER = "ORDER BY display_order ASC NULLS LAST, basket_id ASC"
 _ALL_ORDER = (
@@ -102,6 +115,17 @@ def _parse_iso_date(value: Any) -> Optional[date]:
         raise HTTPException(400, f"非法日期: {value!r}") from exc
 
 
+def _clamp_rate(value: Any, default: float, lo: float, hi: float) -> float:
+    """费用/滑点/印花税参数解析：非法值回退默认，越界裁剪（不抛 400，保证重算可用）。"""
+    try:
+        fv = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    if not math.isfinite(fv):
+        return float(default)
+    return min(float(hi), max(float(lo), fv))
+
+
 def _recompute_params(raw: Any) -> dict:
     """从 bp_basket.params 解析回测参数（与 /api/basket/backtest 同口径）。"""
     data = raw if isinstance(raw, dict) else {}
@@ -132,6 +156,13 @@ def _recompute_params(raw: Any) -> dict:
         "risk_budget": risk_budget,
         "start": start,
         "end": end,
+        "fee_rate": _clamp_rate(data.get("fee_rate"), DEFAULT_FEE_RATE, 0.0, 0.1),
+        "slippage_rate": _clamp_rate(
+            data.get("slippage_rate"), DEFAULT_SLIPPAGE_RATE, 0.0, 0.1
+        ),
+        "stamp_duty_rate": _clamp_rate(
+            data.get("stamp_duty_rate"), DEFAULT_STAMP_DUTY_RATE, 0.0, 0.01
+        ),
     }
 
 
@@ -151,7 +182,7 @@ def register_routes(app: FastAPI) -> None:
                     rows: list[dict] = []
                 else:
                     cur.execute(
-                        f"SELECT {_BASKET_COLUMNS} FROM bp_basket"
+                        f"SELECT {_BASKET_LIST_COLUMNS} FROM bp_basket"
                         f" WHERE is_demo = TRUE {_DEMO_ORDER}"
                     )
                     rows = [
@@ -160,7 +191,7 @@ def register_routes(app: FastAPI) -> None:
                     ]
             elif scope == "demo":
                 cur.execute(
-                    f"SELECT {_BASKET_COLUMNS} FROM bp_basket"
+                    f"SELECT {_BASKET_LIST_COLUMNS} FROM bp_basket"
                     f" WHERE is_demo = TRUE {_DEMO_ORDER}"
                 )
                 rows = [
@@ -169,7 +200,7 @@ def register_routes(app: FastAPI) -> None:
                 ]
             elif scope == "mine":
                 cur.execute(
-                    f"SELECT {_BASKET_COLUMNS} FROM bp_basket"
+                    f"SELECT {_BASKET_LIST_COLUMNS} FROM bp_basket"
                     " WHERE owner_user_id = %s AND is_demo = FALSE"
                     " ORDER BY updated_at DESC, basket_id DESC",
                     (user.user_id,),
@@ -179,14 +210,14 @@ def register_routes(app: FastAPI) -> None:
                     for r in cur.fetchall()
                 ]
             elif user.is_admin:
-                cur.execute(f"SELECT {_BASKET_COLUMNS} FROM bp_basket {_ALL_ORDER}")
+                cur.execute(f"SELECT {_BASKET_LIST_COLUMNS} FROM bp_basket {_ALL_ORDER}")
                 rows = [
                     _basket_row(r, [d.name for d in cur.description])
                     for r in cur.fetchall()
                 ]
             else:
                 cur.execute(
-                    f"SELECT {_BASKET_COLUMNS} FROM bp_basket"
+                    f"SELECT {_BASKET_LIST_COLUMNS} FROM bp_basket"
                     " WHERE is_demo = TRUE OR owner_user_id = %s"
                     f" {_ALL_ORDER}",
                     (user.user_id,),
@@ -398,6 +429,9 @@ def register_routes(app: FastAPI) -> None:
                     end=params["end"],
                     trading_days=settings.trading_days,
                     min_window=settings.min_window,
+                    fee_rate=params["fee_rate"],
+                    slippage_rate=params["slippage_rate"],
+                    stamp_duty_rate=params["stamp_duty_rate"],
                 )
             except ValueError as exc:
                 raise HTTPException(400, str(exc)) from exc

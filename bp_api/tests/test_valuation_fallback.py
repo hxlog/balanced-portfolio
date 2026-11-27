@@ -71,12 +71,15 @@ def test_parse_csindex_indicator():
         date(2026, 11, 26),
     ]
     latest = rows[-1]
-    assert latest["pe_static"] == pytest.approx(16.65)
-    assert latest["pe_ttm"] == pytest.approx(18.31)
+    # 2026-11-27 修正：市盈率1（总股本）≈ 平安主口径 -> pe_ttm；市盈率2（计算用股本）
+    # 不是静态 PE，pe_static 必须留空，原始值只放 pe2_calc_share 审计。
+    assert latest["pe_ttm"] == pytest.approx(16.65)
+    assert latest["pe_static"] is None
+    assert latest["pe2_calc_share"] == pytest.approx(18.31)
     assert latest["dividend_yield_lyr"] == pytest.approx(2.38)
     assert latest["dividend_yield_ttm"] == pytest.approx(2.06)
     # 负 PE 视为脏点 -> None（与日频 CHECK 同口径）
-    assert rows[1]["pe_ttm"] is None
+    assert rows[1]["pe2_calc_share"] is None
 
 
 def test_parse_csindex_perf_xls():
@@ -142,8 +145,9 @@ def test_build_csindex_rows_keeps_pb_null():
     indicator = [
         {
             "trade_date": date(2026, 11, 26),
-            "pe_static": 16.65,
-            "pe_ttm": 18.31,
+            "pe_ttm": 16.65,
+            "pe_static": None,
+            "pe2_calc_share": 18.31,
             "dividend_yield_lyr": 2.38,
             "dividend_yield_ttm": 2.06,
         }
@@ -155,16 +159,18 @@ def test_build_csindex_rows_keeps_pb_null():
     row = daily[0]
     assert row["calc_src"] == "csindex_value"
     assert row["is_primary"] is True
-    assert row["pe_ttm"] == pytest.approx(18.31)
-    assert row["pe_static"] == pytest.approx(16.65)
+    # PE1(总股本) -> pe_ttm；PE2(计算用股本) 不冒充 pe_static
+    assert row["pe_ttm"] == pytest.approx(16.65)
+    assert row["pe_static"] is None
+    assert row["raw"]["pe_basis"] == "official_pe1_total_share"
     # 中证官网估值文件没有 PB：必须留 NULL，不得用别的口径冒充
     assert row["pb"] is None
     assert row["raw"]["pb_available"] is False
     # ERP = 股息率(ttm) - 同日 10Y；1.6 是伪造的同日 bond10y
     assert row["erp"] == pytest.approx(2.06 - 1.6)
     metrics = {item["metric"] for item in series}
-    assert metrics == {"pe_ttm", "pe_static", "dividend_yield_ttm", "dividend_yield_lyr", "erp"}
-    assert "pb" not in metrics
+    assert metrics == {"pe_ttm", "dividend_yield_ttm", "dividend_yield_lyr", "erp"}
+    assert "pb" not in metrics and "pe_static" not in metrics
 
 
 def test_build_csindex_rows_filters_future_dates():
@@ -237,7 +243,9 @@ def test_fetch_csindex_fallback_wiring(monkeypatch):
     )
     payload = ingest.fetch_csindex_fallback("000985", full_history=True)
 
-    assert payload["errors"] == []
+    # full_history 先试 index-perf JSON（本 mock 未提供 -> 记录一条降级错误），
+    # 随后腾讯补上；indicator 必须成功。
+    assert not [item for item in payload["errors"] if "indicator" in item]
     assert any("indicator" in url for url in calls)
     assert len(payload["indicator"]) == 3
     quote_dates = {item["row"].trade_date for item in payload["quotes"]}
@@ -372,6 +380,93 @@ def test_fallback_quotes_truncated_by_as_of(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 
+class _HistoryStatsCursor:
+    """按 SQL 片段返回 000985 行情统计（count, min_date）的假游标。"""
+
+    def __init__(self, conn: "_HistoryStatsConn") -> None:
+        self.conn = conn
+        self._rows: list = []
+
+    def execute(self, sql: str, params: object = None) -> None:
+        self._rows = []
+        if "count(*), min(trade_date) FROM bp_index_quote_daily" in sql:
+            self._rows = [self.conn.stats]
+        elif "count(*) FROM bp_index_master" in sql:
+            self._rows = [(1,)]
+        elif "bp_etl_quality_issue" in sql:
+            self._rows = [(1,)]
+        elif "count(*) FROM bp_index_valuation_daily" in sql:
+            self._rows = [(0,)]
+
+    def fetchone(self):
+        return self._rows.pop(0) if self._rows else None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+
+class _HistoryStatsConn:
+    def __init__(self, stats: tuple) -> None:
+        self.stats = stats
+
+    def cursor(self) -> _HistoryStatsCursor:
+        return _HistoryStatsCursor(self)
+
+
+def _patch_fallback_io(monkeypatch: pytest.MonkeyPatch) -> dict:
+    """打桩 fallback 的落库副作用，只保留 need_full 决策。"""
+    import bp_ingest.db as ingest_db
+
+    captured: dict = {}
+    monkeypatch.setattr(ingest, "upsert_index_master", lambda conn, rows: len(rows))
+    monkeypatch.setattr(ingest_db, "upsert_quotes", lambda conn, rows: len(rows))
+    monkeypatch.setattr(ingest, "upsert_valuation_daily", lambda conn, rows: len(rows))
+    monkeypatch.setattr(ingest, "upsert_valuation_series", lambda conn, rows: len(rows))
+    monkeypatch.setattr(ingest, "upsert_percentiles", lambda conn, rows: len(rows))
+    monkeypatch.setattr(ingest, "_build_csindex_rows", lambda *a, **kw: ([], [], None))
+    monkeypatch.setattr(ingest, "_refresh_quote_health", lambda *a, **kw: None)
+
+    def fake_fetch(code, full_history):
+        captured["full_history"] = full_history
+        return {"indicator": [], "quotes": [], "name": "x", "errors": []}
+
+    return {"captured": captured, "fetch": fake_fetch}
+
+
+def test_fallback_needs_full_history_when_quote_span_lt_3y(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """000985 只有 34 行近期行情（跨度 <3 年）时必须触发全史回补。"""
+    code = "T80HIST1"
+    monkeypatch.setattr(ingest, "FALLBACK_INDEX_CODES", (code,))
+    monkeypatch.setattr(ingest, "CSINDEX_MASTER_META", {code: {
+        "index_code": code, "market": "CSI", "name": "历史不足指数",
+        "is_active": True, "is_tracked": True,
+    }})
+    io = _patch_fallback_io(monkeypatch)
+    conn = _HistoryStatsConn((34, date(2026, 10, 1)))
+    ingest._run_csindex_fallback(conn, set(), date(2026, 11, 27), [], fetch=io["fetch"])
+    assert io["captured"]["full_history"] is True
+
+
+def test_fallback_does_not_refetch_full_history_when_span_ge_3y(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    code = "T80HIST2"
+    monkeypatch.setattr(ingest, "FALLBACK_INDEX_CODES", (code,))
+    monkeypatch.setattr(ingest, "CSINDEX_MASTER_META", {code: {
+        "index_code": code, "market": "CSI", "name": "历史充足指数",
+        "is_active": True, "is_tracked": True,
+    }})
+    io = _patch_fallback_io(monkeypatch)
+    conn = _HistoryStatsConn((2406, date(2017, 1, 3)))
+    ingest._run_csindex_fallback(conn, set(), date(2026, 11, 27), [], fetch=io["fetch"])
+    assert io["captured"]["full_history"] is False
+
+
 # ---------------------------------------------------------------------------
 # 落库集成（显式启用 bp_mig_test；未设置时 skip）
 #
@@ -438,11 +533,13 @@ def _fallback_quotes(code: str, start: date, count: int) -> list[dict]:
 
 
 def _fallback_indicator(start: date, count: int) -> list[dict]:
+    # 与修正后的 parser 同口径：PE1=总股本 -> pe_ttm；PE2=计算用股本只留审计值。
     return [
         {
             "trade_date": start + timedelta(days=offset),
-            "pe_static": 16.0 + offset,
-            "pe_ttm": 18.0 + offset,
+            "pe_ttm": 16.0 + offset,
+            "pe_static": None,
+            "pe2_calc_share": 18.0 + offset,
             "dividend_yield_lyr": 2.3,
             "dividend_yield_ttm": 2.0,
         }
@@ -616,7 +713,7 @@ def test_run_valuation_ingest_wires_fallback_and_snapshot(monkeypatch):
             rows = cur.fetchall()
         assert {row[0] for row in rows} == {test_code, fallback_code}
         fallback_row = next(row for row in rows if row[0] == fallback_code)
-        assert fallback_row[1] == pytest.approx(19.0)  # 2026-11-27 的 pe_ttm
+        assert fallback_row[1] == pytest.approx(18.0)  # 2026-11-27 的 pe_ttm（PE1 总股本口径）
         assert fallback_row[2] == "csindex_value"
     finally:
         conn.rollback()
